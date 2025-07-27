@@ -1,17 +1,11 @@
-import json
-from openai import OpenAI
+import random
 
-def generate_caption(prompt: str) -> str:
-    with open("config/secrets.json") as f:
-        secrets = json.load(f)
-
-    client = OpenAI(api_key=secrets["openai_api_key"])
-
-    response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {"role": "user", "content": prompt}
-        ],
-        max_tokens=60
-    )
-    return response.choices[0].message.content.strip()
+def generate_caption(topic: str) -> str:
+    templates = [
+        f"📈 Big moves in the market today! {topic.title()} is leading the way.",
+        f"🚀 Trending Now: {topic.title()}. Stay informed, stay ahead.",
+        f"💡 Quick Insight: {topic.title()} – what's next?",
+        f"🔍 Market Focus: {topic.title()}. Analysis coming soon.",
+        f"📊 Snapshot: {topic.title()}. What does it mean for investors?"
+    ]
+    return random.choice(templates)
