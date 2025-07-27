@@ -1,14 +1,18 @@
 import openai
+import os
+from dotenv import load_dotenv
 
-def generate_caption(prompt="Generate a creative Instagram caption about AI and automation"):
-    # Replace with your OpenAI key or env var
-    openai.api_key = "sk-..."
+load_dotenv()
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
+def generate_caption():
+    prompt = (
+        "Write a short, engaging Instagram caption based on current market trends in finance or tech. "
+        "Use 2 relevant hashtags and emojis. Max 2200 characters."
+    )
     response = openai.ChatCompletion.create(
         model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You are a creative social media manager."},
-            {"role": "user", "content": prompt}
-        ]
+        messages=[{"role": "user", "content": prompt}]
     )
-    return response.choices[0].message["content"]
+    caption = response['choices'][0]['message']['content']
+    return caption.strip()

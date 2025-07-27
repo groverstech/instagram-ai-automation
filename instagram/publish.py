@@ -4,7 +4,9 @@ import json
 with open("config/secrets.json") as f:
     config = json.load(f)
 
-ACCESS_TOKEN = config["access_token"]
+from utils.auth import get_access_token
+
+ACCESS_TOKEN = get_access_token()
 IG_USER_ID = config["instagram_user_id"]
 
 def upload_image(image_url, caption=""):
