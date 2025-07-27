@@ -1,15 +1,9 @@
-from ai.caption_generator import generate_caption
-from design.post_designer import create_image
-from instagram.publish import upload_image
+from content.caption_generator import generate_caption
+from content.image_generator import create_post_image
 
-# Step 1: Generate caption
-caption = generate_caption()
+if __name__ == "__main__":
+    caption = generate_caption("Create an Instagram caption about market trends.")
+    print("Generated Caption:", caption)
 
-# Step 2: Create image with caption
-image_path = create_image(caption)
-
-# Step 3: Upload image to public server or S3 and get the URL
-image_url = "https://yourdomain.com/path/to/uploaded/image.jpg"
-
-# Step 4: Post to Instagram
-upload_image(image_url, caption)
+    image_path = create_post_image(caption)
+    print("Image created at:", image_path)
