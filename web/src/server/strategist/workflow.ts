@@ -9,11 +9,11 @@ import type { BrandAccess } from "../auth/guard";
 import { log } from "../log";
 import { SECTION_KEYS, SECTION_META, missingSections, type SectionKey } from "@/lib/strategy";
 import { SECTION_RUNNERS, regenerateEntry, type AgentCtx } from "./agents";
-import { StrategyError, activeTask, docOf, getStrategy, replaceEntryFromAi, writeAiSection } from "./store";
+import { STALE_TASK_MS, StrategyError, activeTask, docOf, getStrategy, replaceEntryFromAi, writeAiSection } from "./store";
 
 const LEASE_SEC = 15 * 60;
 const HEARTBEAT_MS = 20_000;
-const STALE_MS = 10 * 60 * 1000;
+
 
 export type StartOpts = { sections: SectionKey[]; instruction?: string; kind?: string };
 
@@ -28,7 +28,6 @@ export async function startTask(access: BrandAccess, strategyId: string, opts: S
   if (!row) throw new StrategyError("Strategy not found.");
   if (row.status !== "draft" && row.status !== "under_review") throw new StrategyError(row.status === "approved" ? "This strategy is approved and locked. Create a new version to regenerate sections." : "This strategy is archived.");
   docOf(row);
-  if (await activeTask(brandId, strategyId)) throw new StrategyError("The AI is already working on this strategy.");
   const sections = SECTION_KEYS.filter((k) => opts.sections.includes(k));
   if (!sections.length) throw new StrategyError("Nothing to generate.");
 
@@ -37,11 +36,20 @@ export async function startTask(access: BrandAccess, strategyId: string, opts: S
   let taskId: string;
   try {
     const steps: AiTaskStep[] = sections.map((k) => ({ id: k, label: SECTION_META[k].step, status: "pending" }));
-    const [t] = await db
-      .insert(schema.aiTasks)
-      .values({ brandId, workspaceId: access.brand.workspaceId, userId: access.session.user.id, kind: opts.kind ?? "strategy_workflow", strategyId, steps, input: { sections, instruction: opts.instruction?.slice(0, 1000) ?? "" }, heartbeatAt: new Date() })
-      .returning({ id: schema.aiTasks.id });
-    taskId = t.id;
+    // Check-and-insert under a per-strategy lock, so two clicks can't start two tasks on one strategy.
+    taskId = await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"strategy-task:" + strategyId}))`);
+      const running = await tx
+        .select({ id: schema.aiTasks.id, heartbeatAt: schema.aiTasks.heartbeatAt, createdAt: schema.aiTasks.createdAt })
+        .from(schema.aiTasks)
+        .where(and(eq(schema.aiTasks.brandId, brandId), eq(schema.aiTasks.strategyId, strategyId), inArray(schema.aiTasks.status, ["queued", "running"])));
+      if (running.some((r) => Date.now() - (r.heartbeatAt ?? r.createdAt).getTime() <= STALE_TASK_MS)) throw new StrategyError("The AI is already working on this strategy.");
+      const [t] = await tx
+        .insert(schema.aiTasks)
+        .values({ brandId, workspaceId: access.brand.workspaceId, userId: access.session.user.id, kind: opts.kind ?? "strategy_workflow", strategyId, steps, input: { sections, instruction: opts.instruction?.slice(0, 1000) ?? "", leaseId }, heartbeatAt: new Date() })
+        .returning({ id: schema.aiTasks.id });
+      return t.id;
+    });
   } catch (e) {
     await releaseAiSlot(leaseId);
     throw e;
@@ -93,7 +101,6 @@ export async function runTask(taskId: string, leaseId: string) {
   try {
     const [brand] = await db.select().from(schema.brands).where(eq(schema.brands.id, task.brandId));
     if (!brand) throw new StrategyError("Brand not found.");
-    let brandCtx: AgentCtx["brandCtx"];
     for (const step of steps) {
       if (step.status === "done") continue;
       step.status = "running";
@@ -104,9 +111,9 @@ export async function runTask(taskId: string, leaseId: string) {
         // Re-read the document before each step so later agents build on earlier results.
         const row = await getStrategy(task.brandId, task.strategyId!);
         if (!row) throw new StrategyError("The strategy was deleted.");
-        const ctx: AgentCtx = { scope: { brandId: task.brandId, userId: task.userId }, brand: brand as Brand, doc: docOf(row), strategyId: row.id, instruction: instruction || undefined, reviewerNote: row.revisionNote, brandCtx };
-        const out = await SECTION_RUNNERS[key](ctx as AgentCtx);
-        brandCtx = ctx.brandCtx;
+        const ctx: AgentCtx = { scope: { brandId: task.brandId, userId: task.userId }, brand: brand as Brand, doc: docOf(row), strategyId: row.id, instruction: instruction || undefined, reviewerNote: row.revisionNote };
+        // Each agent retrieves brand context for its own task (memories are ranked per task).
+        const out = await SECTION_RUNNERS[key](ctx);
         await writeAiSection(task.brandId, row.id, key, out.data as never, { runId: out.runIds.at(-1) ?? null, provider: out.provider, actorId: task.userId });
         step.status = "done";
         step.finishedAt = new Date().toISOString();
@@ -140,10 +147,13 @@ export async function taskStatus(brandId: string, taskId: string) {
   const db = await getDb();
   const [t] = await db.select().from(schema.aiTasks).where(and(eq(schema.aiTasks.id, taskId), eq(schema.aiTasks.brandId, brandId)));
   if (!t) throw new StrategyError("Task not found.");
-  if ((t.status === "running" || t.status === "queued") && Date.now() - (t.heartbeatAt ?? t.createdAt).getTime() > STALE_MS) {
+  if ((t.status === "running" || t.status === "queued") && Date.now() - (t.heartbeatAt ?? t.createdAt).getTime() > STALE_TASK_MS) {
     const steps = t.steps.map((s) => (s.status === "running" || s.status === "pending" ? { ...s, status: "failed" as const, error: "Interrupted" } : s));
     const error = "The task was interrupted (the server restarted or timed out). Completed sections were saved; resume to finish the rest.";
     await db.update(schema.aiTasks).set({ status: "failed", steps, error, finishedAt: new Date() }).where(eq(schema.aiTasks.id, t.id));
+    // The worker died holding a concurrency lease; free it so the user can resume right away.
+    const leaseId = (t.input as { leaseId?: string }).leaseId;
+    if (leaseId) await releaseAiSlot(leaseId);
     return { ...t, status: "failed" as const, steps, error };
   }
   return t;

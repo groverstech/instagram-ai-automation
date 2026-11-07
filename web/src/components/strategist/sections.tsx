@@ -12,6 +12,7 @@ import {
   PILLAR_MAX,
   PILLAR_MIN,
   researchCategoryLabel,
+  safeHref,
   type AudienceSection,
   type CampaignsSection,
   type EditableSection,
@@ -86,12 +87,14 @@ function SourceLinks({ urls, sources }: { urls: string[]; sources: ResearchSecti
     <div className="mt-2 flex flex-wrap gap-1.5">
       {urls.map((u) => {
         const s = sources.find((x) => x.url === u);
+        const href = safeHref(u);
+        if (!href) return null;
         let host = u;
         try {
           host = new URL(u).hostname.replace(/^www\./, "");
         } catch {}
         return (
-          <a key={u} href={u} target="_blank" rel="noopener noreferrer nofollow" className="inline-flex max-w-full items-center gap-1 rounded-full bg-sunken px-2 py-0.5 text-[11px] text-ink-2 hover:text-ink" title={s?.title ?? u}>
+          <a key={u} href={href} target="_blank" rel="noopener noreferrer nofollow" className="inline-flex max-w-full items-center gap-1 rounded-full bg-sunken px-2 py-0.5 text-[11px] text-ink-2 hover:text-ink" title={s?.title ?? u}>
             <ExternalLink className="size-3 shrink-0" />
             <span className="truncate">{host}</span>
             {s?.publishedAt ? <span className="text-faint">· {s.publishedAt}</span> : null}
@@ -167,9 +170,13 @@ export function ResearchView({ env }: { env?: Envelope<ResearchSection> }) {
               <ul className="mt-2 space-y-1.5 text-[12px]">
                 {r.sources.map((s) => (
                   <li key={s.url} className="min-w-0">
-                    <a href={s.url} target="_blank" rel="noopener noreferrer nofollow" className="text-ink-2 underline-offset-2 hover:underline">
-                      {s.title || s.url}
-                    </a>
+                    {safeHref(s.url) ? (
+                      <a href={safeHref(s.url)!} target="_blank" rel="noopener noreferrer nofollow" className="break-all text-ink-2 underline-offset-2 hover:underline">
+                        {s.title || s.url}
+                      </a>
+                    ) : (
+                      <span className="break-all text-ink-2">{s.title || s.url}</span>
+                    )}
                     <span className="text-faint"> · {s.publishedAt ? `published ${s.publishedAt}` : "date unknown"} · retrieved {fmtDate(s.retrievedAt.slice(0, 10))}</span>
                   </li>
                 ))}

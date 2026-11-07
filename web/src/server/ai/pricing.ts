@@ -7,7 +7,7 @@ import type { Usage } from "./llm";
  * budgeting and dashboards, not invoices: the Anthropic Console remains the billing source of truth.
  */
 const DEFAULTS: Record<string, { input: number; output: number; cacheRead: number; cacheWrite: number }> = {
-  "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.4, cacheWrite: 5 },
+  "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.2, cacheWrite: 5 }, // 5-minute cache writes
 };
 const FALLBACK = DEFAULTS["claude-opus-5-5"];
 

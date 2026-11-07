@@ -527,3 +527,41 @@ describe("migration 0004 on an existing database", () => {
     await client.close();
   });
 });
+
+describe("review hardening", () => {
+  it("starts at most one task per strategy even under concurrent requests", async () => {
+    const pf = await preflight(A2);
+    const row = await store.createStrategy(A2.id, ownerId, inputs(), [], pf.profile);
+    const acc = await access(ownerId, A2);
+    const results = await Promise.allSettled([1, 2, 3].map(() => wf.startTask(acc, row.id, { sections: ["research"] })));
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter((r) => r.status === "rejected").every((r) => /already working|AI tasks running/.test(String((r as PromiseRejectedResult).reason)))).toBe(true);
+    // Let the background run finish before other tests.
+    const db = await getDb();
+    for (let i = 0; i < 50; i++) {
+      const [t] = await db.select().from(schema.aiTasks).where(eq(schema.aiTasks.strategyId, row.id));
+      if (t.status === "succeeded" || t.status === "failed") break;
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  });
+
+  it("frees the concurrency lease of an interrupted task so the user can resume immediately", async () => {
+    const db = await getDb();
+    const row = await store.createStrategy(A2.id, ownerId, inputs(), [], null);
+    const lease = await acquireAiSlot({ userId: ownerId, workspaceId: A2.workspaceId, plan: "agency" }, "strategy_workflow", 900);
+    const [t] = await db
+      .insert(schema.aiTasks)
+      .values({ brandId: A2.id, workspaceId: A2.workspaceId, userId: ownerId, kind: "strategy_workflow", strategyId: row.id, status: "running", input: { leaseId: lease }, steps: [{ id: "research", label: "x", status: "running" }], heartbeatAt: new Date(Date.now() - 3 * 60_000) })
+      .returning();
+    expect((await wf.taskStatus(A2.id, t.id)).status).toBe("failed");
+    expect(await db.select().from(schema.aiTaskLeases).where(eq(schema.aiTaskLeases.id, lease))).toHaveLength(0);
+  });
+
+  it("never renders non-http research links", async () => {
+    const { safeHref } = await import("@/lib/strategy");
+    expect(safeHref("https://example.com/a")).toBe("https://example.com/a");
+    expect(safeHref("javascript:alert(1)")).toBeNull();
+    expect(safeHref("data:text/html,x")).toBeNull();
+    expect(safeHref("not a url")).toBeNull();
+  });
+});

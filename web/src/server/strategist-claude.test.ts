@@ -223,3 +223,138 @@ describe("workflow failure handling on the real provider path", () => {
     expect(JSON.stringify(t)).not.toContain("api_error (test)");
   }, 20_000);
 });
+
+// ---------------------------------------------------------------------------
+// All seven agents + the advisor, end to end, on the real provider path.
+// Each structured request is answered with a schema-valid fixture chosen by the
+// request's own JSON schema, so this also proves every agent sends the schema
+// it expects to receive.
+// ---------------------------------------------------------------------------
+
+const PILLARS = ["Studio Craft", "Care & Use", "Hosting Rituals", "Community Table", "New Glazes"];
+const fixtures: Record<string, (b: Record<string, unknown>) => unknown> = {
+  personas: () => ({
+    overview: "Hosts who buy fewer, better things.",
+    segments: [{ name: "Considered hosts", description: "Entertain at home", priority: "primary" }],
+    personas: [
+      { name: "The Weekend Host", summary: "Hosts friends most weekends.", demographics: "Not established", demographicsBasis: "assumption", interests: ["Cooking"], needs: ["Durable serveware"], painPoints: ["Chipped plates"], motivations: ["Pride in the table"], objections: ["Price"], contentPreferences: ["Table styling reels"], platforms: ["instagram"], engagementOpportunities: ["Ask for table photos"] },
+      { name: "The Gifter", summary: "Buys meaningful gifts.", demographics: "Not established", demographicsBasis: "assumption", interests: ["Gifting"], needs: ["Gift-ready packaging"], painPoints: ["Generic gifts"], motivations: ["Being remembered"], objections: ["Delivery time"], contentPreferences: ["Gift guides"], platforms: ["instagram"], engagementOpportunities: ["Save-able gift lists"] },
+    ],
+    insights: ["Saves signal purchase intent."],
+  }),
+  marketingObjectives: () => ({
+    businessObjectives: [{ objective: "Grow sales", measure: "Monthly online revenue" }],
+    marketingObjectives: [{ objective: "Drive site visits", category: "sales", supports: "Grow sales", metric: "Link clicks", target: "Baseline first", targetBasis: "suggested", timeframe: "30 days" }],
+  }),
+  executiveSummary: () => ({
+    executiveSummary: "Lead with craft, convert with care content.",
+    positioning: { statement: "The modern heirloom", pointsOfDifference: ["Small batches"], proofPoints: ["Made in Porto"] },
+    differentiation: [{ point: "Process transparency", versus: "ClayCo", howToShow: "Studio reels" }],
+    channels: [
+      { platform: "instagram", role: "Discovery", audience: "Hosts", formats: ["reel"], postsPerWeek: 4, bestTimes: ["Tue 19:00"], approach: "Calm, visual" },
+      { platform: "tiktok", role: "Should be filtered out", audience: "-", formats: [], postsPerWeek: 1, bestTimes: [], approach: "-" },
+    ],
+    contentStrategy: { approach: "Teach and show", toneGuidance: "Warm", mix: [{ type: "Education", sharePercent: 60 }, { type: "Product", sharePercent: 40 }], avoid: ["Discount spam"] },
+    campaignStrategy: { approach: "One hero campaign a month", rhythm: "Tease, launch, sustain" },
+    engagementStrategy: { approach: "Reply fast", tactics: ["Question stickers"], communityGuidelines: ["Thank customers"] },
+    leadGeneration: { approach: "Newsletter", tactics: ["Care guide download"], offers: ["Care guide"], notApplicableReason: "" },
+    kpis: [{ name: "Saves", metric: "Saves per post", target: "Baseline first", targetBasis: "suggested", frequency: "Weekly", objective: "Drive site visits" }],
+    roadmap: [{ phase: "Foundation", timing: "Week 1", focus: "Baseline", milestones: ["Baseline recorded"] }],
+    accountTypeNotes: "Business account.",
+    assumptions: [],
+    risks: [],
+  }),
+  pillars: () => ({ pillars: PILLARS.map((name, i) => ({ name, description: `${name} content`, purpose: "Trust", audience: "The Weekend Host", formats: ["reel"], topics: [`${name} topic`], frequency: "1 / week", sharePercent: 25, objective: (["awareness", "education", "community", "engagement", "sales"] as const)[i] })), rationale: "Five distinct pillars." }),
+  campaigns: () => ({ campaigns: [{ name: "Made to Last", kind: "awareness", objective: "awareness", audience: "Hosts", concept: "Longevity stories", keyMessage: "Things worth keeping", creativeDirection: "Hands at work", formats: ["reel"], platforms: ["instagram", "tiktok"], startDate: "2027-01-06", durationDays: 10, cta: "Shop the edit", metrics: ["Reach"] }] }),
+  entries: (b) => {
+    const m = promptOf(b).match(/Plan entries from (\d{4}-\d{2}-\d{2}) to (\d{4}-\d{2}-\d{2})/)!;
+    const from = Date.parse(`${m[1]}T00:00:00Z`);
+    const day = (n: number) => new Date(from + n * 864e5).toISOString().slice(0, 10);
+    return {
+      entries: Array.from({ length: 8 }, (_, i) => ({ date: day(i), time: "19:00", platform: "instagram", pillar: PILLARS[i % 5], objective: "engagement", format: "instagram_post", creativeConcept: `Concept ${m[1]}-${i}`, hook: `Hook ${m[1]}-${i}`, captionDirection: "Short", cta: "Save it", hashtags: ["#slowmade"], campaign: i === 2 ? "made to last" : "" })),
+      notes: "Balanced.",
+    };
+  },
+  creativeConcept: () => ({ date: "2027-01-05", time: "08:30", platform: "instagram", pillar: "Studio Craft", objective: "engagement", format: "instagram_post", creativeConcept: "Brand new angle", hook: "A completely new hook", captionDirection: "Short", cta: "Save", hashtags: ["glaze"], campaign: "" }),
+  referencedSections: () => ({ answer: "Lead with Studio Craft this week.", basis: "draft_strategy", referencedSections: ["pillars"], usesUnverifiedResearch: false, suggestedActions: [], followUps: [] }),
+};
+const route = (b: Record<string, unknown>) => {
+  if (!isStructured(b)) return researchResponse();
+  const keys = schemaKeys(b);
+  if (keys.includes("findings")) return structuredResearch();
+  for (const k of Object.keys(fixtures)) if (keys.includes(k)) return json(fixtures[k](b));
+  return apiError(400, "invalid_request_error");
+};
+
+describe("all seven agents and the advisor on the real provider path", () => {
+  it("runs the full workflow with the approved profile, tracks cost, regenerates an entry and answers as the advisor", async () => {
+    const db = await getDb();
+    // A newer, unapproved draft must never reach the agents.
+    await db.insert(schema.brandProfiles).values({ brandId, version: 2, status: "draft", schemaVersion: 2, data: { ...PROFILE, summary: "DRAFT-ONLY SUMMARY that must not be used." } });
+    respond = (b) => route(b);
+    const row = await store.createStrategy(brandId, userId, StrategyInputs.parse({ accountType: "business", businessObjectives: ["Grow sales"], platforms: ["instagram"], startDate: "2027-01-04", postsPerWeek: 4 }), [], { id: "approved", version: 1 });
+    const access = await requireBrandForUser({ sessionId: "s", activeBrandId: null, user: { id: userId, email: "s@example.com", name: "S" } }, brandId, "editor");
+    const taskId = await wf.startTask(access, row.id, { sections: ["research", "audience", "objectives", "strategy", "pillars", "campaigns", "calendar"], inline: true });
+    const t = await wf.taskStatus(brandId, taskId);
+    expect(t.status).toBe("succeeded");
+
+    // 1 web research call + 1 structuring call + 5 agents + 2 calendar halves = 9 requests.
+    expect(captured).toHaveLength(9);
+    const schemas = captured.filter((c) => isStructured(c.body)).map((c) => schemaKeys(c.body));
+    for (const k of ["findings", "personas", "marketingObjectives", "executiveSummary", "pillars", "campaigns", "entries"]) expect(schemas.some((s) => s.includes(k)), k).toBe(true);
+    for (const c of captured) {
+      expect(c.body.model).toBe("claude-opus-5-5");
+      const p = promptOf(c.body);
+      expect(p).toContain("Kora makes small-batch stoneware"); // approved profile, every agent
+      expect(p).not.toContain("DRAFT-ONLY SUMMARY");
+    }
+    // Later agents build on earlier sections.
+    const pillarReq = captured.find((c) => isStructured(c.body) && schemaKeys(c.body).includes("pillars") && schemaKeys(c.body).includes("rationale"))!;
+    expect(promptOf(pillarReq.body)).toContain("The Weekend Host");
+    const calReqs = captured.filter((c) => isStructured(c.body) && schemaKeys(c.body).includes("entries"));
+    expect(promptOf(calReqs[0].body)).toContain("Plan entries from 2027-01-04 to 2027-01-18");
+    expect(promptOf(calReqs[1].body)).toContain("Plan entries from 2027-01-19 to 2027-02-02");
+    expect(promptOf(calReqs[1].body)).toContain("Hook 2027-01-04-0"); // second half sees the first
+
+    const doc = store.docOf((await store.getStrategy(brandId, row.id))!);
+    expect(doc.sections.research!.data.mode).toBe("web_search");
+    expect(doc.sections.audience!.data.personas.map((p) => p.name)).toEqual(["The Weekend Host", "The Gifter"]);
+    expect(doc.sections.strategy!.data.channels.map((c) => c.platform)).toEqual(["instagram"]); // tiktok not selected
+    expect(doc.sections.pillars!.data.pillars.reduce((s, p) => s + p.sharePercent, 0)).toBe(100);
+    expect(doc.sections.campaigns!.data.campaigns[0].platforms).toEqual(["instagram"]);
+    const cal = doc.sections.calendar!.data;
+    expect(cal.entries).toHaveLength(16);
+    expect(cal.entries.find((e) => e.hook === "Hook 2027-01-04-2")!.campaign).toBe("Made to Last"); // normalised to the real campaign name
+    expect(cal.entries.every((e) => !e.hashtags.some((h) => h.startsWith("#")))).toBe(true);
+
+    // Token and cost tracking: task totals equal the sum of its agent runs.
+    const runs = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.brandId, brandId));
+    const mine = runs.filter((r) => (r.input as { strategyId?: string } | null)?.strategyId === row.id);
+    expect(mine).toHaveLength(9);
+    expect(t.inputTokens).toBe(90_000);
+    expect(t.outputTokens).toBe(18_000);
+    expect(t.webSearches).toBe(2);
+    expect(t.costUsd).toBeCloseTo(mine.reduce((s, r) => s + (r.costUsd ?? 0), 0), 5);
+    // 90k in × $4 + 18k out × $20 per MTok + 2 searches × $10/1k
+    expect(t.costUsd).toBeCloseTo(0.36 + 0.36 + 0.02, 5);
+    expect(await wf.strategyCost(brandId, row.id)).toMatchObject({ inputTokens: 90_000, outputTokens: 18_000, webSearches: 2 });
+
+    // Regenerate one calendar entry (real path), then the advisor.
+    captured.length = 0;
+    const target = cal.entries[1];
+    const after = await wf.regenerateCalendarEntry((await db.select().from(schema.brands).where(eq(schema.brands.id, brandId)))[0], userId, row.id, target.id, "make it warmer", (await store.getStrategy(brandId, row.id))!.rev);
+    const regenerated = store.docOf(after).sections.calendar!.data.entries.find((e) => e.id === target.id)!;
+    expect(regenerated.hook).toBe("A completely new hook");
+    expect(promptOf(captured[0].body)).toContain("make it warmer");
+
+    const { askAdvisor } = await import("./strategist/advisor");
+    const [brand] = await db.select().from(schema.brands).where(eq(schema.brands.id, brandId));
+    const a = await askAdvisor({ brandId, userId }, brand, "What should we post first?");
+    expect(a.answer).toBe("Lead with Studio Craft this week.");
+    expect(a.meta).toMatchObject({ basis: "draft_strategy", strategyId: row.id });
+    const advReq = captured.at(-1)!.body;
+    expect(schemaKeys(advReq)).toContain("referencedSections");
+    expect(promptOf(advReq)).toContain("Studio Craft");
+    expect(promptOf(advReq)).not.toContain("DRAFT-ONLY SUMMARY");
+  }, 30_000);
+});

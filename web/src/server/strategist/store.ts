@@ -34,7 +34,8 @@ export type Actor = { userId: string; role: Role };
 type Source = "ai" | "user" | "restore" | "status";
 
 const uid = () => crypto.randomUUID().slice(0, 12);
-const STALE_TASK_MS = 10 * 60 * 1000;
+/** A running task heartbeats every 20s; no heartbeat for this long means its worker is gone. */
+export const STALE_TASK_MS = 2 * 60 * 1000;
 
 export function docOf(row: StrategyRow): StrategyDoc {
   if (!isDocV2(row.data, row.schemaVersion)) throw new StrategyError("This is a legacy monthly strategy. Create a new strategy to use the Marketing Strategist.");

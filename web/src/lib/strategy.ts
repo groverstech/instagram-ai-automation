@@ -577,3 +577,13 @@ export const STATUS_META: Record<string, { label: string; tone: string }> = {
   approved: { label: "Approved", tone: "success" },
   archived: { label: "Archived", tone: "outline" },
 };
+
+/** Only http(s) links are rendered as links: research URLs come from web pages and model output. */
+export function safeHref(u: string): string | null {
+  try {
+    const x = new URL(u);
+    return x.protocol === "https:" || x.protocol === "http:" ? x.href : null;
+  } catch {
+    return null;
+  }
+}
