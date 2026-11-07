@@ -248,7 +248,7 @@ export function StrategistWorkspace(p: Props) {
       </div>
 
       <Panel on={tab === "overview"}>
-        <Overview doc={doc} go={(k) => setTab(k)} />
+        <Overview doc={doc} go={(k) => setTab(k)} working={working} />
       </Panel>
       <Panel on={tab === "strategy"}>
         <StrategyView env={doc.sections.strategy} accountType={accountTypeLabel(doc.inputs.accountType)} />
@@ -331,7 +331,7 @@ function Progress({ task, canResume, onResume, resuming }: { task: Task; canResu
         </ol>
         {task.status === "failed" ? (
           <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-danger-soft px-3.5 py-2.5 text-[13px] text-danger">
-            <span>{task.error} Completed sections were saved.</span>
+            <span>{task.error}{task.error && /saved/i.test(task.error) ? "" : " Completed sections were saved."}</span>
             {canResume ? (
               <Button size="sm" variant="secondary" loading={resuming} onClick={onResume}>
                 <Play /> Resume
@@ -346,7 +346,7 @@ function Progress({ task, canResume, onResume, resuming }: { task: Task; canResu
   );
 }
 
-function Overview({ doc, go }: { doc: StrategyDoc; go: (t: TabId) => void }) {
+function Overview({ doc, go, working }: { doc: StrategyDoc; go: (t: TabId) => void; working: boolean }) {
   const st = doc.sections.strategy?.data;
   const pillars = doc.sections.pillars?.data.pillars ?? [];
   const personas = doc.sections.audience?.data.personas ?? [];
@@ -366,7 +366,7 @@ function Overview({ doc, go }: { doc: StrategyDoc; go: (t: TabId) => void }) {
       <Card className="overflow-hidden">
         <div className="ai-gradient p-6 md:p-8">
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-2/70">Positioning</p>
-          <p className="mt-2 max-w-3xl font-display text-[28px] leading-[1.15] md:text-[32px]">{st?.positioning.statement ?? "Generating…"}</p>
+          <p className="mt-2 max-w-3xl font-display text-[28px] leading-[1.15] md:text-[32px]">{st?.positioning.statement ?? (working ? "Generating…" : "Not generated yet")}</p>
           {st ? <p className="mt-3 max-w-3xl text-[14px] text-ink-2">{st.executiveSummary}</p> : null}
         </div>
       </Card>

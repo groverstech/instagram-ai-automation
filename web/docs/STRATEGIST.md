@@ -87,7 +87,9 @@ Regenerating or editing a section flags its downstream sections as possibly stal
   Next.js `after()`.
 - Each step re-reads the strategy and saves its section when done. A failed step stops the task.
   Completed sections are kept, and **Resume** generates only what's missing.
-- A task with no heartbeat for 10 minutes (server restart) is reported as interrupted.
+- Tasks heartbeat every 20 seconds. A task with no heartbeat for 2 minutes (server restart, crash) is
+  reported as interrupted, and its concurrency lease is released so the user can resume at once.
+- Starting a task is atomic per strategy (advisory lock), so concurrent clicks can't start two runs.
 - Retries: one retry with backoff on unusable output (truncated, invalid JSON, wrong shape,
   invalid pillar count, unusable calendar) and on transient API errors (429/5xx/network). The SDK
   also retries HTTP failures itself. Auth, config and refusal errors are not retried.
@@ -107,15 +109,23 @@ available for the API key's organisation; if it isn't, research degrades to hypo
 
 ## Testing
 
-- `src/server/strategist.test.ts` (mock provider, 17 tests): preflight, profile retrieval, full
+- `src/server/strategist.test.ts` (mock provider, 20 tests): preflight, profile retrieval, full
   workflow, section regeneration and staleness, strict edits, calendar operations, the
   review/approve/version/restore/compare flow, apply-to-calendar, organisation and client-brand
   isolation, agency multi-client, retries and resumable failures, interrupted tasks, rate limits
-  and concurrency, research verification, migration upgrade.
-- `src/server/strategist-claude.test.ts` (real SDK, network intercepted, 5 tests): web search
+  and concurrency, research verification, migration upgrade, concurrent task start, lease
+  release on interruption, link safety.
+- `src/server/strategist-claude.test.ts` (real SDK, network intercepted, 6 tests): all seven agents and the
+  advisor end to end (each agent's schema, the approved profile in every prompt and never a newer
+  draft, cost totals, entry regeneration), web search
   request shape, the approved profile in the prompt, source verification against real result
   blocks, publication dates, token/cost tracking, fallback when web search is unavailable, the
   retry on truncated output, and outage handling.
+- Browser E2E on the real provider path: the production build with the real SDK, pointed at a
+  local stand-in for the Messages API via `ANTHROPIC_BASE_URL` (canned, schema-valid responses). It
+  covers onboarding → strategy → verified/hypothesis research UI → advisor → approval → app server
+  killed mid-generation → interruption detected (~2 min) → simulated API outage → resume → complete.
+  Screenshots: `docs/screenshots/strategist/real-provider-path/`.
 - **Not verified:** the quality of real Claude output and a live web search. Those need a real
   `ANTHROPIC_API_KEY` (see the go-live checklist in `DEPLOYMENT.md`). Mock output is labelled
   "Demo AI output" in the UI and is never presented as real AI.

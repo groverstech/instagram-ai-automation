@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, sql } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
 import type { AiTaskStep, Brand } from "../db/schema";
 import { admitBackgroundAi } from "../ai-guard";
@@ -148,12 +148,19 @@ export async function taskStatus(brandId: string, taskId: string) {
   const [t] = await db.select().from(schema.aiTasks).where(and(eq(schema.aiTasks.id, taskId), eq(schema.aiTasks.brandId, brandId)));
   if (!t) throw new StrategyError("Task not found.");
   if ((t.status === "running" || t.status === "queued") && Date.now() - (t.heartbeatAt ?? t.createdAt).getTime() > STALE_TASK_MS) {
-    const steps = t.steps.map((s) => (s.status === "running" || s.status === "pending" ? { ...s, status: "failed" as const, error: "Interrupted" } : s));
+    const steps = t.steps.map((s) => (s.status === "running" ? { ...s, status: "failed" as const, error: "Interrupted" } : s.status === "pending" ? { ...s, status: "skipped" as const } : s));
     const error = "The task was interrupted (the server restarted or timed out). Completed sections were saved; resume to finish the rest.";
     await db.update(schema.aiTasks).set({ status: "failed", steps, error, finishedAt: new Date() }).where(eq(schema.aiTasks.id, t.id));
     // The worker died holding a concurrency lease; free it so the user can resume right away.
     const leaseId = (t.input as { leaseId?: string }).leaseId;
     if (leaseId) await releaseAiSlot(leaseId);
+    // Close the agent run that was in flight, so the activity log doesn't show it running forever.
+    if (t.strategyId) {
+      await db
+        .update(schema.agentRuns)
+        .set({ status: "failed", error: "Interrupted: the server stopped during this run.", finishedAt: new Date() })
+        .where(and(eq(schema.agentRuns.brandId, brandId), eq(schema.agentRuns.status, "running"), sql`${schema.agentRuns.input}->>'strategyId' = ${t.strategyId}`, lt(schema.agentRuns.startedAt, new Date(Date.now() - STALE_TASK_MS))));
+    }
     return { ...t, status: "failed" as const, steps, error };
   }
   return t;

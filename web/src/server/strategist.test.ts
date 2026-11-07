@@ -553,8 +553,14 @@ describe("review hardening", () => {
       .insert(schema.aiTasks)
       .values({ brandId: A2.id, workspaceId: A2.workspaceId, userId: ownerId, kind: "strategy_workflow", strategyId: row.id, status: "running", input: { leaseId: lease }, steps: [{ id: "research", label: "x", status: "running" }], heartbeatAt: new Date(Date.now() - 3 * 60_000) })
       .returning();
-    expect((await wf.taskStatus(A2.id, t.id)).status).toBe("failed");
+    const [orphan] = await db.insert(schema.agentRuns).values({ brandId: A2.id, userId: ownerId, agent: "market_research", task: "Web research", input: { strategyId: row.id }, startedAt: new Date(Date.now() - 3 * 60_000) }).returning();
+    const st = await wf.taskStatus(A2.id, t.id);
+    expect(st.status).toBe("failed");
+    expect(st.steps[0]).toMatchObject({ status: "failed", error: "Interrupted" });
     expect(await db.select().from(schema.aiTaskLeases).where(eq(schema.aiTaskLeases.id, lease))).toHaveLength(0);
+    const [closed] = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.id, orphan.id));
+    expect(closed.status).toBe("failed");
+    expect(closed.error).toMatch(/Interrupted/);
   });
 
   it("never renders non-http research links", async () => {
