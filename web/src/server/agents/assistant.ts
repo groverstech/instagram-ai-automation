@@ -4,7 +4,7 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import { addDays, format as fmt, parseISO, startOfDay } from "date-fns";
 import { z } from "zod";
 import { getDb, schema } from "../db/client";
-import { anthropicClient, MODEL } from "../ai/llm";
+import { anthropicClient, mockActive, MODEL } from "../ai/llm";
 import { buildContext, renderContext } from "./context";
 import { createCampaign } from "./campaign";
 import { generateCreatives } from "./creative";
@@ -192,8 +192,9 @@ export async function chat(scope: RunScope, brand: Brand, message: string): Prom
 
   const { data } = await runAgent(scope, "assistant", message.slice(0, 80), { message }, async (runId) => {
     const sub = { ...scope, parentId: runId };
-    const out = process.env.AI_PROVIDER === "mock" ? await mockChat(sub, brand, message) : await claudeChat(sub, brand, history.slice(-12), message);
-    return { data: out, provider: process.env.AI_PROVIDER === "mock" ? "mock" : `anthropic:${MODEL}` };
+    const mock = mockActive();
+    const out = mock ? await mockChat(sub, brand, message) : await claudeChat(sub, brand, history.slice(-12), message);
+    return { data: out, provider: mock ? "mock" : `anthropic:${MODEL}` };
   });
   await db.insert(schema.assistantMessages).values({ brandId: brand.id, userId: scope.userId, role: "assistant", content: data.text, actions: data.actions });
   return data;

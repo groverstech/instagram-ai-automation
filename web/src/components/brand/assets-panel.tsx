@@ -4,6 +4,7 @@ import { AlertTriangle, Check, FileText, Presentation, RefreshCw, Trash2, Upload
 import { analyzeAssetsAction, deleteAsset, setAssetStatus, uploadAssets } from "@/app/actions/brand";
 import { Badge, Button, Card, CardBody, Empty, Field, Select } from "@/components/ui";
 import { useRun } from "@/components/hooks";
+import { toast } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 
 export const ASSET_KINDS = [
@@ -18,7 +19,7 @@ export const ASSET_KINDS = [
 ] as const;
 
 export const ACCEPT = ".png,.jpg,.jpeg,.webp,.gif,.svg,.pdf,.docx,.pptx,.txt,.md";
-export const FORMATS_HINT = "PNG, JPG, WebP, GIF, SVG, PDF, DOCX, PPTX, TXT, MD · up to 15 MB each, 20 per upload";
+export const FORMATS_HINT = "PNG, JPG, WebP, GIF, SVG, PDF, DOCX, PPTX, TXT, MD · up to 15 MB each, 20 files / 50 MB per upload";
 
 export type AssetRow = {
   id: string;
@@ -64,10 +65,15 @@ export function AssetsPanel({ brandId, assets, canEdit }: { brandId: string; ass
               accept={ACCEPT}
               className="hidden"
               onChange={(e) => {
-                const fd = new FormData();
-                for (const f of Array.from(e.target.files ?? [])) fd.append(`asset_${kind}`, f);
-                run(() => uploadAssets(brandId, fd), { key: "upload", success: (n) => `${n} file(s) uploaded. Analyse them or regenerate the profile.` });
+                const list = Array.from(e.target.files ?? []);
                 e.target.value = "";
+                if (list.length > 20 || list.reduce((n, f) => n + f.size, 0) > 50 * 1024 * 1024) {
+                  toast("Upload up to 20 files and 50 MB at a time.", "error");
+                  return;
+                }
+                const fd = new FormData();
+                for (const f of list) fd.append(`asset_${kind}`, f);
+                run(() => uploadAssets(brandId, fd), { key: "upload", success: (n) => `${n} file(s) uploaded. Analyse them or regenerate the profile.` });
               }}
             />
             <Button variant="secondary" loading={busy("upload")} onClick={() => input.current?.click()}>

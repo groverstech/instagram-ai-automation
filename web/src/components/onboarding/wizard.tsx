@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "motion/react";
 import { ArrowLeft, ArrowRight, Check, Plus, Sparkles, Upload, X } from "lucide-react";
 import { createBrand, runBrandIntelligence } from "@/app/actions/brand";
-import { Button, Field, Input, Notice, Textarea } from "@/components/ui";
+import { Button, Field, Input, Notice, Select, Textarea } from "@/components/ui";
 import { OBJECTIVES, PLATFORMS, objectiveLabel } from "@/lib/domain";
 import { cn } from "@/lib/utils";
 
@@ -26,7 +26,7 @@ const UPLOADS = [
 const ACCEPT = ".png,.jpg,.jpeg,.webp,.gif,.svg,.pdf,.docx,.pptx,.txt,.md";
 const MAX_BYTES = 15 * 1024 * 1024;
 
-export function OnboardingWizard({ userName }: { userName: string }) {
+export function OnboardingWizard({ userName, workspaces, defaultWorkspaceId }: { userName: string; workspaces: { id: string; name: string }[]; defaultWorkspaceId: string }) {
   const router = useRouter();
   const formRef = useRef<HTMLFormElement>(null);
   const [step, setStep] = useState(0);
@@ -47,6 +47,10 @@ export function OnboardingWizard({ userName }: { userName: string }) {
     setError(null);
     const fd = new FormData(formRef.current);
     fd.set("colors", colors.join(","));
+    const all = Object.values(files).flat();
+    if (all.length > 20 || all.reduce((n, f) => n + f.size, 0) > 50 * 1024 * 1024) {
+      return setError("Upload up to 20 files and 50 MB during onboarding. You can add more later from My Brand → Assets.");
+    }
     for (const [kind, list] of Object.entries(files)) for (const f of list) fd.append(`asset_${kind}`, f);
     setPhase("saving");
     const created = await createBrand(fd);
@@ -109,6 +113,19 @@ export function OnboardingWizard({ userName }: { userName: string }) {
         {/* All steps stay mounted so the single form submits every field. */}
         <div className="mt-8 space-y-5">
           <Section show={step === 0}>
+            {workspaces.length > 1 ? (
+              <Field label="Organisation" hint="The brand, its memory and assets belong to this organisation">
+                <Select name="workspaceId" defaultValue={defaultWorkspaceId}>
+                  {workspaces.map((w) => (
+                    <option key={w.id} value={w.id}>
+                      {w.name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            ) : (
+              <input type="hidden" name="workspaceId" value={defaultWorkspaceId} />
+            )}
             <Field label="Brand or business name">
               <Input name="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Kora Ceramics" autoFocus />
             </Field>

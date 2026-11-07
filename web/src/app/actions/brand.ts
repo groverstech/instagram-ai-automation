@@ -3,11 +3,10 @@ import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/server/db/client";
-import { getSession, setActiveBrand } from "@/server/auth/session";
-import { AccessError, requireBrand } from "@/server/auth/guard";
-import { roleAtLeast } from "@/lib/roles";
+import { setActiveBrand } from "@/server/auth/session";
+import { AccessError, requireBrand, requireWorkspaceRole } from "@/server/auth/guard";
 import { storage } from "@/server/storage";
-import { extFor, validateUpload, MAX_FILES_PER_UPLOAD, UploadError } from "@/server/assets";
+import { extFor, validateUpload, MAX_FILES_PER_UPLOAD, MAX_TOTAL_UPLOAD_BYTES, UploadError } from "@/server/assets";
 import { safe } from "@/server/action";
 import { analyzeAssets, generateBrandProfile, saveProfileEdits, approveProfile, setSectionStatus, syncProfileMemory } from "@/server/agents/brand";
 import { askBrand, clearBrandChat } from "@/server/agents/brand-qa";
@@ -62,6 +61,7 @@ async function checkUploads(fd: FormData): Promise<CheckedUpload[]> {
   const files: { kind: AssetKind; file: File }[] = [];
   for (const kind of ASSET_KINDS) for (const f of fd.getAll(`asset_${kind}`)) if (f instanceof File && f.size) files.push({ kind, file: f });
   if (files.length > MAX_FILES_PER_UPLOAD) throw new UploadError(`Upload up to ${MAX_FILES_PER_UPLOAD} files at a time.`);
+  if (files.reduce((n, f) => n + f.file.size, 0) > MAX_TOTAL_UPLOAD_BYTES) throw new UploadError("Uploads are limited to 50 MB at a time. Add the rest afterwards from My Brand → Assets.");
   const checked: CheckedUpload[] = [];
   for (const { kind, file } of files) {
     const buf = Buffer.from(await file.arrayBuffer());
@@ -85,19 +85,20 @@ async function storeUploads(brandId: string, checked: CheckedUpload[]) {
 
 export async function createBrand(fd: FormData) {
   return safe(async () => {
-    const session = await getSession();
-    if (!session) throw new AccessError("Not signed in.");
+    // The target organisation is explicit and verified, never "the user's first membership":
+    // agency users belong to several organisations.
+    const workspaceId = String(fd.get("workspaceId") ?? "");
+    if (!workspaceId) throw new AccessError("Choose the organisation this brand belongs to.");
+    const { session } = await requireWorkspaceRole(workspaceId, "admin");
     const db = await getDb();
-    const [m] = await db.select().from(schema.workspaceMembers).where(and(eq(schema.workspaceMembers.userId, session.user.id), eq(schema.workspaceMembers.status, "active")));
-    if (!m || !roleAtLeast(m.role, "admin")) throw new AccessError("You need admin access to add a brand.");
-    await assertCanAdd(m.workspaceId, "brands");
+    await assertCanAdd(workspaceId, "brands");
     const input = parseBrandForm(fd);
     // Validate files before creating anything, so a rejected upload leaves no partial brand behind.
     const uploads = await checkUploads(fd);
     const { headingFont, bodyFont, ...rest } = input;
     const [brand] = await db
       .insert(schema.brands)
-      .values({ ...rest, workspaceId: m.workspaceId, fonts: { heading: headingFont || undefined, body: bodyFont || undefined } })
+      .values({ ...rest, workspaceId, fonts: { heading: headingFont || undefined, body: bodyFont || undefined } })
       .returning();
     await storeUploads(brand.id, uploads);
     await setActiveBrand(session.sessionId, brand.id);
@@ -157,6 +158,7 @@ export async function runBrandIntelligence(brandId: string) {
 export async function saveProfile(brandId: string, profileId: string, data: unknown) {
   return safe(async () => {
     await requireBrand(brandId, "editor");
+    if (JSON.stringify(data ?? null).length > 200_000) throw new Error("This profile is too large to save. Shorten some sections.");
     await saveProfileEdits(brandId, profileId, BrandProfile.parse(data));
     revalidatePath("/brand");
   });
