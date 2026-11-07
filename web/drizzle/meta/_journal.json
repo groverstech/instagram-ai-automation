@@ -15,6 +15,13 @@
       "when": 1794033988036,
       "tag": "0001_billing",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794040028055,
+      "tag": "0002_brand_intelligence",
+      "breakpoints": true
     }
   ]
 }

@@ -85,6 +85,7 @@ export const brands = pgTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     website: text("website"),
+    description: text("description"),
     industry: text("industry"),
     category: text("category"),
     products: text("products"),
@@ -105,7 +106,8 @@ export const brands = pgTable(
   (t) => [index("brands_ws_idx").on(t.workspaceId)],
 );
 
-export type AssetKind = "logo" | "guideline" | "product" | "creative" | "reference" | "post";
+export type AssetKind = "logo" | "guideline" | "product" | "creative" | "reference" | "post" | "presentation" | "document";
+export type AssetStatus = "pending" | "approved" | "rejected";
 
 export const brandAssets = pgTable(
   "brand_assets",
@@ -120,6 +122,11 @@ export const brandAssets = pgTable(
     mime: text("mime").notNull(),
     size: integer("size").notNull().default(0),
     analysis: jsonb("analysis").$type<Record<string, unknown> | null>(),
+    analysisError: text("analysis_error"),
+    /** Text extracted from documents/presentations/SVG, used for analysis. */
+    extractedText: text("extracted_text"),
+    /** Approved assets are part of the brand's reference set used by every agent. */
+    status: text("status").$type<AssetStatus>().notNull().default("pending"),
     createdAt: createdAt(),
   },
   (t) => [index("assets_brand_idx").on(t.brandId)],
@@ -134,7 +141,11 @@ export const brandProfiles = pgTable(
       .references(() => brands.id, { onDelete: "cascade" }),
     version: integer("version").notNull(),
     status: text("status").$type<"draft" | "approved" | "superseded">().notNull().default("draft"),
+    /** 1 = original flat profile; 2 = sectioned profile with provenance (see agents/profile.ts). */
+    schemaVersion: integer("schema_version").notNull().default(1),
     data: jsonb("data").$type<Record<string, unknown>>().notNull(),
+    /** Per-section review state: { identity: "confirmed" | "needs_review", ... } */
+    sectionStatus: jsonb("section_status").$type<Record<string, "confirmed" | "needs_review">>().notNull().default({}),
     runId: text("run_id"),
     approvedBy: text("approved_by"),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
@@ -143,7 +154,7 @@ export const brandProfiles = pgTable(
   (t) => [uniqueIndex("profile_brand_version").on(t.brandId, t.version)],
 );
 
-export type MemoryKind = "fact" | "preference" | "feedback" | "approval" | "insight" | "competitor";
+export type MemoryKind = "fact" | "preference" | "feedback" | "approval" | "insight" | "competitor" | "instruction";
 
 export const brandMemories = pgTable(
   "brand_memories",
@@ -378,8 +389,12 @@ export const assistantMessages = pgTable(
       .references(() => brands.id, { onDelete: "cascade" }),
     userId: text("user_id").notNull(),
     role: text("role").$type<"user" | "assistant">().notNull(),
+    /** "workflow" = action assistant; "brand" = Brand Q&A assistant */
+    channel: text("channel").$type<"workflow" | "brand">().notNull().default("workflow"),
     content: text("content").notNull(),
     actions: jsonb("actions").$type<{ label: string; href: string }[]>().notNull().default([]),
+    /** Brand Q&A metadata: sections used, whether the answer is grounded, missing info. */
+    meta: jsonb("meta").$type<Record<string, unknown> | null>(),
     createdAt: createdAt(),
   },
   (t) => [index("am_brand_idx").on(t.brandId, t.createdAt)],
