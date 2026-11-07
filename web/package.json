@@ -11,7 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "worker": "tsx --conditions=react-server src/server/jobs/worker.ts",
-    "db:seed": "tsx --conditions=react-server src/server/db/seed.ts"
+    "db:seed": "tsx --conditions=react-server src/server/db/seed.ts",
+    "check:secrets": "node scripts/check-client-secrets.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",

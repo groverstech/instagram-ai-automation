@@ -42,3 +42,6 @@ jobs:
 
       - name: Production build
         run: npm run build
+
+      - name: Client bundle secret check
+        run: npm run check:secrets
