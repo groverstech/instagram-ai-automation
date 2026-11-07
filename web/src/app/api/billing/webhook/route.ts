@@ -1,5 +1,6 @@
 import Stripe from "stripe";
 import { BillingError, handleWebhook } from "@/server/billing";
+import { log } from "@/server/log";
 
 export const runtime = "nodejs";
 
@@ -13,7 +14,7 @@ export async function POST(req: Request) {
     if (e instanceof Stripe.errors.StripeSignatureVerificationError || e instanceof BillingError) {
       return new Response(`Webhook rejected: ${e.message}`, { status: 400 });
     }
-    console.error("[billing] webhook processing failed", e);
+    log.error("billing.webhook_failed", { error: e instanceof Error ? e.message : String(e) });
     return new Response("Webhook processing failed", { status: 500 }); // Stripe will retry
   }
 }

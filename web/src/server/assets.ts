@@ -152,3 +152,25 @@ export async function extractText(mime: string, buf: Buffer): Promise<string | n
   out = out.replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n").trim();
   return out.slice(0, MAX_TEXT);
 }
+
+export type CheckedUpload<K extends string = string> = { kind: K; name: string; buf: Buffer; mime: DetectedMime };
+
+/**
+ * Validate an upload form: file count, total size, then each file by content.
+ * All-or-nothing: throws on the first invalid file so nothing is stored.
+ */
+export async function checkUploadForm<K extends string>(fd: FormData, kinds: readonly K[]): Promise<CheckedUpload<K>[]> {
+  const files: { kind: K; file: File }[] = [];
+  for (const kind of kinds) for (const f of fd.getAll(`asset_${kind}`)) if (f instanceof File && f.size) files.push({ kind, file: f });
+  if (files.length > MAX_FILES_PER_UPLOAD) throw new UploadError(`Upload up to ${MAX_FILES_PER_UPLOAD} files at a time.`);
+  if (files.reduce((n, f) => n + f.file.size, 0) > MAX_TOTAL_UPLOAD_BYTES) {
+    throw new UploadError("Uploads are limited to 50 MB at a time. Add the rest afterwards from My Brand → Assets.");
+  }
+  const checked: CheckedUpload<K>[] = [];
+  for (const { kind, file } of files) {
+    const buf = Buffer.from(await file.arrayBuffer());
+    const mime = await validateUpload(file.name, buf);
+    checked.push({ kind, name: file.name.replace(/[\u0000-\u001f]/g, "").slice(0, 200), buf, mime });
+  }
+  return checked;
+}

@@ -4,8 +4,10 @@ import { friendlyAIError } from "./ai/llm";
 import { QuotaError } from "./quota";
 import { BillingError } from "./billing";
 import { UploadError } from "./assets";
+import { RateLimitError } from "./ratelimit";
+import { log } from "./log";
 
-export type Result<T = undefined> = { ok: true; data: T } | { ok: false; error: string };
+export type Result<T = undefined> = { ok: true; data: T } | { ok: false; error: string; status?: number; retryAfter?: number };
 
 /** Uniform error handling for server actions: friendly messages, no stack traces to clients. */
 export async function safe<T>(fn: () => Promise<T>): Promise<Result<T>> {
@@ -13,13 +15,14 @@ export async function safe<T>(fn: () => Promise<T>): Promise<Result<T>> {
     return { ok: true, data: await fn() };
   } catch (e) {
     if (e && typeof e === "object" && "digest" in e && String((e as { digest: string }).digest).startsWith("NEXT_REDIRECT")) throw e;
+    if (e instanceof RateLimitError) return { ok: false, error: e.message, status: 429, retryAfter: e.retryAfter };
     if (e instanceof AccessError || e instanceof QuotaError || e instanceof BillingError || e instanceof UploadError) return { ok: false, error: e.message };
     const ai = friendlyAIError(e);
     if (ai) {
-      console.error("[action] AI request failed", e instanceof Error ? e.message : e);
+      log.error("action.ai_failed", { error: e instanceof Error ? e.message : String(e) });
       return { ok: false, error: ai };
     }
-    console.error("[action]", e);
+    log.error("action.failed", { error: e instanceof Error ? e.message : String(e), stack: e instanceof Error ? e.stack?.split("\n").slice(0, 6).join("\n") : undefined });
     const msg = e instanceof Error ? e.message : "Something went wrong.";
     return { ok: false, error: msg.length > 400 ? msg.slice(0, 400) + "…" : msg };
   }

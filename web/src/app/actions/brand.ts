@@ -6,7 +6,7 @@ import { getDb, schema } from "@/server/db/client";
 import { setActiveBrand } from "@/server/auth/session";
 import { AccessError, requireBrand, requireWorkspaceRole } from "@/server/auth/guard";
 import { storage } from "@/server/storage";
-import { extFor, validateUpload, MAX_FILES_PER_UPLOAD, MAX_TOTAL_UPLOAD_BYTES, UploadError } from "@/server/assets";
+import { checkUploadForm, extFor } from "@/server/assets";
 import { safe } from "@/server/action";
 import { analyzeAssets, generateBrandProfile, saveProfileEdits, approveProfile, setSectionStatus, syncProfileMemory } from "@/server/agents/brand";
 import { askBrand, clearBrandChat } from "@/server/agents/brand-qa";
@@ -14,7 +14,9 @@ import { SECTIONS, type SectionId } from "@/lib/brand-profile";
 import { log } from "@/server/log";
 import { BrandProfile } from "@/server/agents/schemas";
 import { remember } from "@/server/memory";
-import { assertAiQuota, assertCanAdd } from "@/server/quota";
+import { assertCanAdd } from "@/server/quota";
+import { guardedAi } from "@/server/ai-guard";
+import { enforce } from "@/server/ratelimit";
 import { splitList } from "@/lib/utils";
 import type { AssetKind } from "@/server/db/schema";
 
@@ -54,24 +56,12 @@ function parseBrandForm(fd: FormData) {
   return BrandInput.parse(raw);
 }
 
-type CheckedUpload = { kind: AssetKind; name: string; buf: Buffer; mime: string };
+const hasFiles = (fd: FormData) => ASSET_KINDS.some((k) => fd.getAll(`asset_${k}`).some((f) => f instanceof File && f.size > 0));
 
 /** Validate every file by content. Nothing is written until all files pass. */
-async function checkUploads(fd: FormData): Promise<CheckedUpload[]> {
-  const files: { kind: AssetKind; file: File }[] = [];
-  for (const kind of ASSET_KINDS) for (const f of fd.getAll(`asset_${kind}`)) if (f instanceof File && f.size) files.push({ kind, file: f });
-  if (files.length > MAX_FILES_PER_UPLOAD) throw new UploadError(`Upload up to ${MAX_FILES_PER_UPLOAD} files at a time.`);
-  if (files.reduce((n, f) => n + f.file.size, 0) > MAX_TOTAL_UPLOAD_BYTES) throw new UploadError("Uploads are limited to 50 MB at a time. Add the rest afterwards from My Brand → Assets.");
-  const checked: CheckedUpload[] = [];
-  for (const { kind, file } of files) {
-    const buf = Buffer.from(await file.arrayBuffer());
-    const mime = await validateUpload(file.name, buf);
-    checked.push({ kind, name: file.name.replace(/[\u0000-\u001f]/g, "").slice(0, 200), buf, mime });
-  }
-  return checked;
-}
+const checkUploads = (fd: FormData) => checkUploadForm(fd, ASSET_KINDS);
 
-async function storeUploads(brandId: string, checked: CheckedUpload[]) {
+async function storeUploads(brandId: string, checked: { kind: AssetKind; name: string; buf: Buffer; mime: string }[]) {
   const db = await getDb();
   for (const c of checked) {
     const id = crypto.randomUUID();
@@ -92,6 +82,7 @@ export async function createBrand(fd: FormData) {
     const { session } = await requireWorkspaceRole(workspaceId, "admin");
     const db = await getDb();
     await assertCanAdd(workspaceId, "brands");
+    if (hasFiles(fd)) await enforce("upload", { userId: session.user.id, workspaceId });
     const input = parseBrandForm(fd);
     // Validate files before creating anything, so a rejected upload leaves no partial brand behind.
     const uploads = await checkUploads(fd);
@@ -119,7 +110,8 @@ export async function updateBrand(brandId: string, fd: FormData) {
 
 export async function uploadAssets(brandId: string, fd: FormData) {
   return safe(async () => {
-    await requireBrand(brandId, "editor");
+    const { session, brand } = await requireBrand(brandId, "editor");
+    await enforce("upload", { userId: session.user.id, workspaceId: brand.workspaceId });
     const n = await storeUploads(brandId, await checkUploads(fd));
     revalidatePath("/brand");
     return n;
@@ -146,9 +138,8 @@ export async function switchBrand(brandId: string) {
 
 export async function runBrandIntelligence(brandId: string) {
   return safe(async () => {
-    const { brand, session } = await requireBrand(brandId, "editor");
-    await assertAiQuota(brandId);
-    const r = await generateBrandProfile({ brandId, userId: session.user.id }, brand);
+    const access = await requireBrand(brandId, "editor");
+    const r = await guardedAi(access, "ai_heavy", () => generateBrandProfile({ brandId, userId: access.session.user.id }, access.brand));
     revalidatePath("/brand");
     revalidatePath("/dashboard");
     return { profileId: r.profile.id, assetsAnalyzed: r.assets.analyzed, assetsFailed: r.assets.failed };
@@ -223,9 +214,8 @@ export async function setAssetStatus(brandId: string, assetId: string, status: "
 
 export async function analyzeAssetsAction(brandId: string) {
   return safe(async () => {
-    const { brand, session } = await requireBrand(brandId, "editor");
-    await assertAiQuota(brandId);
-    const r = await analyzeAssets({ brandId, userId: session.user.id }, brand, { retryFailed: true });
+    const access = await requireBrand(brandId, "editor");
+    const r = await guardedAi(access, "ai_heavy", () => analyzeAssets({ brandId, userId: access.session.user.id }, access.brand, { retryFailed: true }));
     revalidatePath("/brand");
     return r;
   });
@@ -233,11 +223,10 @@ export async function analyzeAssetsAction(brandId: string) {
 
 export async function askBrandAction(brandId: string, question: string) {
   return safe(async () => {
-    const { brand, session } = await requireBrand(brandId, "viewer");
+    const access = await requireBrand(brandId, "viewer");
     const q = question.trim().slice(0, 2000);
     if (!q) throw new Error("Ask a question first.");
-    await assertAiQuota(brandId);
-    return askBrand({ brandId, userId: session.user.id }, brand, q);
+    return guardedAi(access, "ai", () => askBrand({ brandId, userId: access.session.user.id }, access.brand, q));
   });
 }
 

@@ -9,6 +9,7 @@ import {
   vector,
   index,
   uniqueIndex,
+  primaryKey,
 } from "drizzle-orm/pg-core";
 
 const id = () =>
@@ -406,3 +407,28 @@ export type Creative = typeof creatives.$inferSelect;
 export type Campaign = typeof campaigns.$inferSelect;
 export type SocialAccount = typeof socialAccounts.$inferSelect;
 export type AgentRun = typeof agentRuns.$inferSelect;
+
+/** Fixed-window rate-limit counters, shared by all app instances (see src/server/ratelimit.ts). */
+export const rateLimitBuckets = pgTable(
+  "rate_limit_buckets",
+  {
+    key: text("key").notNull(),
+    windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+    count: integer("count").notNull().default(0),
+  },
+  (t) => [primaryKey({ columns: [t.key, t.windowStart] }), index("rlb_window_idx").on(t.windowStart)],
+);
+
+/** Leases for running AI tasks, to cap concurrency per user and per organisation. */
+export const aiTaskLeases = pgTable(
+  "ai_task_leases",
+  {
+    id: id(),
+    workspaceId: text("workspace_id").notNull(),
+    userId: text("user_id").notNull(),
+    kind: text("kind").notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("leases_ws_idx").on(t.workspaceId, t.expiresAt), index("leases_user_idx").on(t.userId, t.expiresAt)],
+);

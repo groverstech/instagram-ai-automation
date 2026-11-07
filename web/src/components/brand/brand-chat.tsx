@@ -50,7 +50,7 @@ export function BrandChat({ brandId, initial, canAsk, canClear, hasProfile }: { 
     setInput("");
     setMsgs((m) => [...m, { id: `local-${Date.now()}`, role: "user", content: question, meta: null }]);
     start(async () => {
-      const r = await askBrandAction(brandId, question);
+      const r = await askBrandAction(brandId, question).catch(() => ({ ok: false as const, error: "The server is busy or unreachable. Please wait a moment and try again." }));
       setMsgs((m) => [
         ...m,
         r.ok

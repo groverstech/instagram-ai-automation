@@ -53,13 +53,13 @@ export function OnboardingWizard({ userName, workspaces, defaultWorkspaceId }: {
     }
     for (const [kind, list] of Object.entries(files)) for (const f of list) fd.append(`asset_${kind}`, f);
     setPhase("saving");
-    const created = await createBrand(fd);
+    const created = await createBrand(fd).catch(() => ({ ok: false as const, error: "The server is busy or unreachable. Please wait a moment and try again." }));
     if (!created.ok) {
       setPhase("form");
       return setError(created.error);
     }
     setPhase("analyzing");
-    const analyzed = await runBrandIntelligence(created.data.brandId);
+    const analyzed = await runBrandIntelligence(created.data.brandId).catch(() => ({ ok: false as const, error: "The server is busy or unreachable. Please wait a moment and try again." }));
     if (!analyzed.ok) {
       // The brand is saved; send them to the brand page where they can retry analysis.
       router.push(`/brand?analysisError=${encodeURIComponent(analyzed.error)}`);

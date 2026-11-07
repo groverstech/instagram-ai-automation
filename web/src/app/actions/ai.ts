@@ -3,9 +3,9 @@ import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { parseISO, startOfDay, addDays } from "date-fns";
 import { getDb, schema } from "@/server/db/client";
-import { requireBrand } from "@/server/auth/guard";
+import { requireBrand, type BrandAccess } from "@/server/auth/guard";
 import { safe } from "@/server/action";
-import { assertAiQuota } from "@/server/quota";
+import { guardedAi } from "@/server/ai-guard";
 import { generateStrategy, approveStrategy, planCalendar, suggestIdeas, writeCopy } from "@/server/agents/strategy";
 import { generateCreatives, createVariation, generateCreativeImage, updateConcept, setCreativeStatus } from "@/server/agents/creative";
 import { createCampaign, producePost } from "@/server/agents/campaign";
@@ -14,10 +14,12 @@ import { analyzeCompetitor } from "@/server/agents/competitor";
 import { chat } from "@/server/agents/assistant";
 import type { CreativeConcept } from "@/server/agents/schemas";
 
-async function aiScope(brandId: string) {
-  const access = await requireBrand(brandId, "editor");
-  await assertAiQuota(brandId);
-  return { ...access, scope: { brandId, userId: access.session.user.id } };
+/** Editor access + plan quota + rate limits + concurrency lease around an AI action. */
+function aiAction<T>(brandId: string, kind: "ai" | "ai_heavy", fn: (a: BrandAccess & { scope: { brandId: string; userId: string } }) => Promise<T>) {
+  return safe(async () => {
+    const access = await requireBrand(brandId, "editor");
+    return guardedAi(access, kind, () => fn({ ...access, scope: { brandId, userId: access.session.user.id } }));
+  });
 }
 
 const day = (s: string | undefined, fallback: Date) => {
@@ -27,8 +29,7 @@ const day = (s: string | undefined, fallback: Date) => {
 
 // ---------- Strategy ----------
 export async function generateStrategyAction(brandId: string, month: string, focus: string) {
-  return safe(async () => {
-    const { brand, scope } = await aiScope(brandId);
+  return aiAction(brandId, "ai_heavy", async ({ brand, scope }) => {
     const s = await generateStrategy(scope, brand, month, focus || undefined);
     revalidatePath("/strategist");
     return { id: s.id };
@@ -44,8 +45,7 @@ export async function approveStrategyAction(brandId: string, strategyId: string)
 }
 
 export async function planCalendarAction(brandId: string, input: { start?: string; days: number; platforms: string[]; postsPerWeek?: number; note?: string }) {
-  return safe(async () => {
-    const { brand, scope } = await aiScope(brandId);
+  return aiAction(brandId, "ai_heavy", async ({ brand, scope }) => {
     const r = await planCalendar(scope, brand, { start: day(input.start, addDays(new Date(), 1)), days: Math.min(Math.max(input.days, 1), 60), platforms: input.platforms, postsPerWeek: input.postsPerWeek, note: input.note });
     revalidatePath("/calendar");
     revalidatePath("/dashboard");
@@ -55,15 +55,13 @@ export async function planCalendarAction(brandId: string, input: { start?: strin
 
 // ---------- Content ----------
 export async function writeCopyAction(brandId: string, input: { brief: string; platform: string; objective: string; pillar?: string }) {
-  return safe(async () => {
-    const { brand, scope } = await aiScope(brandId);
+  return aiAction(brandId, "ai", async ({ brand, scope }) => {
     return (await writeCopy(scope, brand, input)).data;
   });
 }
 
 export async function suggestIdeasAction(brandId: string, goal: string) {
-  return safe(async () => {
-    const { brand, scope } = await aiScope(brandId);
+  return aiAction(brandId, "ai", async ({ brand, scope }) => {
     return (await suggestIdeas(scope, brand, goal)).data;
   });
 }
@@ -98,8 +96,7 @@ export async function createDraftPost(brandId: string, input: { platform: string
 
 // ---------- Creative ----------
 export async function generateCreativesAction(brandId: string, input: { brief: string; format: string; style: string; count: number; objective?: string; campaignId?: string }) {
-  return safe(async () => {
-    const { brand, scope } = await aiScope(brandId);
+  return aiAction(brandId, "ai_heavy", async ({ brand, scope }) => {
     const ids = await generateCreatives(scope, brand, { ...input, campaignId: input.campaignId || null });
     revalidatePath("/creative-studio");
     return { ids };
@@ -114,8 +111,7 @@ async function ownCreative(brandId: string, creativeId: string) {
 }
 
 export async function variationAction(brandId: string, creativeId: string, direction: string) {
-  return safe(async () => {
-    const { brand, scope } = await aiScope(brandId);
+  return aiAction(brandId, "ai_heavy", async ({ brand, scope }) => {
     const ids = await createVariation(scope, brand, await ownCreative(brandId, creativeId), direction);
     revalidatePath("/creative-studio");
     return { ids };
@@ -123,8 +119,7 @@ export async function variationAction(brandId: string, creativeId: string, direc
 }
 
 export async function regenerateImageAction(brandId: string, creativeId: string) {
-  return safe(async () => {
-    const { brand, scope } = await aiScope(brandId);
+  return aiAction(brandId, "ai_heavy", async ({ brand, scope }) => {
     await generateCreativeImage(scope, brand, await ownCreative(brandId, creativeId));
     revalidatePath("/creative-studio");
   });
@@ -157,8 +152,7 @@ export async function deleteCreativeAction(brandId: string, creativeId: string) 
 
 // ---------- Campaigns ----------
 export async function createCampaignAction(brandId: string, input: { brief: string; type: string; objective: string; start: string; days: number; platforms: string[]; style: string; produceFirst: number }) {
-  return safe(async () => {
-    const { brand, scope } = await aiScope(brandId);
+  return aiAction(brandId, "ai_heavy", async ({ brand, scope }) => {
     const r = await createCampaign(scope, brand, { brief: input.brief, type: input.type, objective: input.objective, start: day(input.start, addDays(new Date(), 1)), days: input.days, platforms: input.platforms, creativeStyle: input.style, produceFirst: Math.min(input.produceFirst, 6) });
     revalidatePath("/campaigns");
     revalidatePath("/calendar");
@@ -167,8 +161,7 @@ export async function createCampaignAction(brandId: string, input: { brief: stri
 }
 
 export async function producePostAction(brandId: string, postId: string, style: string) {
-  return safe(async () => {
-    const { brand, scope } = await aiScope(brandId);
+  return aiAction(brandId, "ai_heavy", async ({ brand, scope }) => {
     const db = await getDb();
     const [p] = await db.select().from(schema.posts).where(and(eq(schema.posts.id, postId), eq(schema.posts.brandId, brandId)));
     if (!p) throw new Error("Post not found");
@@ -201,8 +194,7 @@ export async function deleteCampaign(brandId: string, campaignId: string) {
 
 // ---------- Analytics & competitors ----------
 export async function analyzeAction(brandId: string, days: number) {
-  return safe(async () => {
-    const { brand, scope } = await aiScope(brandId);
+  return aiAction(brandId, "ai_heavy", async ({ brand, scope }) => {
     const r = await analyzePerformance(scope, brand, days);
     return { insights: r.data, posts: r.posts, runId: r.runId };
   });
@@ -223,8 +215,7 @@ export async function addCompetitor(brandId: string, input: { name: string; url?
 }
 
 export async function analyzeCompetitorAction(brandId: string, competitorId: string) {
-  return safe(async () => {
-    const { brand, scope } = await aiScope(brandId);
+  return aiAction(brandId, "ai_heavy", async ({ brand, scope }) => {
     await analyzeCompetitor(scope, brand, competitorId);
     revalidatePath("/competitors");
   });
@@ -241,8 +232,7 @@ export async function deleteCompetitor(brandId: string, competitorId: string) {
 
 // ---------- Assistant ----------
 export async function assistantAction(brandId: string, message: string) {
-  return safe(async () => {
-    const { brand, scope } = await aiScope(brandId);
+  return aiAction(brandId, "ai", async ({ brand, scope }) => {
     const r = await chat(scope, brand, message.slice(0, 4000));
     revalidatePath("/", "layout");
     return r;
