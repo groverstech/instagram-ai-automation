@@ -7,6 +7,7 @@ platform APIs after human approval, and analyses real performance.
 
 **Architecture, schema, agent design and roadmap:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 **Brand Intelligence Agent (Phase 1):** [`docs/BRAND_INTELLIGENCE.md`](docs/BRAND_INTELLIGENCE.md)
+**Production deployment requirements:** [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
 
 ## Quick start
 

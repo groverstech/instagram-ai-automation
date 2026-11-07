@@ -118,7 +118,13 @@ All additive with defaults, so existing rows remain valid.
 - **Tenant scoping:** queries filter by `brand_id` from the verified access, never from client input alone. Asset downloads are guarded the same way; another tenant gets 403 (tested end to end).
 - **Secrets:** AI calls run server-side only, and keys come from env vars.
 - **Logging:** structured JSON logs (`src/server/log.ts`) for uploads, profile generation, approval and asset-analysis failures. Every AI call is also recorded in `agent_runs`.
-- **Website reading** is SSRF-guarded: http(s) on standard ports only, public addresses only, every redirect re-validated, responses capped at 400 KB. Residual risk: DNS rebinding between check and connect, so also block internal egress at the network layer in production.
+- **Website reading** is SSRF-guarded:
+  - http(s) on standard ports only, with no internal hostnames.
+  - DNS is resolved once, and every address must be public. The connection is **pinned to the validated IP**, which blocks DNS rebinding.
+  - Every redirect is re-validated.
+  - 8-second timeout and a 400 KB response cap.
+  - See `DEPLOYMENT.md` for the egress firewall to add as defence in depth.
+- **Rate limits:** per user and per organisation (Postgres-backed), plus AI concurrency leases, upload limits, sign-in limits and a per-IP edge limiter returning HTTP 429. See `DEPLOYMENT.md` §6.
 - **Prompt injection:** text from uploads and web pages is fenced and labelled as untrusted data in every prompt.
 - **Mock provider:** ignored in production unless `AI_ALLOW_MOCK_IN_PRODUCTION=true`.
 - **AI failures:**
@@ -164,5 +170,4 @@ No new variables. This phase uses the existing ones:
 - **Visual content of documents:** slide and document images inside DOCX/PPTX aren't analysed, only their text. PDFs are analysed natively, visuals included.
 - **Website reading:** only the homepage is read, as plain text. JavaScript-rendered sites may yield little.
 - **Assets per run:** asset analysis processes up to 12 pending assets per run; run **Analyse pending** again for more.
-- **No rate limiting** on AI actions beyond the plan's monthly AI-run quota.
 - **Score:** the Brand Intelligence Score measures completeness, not brand or output quality.

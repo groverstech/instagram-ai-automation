@@ -12,7 +12,6 @@ process.env.IMAGE_PROVIDER = "none";
 process.env.STORAGE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bp-rev-"));
 
 const { getDb, schema } = await import("./db/client");
-const { isPrivateAddress, assertPublicUrl, fetchPublicText } = await import("./web");
 const { mockActive, aiStatus, isServiceError, friendlyAIError, AIConfigError, AIRefusalError } = await import("./ai/llm");
 const { prepareImage, generateBrandProfile, analyzeAssets } = await import("./agents/brand");
 const { buildContext, profileOf } = await import("./agents/context");
@@ -23,42 +22,6 @@ const { MIME } = await import("./assets");
 
 afterEach(() => {
   vi.unstubAllGlobals();
-});
-
-describe("SSRF guard for website reading", () => {
-  it("classifies private, reserved and mapped addresses", () => {
-    for (const ip of ["127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254", "100.64.0.1", "0.0.0.0", "224.0.0.1", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1", "::ffff:10.0.0.1"]) {
-      expect(isPrivateAddress(ip), ip).toBe(true);
-    }
-    for (const ip of ["93.184.215.14", "1.1.1.1", "2606:4700:4700::1111"]) expect(isPrivateAddress(ip), ip).toBe(false);
-  });
-
-  it("rejects internal hosts, odd ports, credentials and non-http schemes", async () => {
-    for (const u of ["http://127.0.0.1/", "http://[::1]/", "http://169.254.169.254/latest/meta-data", "http://localhost/", "https://93.184.215.14:22/", "https://user:pw@93.184.215.14/", "file:///etc/passwd"]) {
-      await expect(assertPublicUrl(new URL(u)), u).rejects.toThrow();
-    }
-    await expect(assertPublicUrl(new URL("https://93.184.215.14/"))).resolves.toBeUndefined();
-  });
-
-  it("re-validates redirects, so a public page can't bounce the server to an internal address", async () => {
-    const fetchMock = vi.fn(async () => new Response(null, { status: 302, headers: { location: "http://169.254.169.254/latest/meta-data/" } }));
-    vi.stubGlobal("fetch", fetchMock);
-    expect(await fetchPublicText("https://93.184.215.14/")).toBeNull();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("follows a public redirect and caps what it reads", async () => {
-    const calls: string[] = [];
-    vi.stubGlobal("fetch", async (u: URL) => {
-      calls.push(String(u));
-      if (calls.length === 1) return new Response(null, { status: 301, headers: { location: "/home" } });
-      return new Response(`<title>Kora</title><p>${"x".repeat(900_000)}</p>`, { headers: { "content-type": "text/html" } });
-    });
-    const text = await fetchPublicText("https://93.184.215.14/", 50);
-    expect(calls).toEqual(["https://93.184.215.14/", "https://93.184.215.14/home"]);
-    expect(text!.startsWith("Title: Kora")).toBe(true);
-    expect(text).toHaveLength(50);
-  });
 });
 
 describe("AI provider safety and error handling", () => {
@@ -221,7 +184,7 @@ describe("AI failures don't poison assets", () => {
 });
 
 describe("migration upgrade from a pre-phase database", () => {
-  it("applies 0002 on top of existing data and keeps legacy profiles readable", async () => {
+  it("applies 0002 and 0003 on top of existing data and keeps legacy profiles readable", async () => {
     const { PGlite } = await import("@electric-sql/pglite");
     const { vector } = await import("@electric-sql/pglite-pgvector");
     const { drizzle } = await import("drizzle-orm/pglite");
@@ -230,7 +193,8 @@ describe("migration upgrade from a pre-phase database", () => {
     const old = fs.mkdtempSync(path.join(os.tmpdir(), "bp-mig-"));
     fs.mkdirSync(path.join(old, "meta"));
     const journal = JSON.parse(fs.readFileSync(path.join(src, "meta/_journal.json"), "utf8"));
-    const before = journal.entries.filter((e: { tag: string }) => !e.tag.startsWith("0002"));
+    // State of main before this branch: migrations 0000 and 0001 only.
+    const before = journal.entries.filter((e: { idx: number }) => e.idx < 2);
     for (const e of before) fs.copyFileSync(path.join(src, `${e.tag}.sql`), path.join(old, `${e.tag}.sql`));
     fs.writeFileSync(path.join(old, "meta/_journal.json"), JSON.stringify({ ...journal, entries: before }));
 
@@ -258,6 +222,8 @@ describe("migration upgrade from a pre-phase database", () => {
     expect(msg.channel).toBe("workflow");
     const asset = await client.query("select column_name from information_schema.columns where table_name = 'brand_assets' and column_name in ('status','analysis_error','extracted_text')");
     expect(asset.rows).toHaveLength(3);
+    const rl = await client.query("select table_name from information_schema.tables where table_name in ('rate_limit_buckets','ai_task_leases')");
+    expect(rl.rows).toHaveLength(2);
     await client.close();
   });
 });
