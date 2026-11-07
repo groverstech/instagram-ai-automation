@@ -29,18 +29,19 @@
 ### Onboarding
 - Adds a **business description** field.
 - Accepts **presentations** and **marketing documents** as well as logo, guidelines, product images, social creatives, marketing creatives and reference designs.
-- Formats: PNG, JPG, WebP, GIF, SVG, PDF, DOCX, PPTX, TXT and MD; up to 15 MB each, 20 per upload.
-- The browser pre-checks the extension; the server validates each file by its **content** (magic bytes / ZIP structure) and rejects scripted SVGs.
+- Formats: PNG, JPG, WebP, GIF, SVG, PDF, DOCX, PPTX, TXT and MD; up to 15 MB each, 20 files and 50 MB per upload.
+- The browser pre-checks the extension; the server validates each file by its **content** (magic bytes / ZIP structure) and rejects scripted SVGs and zip bombs.
+- Users who belong to several organisations choose which one the new brand belongs to; the server verifies they are an admin or owner of it.
 - Files are validated **before anything is written**, so a rejected upload never leaves a partial brand.
 - The form stays mounted during submission, so a rejected submission never loses the user's answers.
 
 ### Brand Intelligence Agent (`src/server/agents/brand.ts`)
 1. **Asset analysis**, one asset at a time:
-   - Images go to Claude vision.
+   - Images go to Claude vision, downscaled first (longest edge 1568 px) when they exceed Claude's size limits.
    - PDFs are sent as native documents.
    - DOCX, PPTX, TXT and SVG are converted to text first (`src/server/assets.ts`).
    - Each result stores a description, palette, typography, aesthetic, notable elements and **facts stated in the asset**.
-   - A failure is recorded on that asset (`analysis_error`) and the run continues.
+   - A problem with a file is recorded on that asset (`analysis_error`) and the run continues. AI-service problems (missing key, rate limits, outages) stop the run without marking assets, and re-analysis retries previously failed assets.
 2. **Profile generation** from labelled inputs: onboarding answers (*provided*), the public website (*observed*), asset analyses (*observed*) and brand instructions.
 3. **Output schema v2** (`src/lib/brand-profile.ts`) has five sections:
    - **A. Identity:** archetype, personality, positioning, values, USPs, differentiation.
@@ -117,8 +118,11 @@ All additive with defaults, so existing rows remain valid.
 - **Tenant scoping:** queries filter by `brand_id` from the verified access, never from client input alone. Asset downloads are guarded the same way; another tenant gets 403 (tested end to end).
 - **Secrets:** AI calls run server-side only, and keys come from env vars.
 - **Logging:** structured JSON logs (`src/server/log.ts`) for uploads, profile generation, approval and asset-analysis failures. Every AI call is also recorded in `agent_runs`.
+- **Website reading** is SSRF-guarded: http(s) on standard ports only, public addresses only, every redirect re-validated, responses capped at 400 KB. Residual risk: DNS rebinding between check and connect, so also block internal egress at the network layer in production.
+- **Prompt injection:** text from uploads and web pages is fenced and labelled as untrusted data in every prompt.
+- **Mock provider:** ignored in production unless `AI_ALLOW_MOCK_IN_PRODUCTION=true`.
 - **AI failures:**
-  - A refusal, malformed output or timeout surfaces as a friendly error with retry.
+  - A refusal, truncated or malformed output, rate limit, outage or rejected key surfaces as a readable message; raw API payloads are never shown.
   - Failed asset analyses are kept, and retried with **Analyse pending**.
   - An unreadable profile row is logged and shown with a "re-analyse" prompt instead of crashing.
 - **Plan quota:** AI runs are checked before each agent call.
@@ -149,6 +153,7 @@ No new variables. This phase uses the existing ones:
 |---|---|
 | `ANTHROPIC_API_KEY` | Brand analysis, asset vision/document analysis, Brand Q&A (required for real use) |
 | `ANTHROPIC_MODEL` | Optional model override (default `claude-opus-5-5`) |
+| `AI_PROVIDER` / `AI_ALLOW_MOCK_IN_PRODUCTION` | Development/testing only: `AI_PROVIDER=mock` uses deterministic output; production builds ignore it unless the second is `true` |
 | `VOYAGE_API_KEY` | Optional semantic embeddings for memory (local hashing otherwise) |
 | `DATABASE_URL` | Postgres with pgvector in production (embedded PGlite otherwise) |
 | `APP_SECRET` | Required in production (sessions, signing) |
@@ -159,4 +164,5 @@ No new variables. This phase uses the existing ones:
 - **Visual content of documents:** slide and document images inside DOCX/PPTX aren't analysed, only their text. PDFs are analysed natively, visuals included.
 - **Website reading:** only the homepage is read, as plain text. JavaScript-rendered sites may yield little.
 - **Assets per run:** asset analysis processes up to 12 pending assets per run; run **Analyse pending** again for more.
+- **No rate limiting** on AI actions beyond the plan's monthly AI-run quota.
 - **Score:** the Brand Intelligence Score measures completeness, not brand or output quality.
