@@ -76,6 +76,11 @@ Stripe so out-of-order deliveries can't apply stale data. `past_due` keeps the p
 Stripe retries the payment; cancellation drops to Starter at period end. Downgrades never delete
 data, they only block adding beyond the new limits.
 
+## Android app
+
+The app is installable as a PWA and packages as an Android Trusted Web Activity (APK/AAB) with
+Bubblewrap. Step-by-step guide: [`docs/ANDROID.md`](docs/ANDROID.md).
+
 ## Jobs
 
 With embedded PGlite, the web server runs scheduled publishing and metric syncs every 30s.
