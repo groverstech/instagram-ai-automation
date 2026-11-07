@@ -1,5 +1,4 @@
 import "server-only";
-import { and, desc, eq } from "drizzle-orm";
 import { addDays, format as fmt, parseISO } from "date-fns";
 import { getDb, schema } from "../db/client";
 import { llm } from "../ai/llm";
