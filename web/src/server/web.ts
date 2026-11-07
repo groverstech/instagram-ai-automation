@@ -1,101 +1,203 @@
 import "server-only";
 import dns from "node:dns/promises";
+import http from "node:http";
+import https from "node:https";
 import net from "node:net";
 
-const MAX_REDIRECTS = 4;
-const MAX_BYTES = 400_000;
+/**
+ * SSRF-safe fetching of public web pages (used to read a brand's website).
+ *
+ * Defences, in order, for every hop (initial URL and each redirect):
+ *  1. URL policy: http/https only, ports 80/443 only, no credentials, no internal hostnames.
+ *  2. DNS resolved once by us; EVERY returned address must be public (BlockList below).
+ *  3. The TCP connection is pinned to the validated address (custom `lookup`), so the
+ *     hostname is never re-resolved: this closes the DNS-rebinding window. TLS still verifies
+ *     the certificate against the hostname (SNI), and the Host header is the hostname.
+ *  4. Redirects are never followed automatically; each Location is re-validated from step 1.
+ *  5. Total timeout, response-size cap, content-type allowlist.
+ */
 
-/** True for loopback, private, link-local, CGNAT, multicast, reserved and unspecified addresses. */
+export const LIMITS = { maxRedirects: 4, maxBytes: 400_000, timeoutMs: 8000 } as const;
+
+const blocked = new net.BlockList();
+for (const [net4, prefix] of [
+  ["0.0.0.0", 8], // "this network"
+  ["10.0.0.0", 8], // private
+  ["100.64.0.0", 10], // carrier-grade NAT
+  ["127.0.0.0", 8], // loopback
+  ["169.254.0.0", 16], // link-local, incl. cloud metadata 169.254.169.254
+  ["172.16.0.0", 12], // private
+  ["192.0.0.0", 24], // IETF protocol assignments
+  ["192.0.2.0", 24], // TEST-NET-1
+  ["192.88.99.0", 24], // 6to4 relay anycast
+  ["192.168.0.0", 16], // private
+  ["198.18.0.0", 15], // benchmarking
+  ["198.51.100.0", 24], // TEST-NET-2
+  ["203.0.113.0", 24], // TEST-NET-3
+  ["224.0.0.0", 4], // multicast
+  ["240.0.0.0", 4], // reserved + broadcast
+] as const) {
+  blocked.addSubnet(net4, prefix, "ipv4");
+}
+for (const [net6, prefix] of [
+  ["::", 128], // unspecified
+  ["::1", 128], // loopback
+  ["64:ff9b::", 96], // NAT64
+  ["64:ff9b:1::", 48], // local-use NAT64
+  ["100::", 64], // discard
+  ["2001::", 23], // IETF protocol assignments (incl. Teredo)
+  ["2001:db8::", 32], // documentation
+  ["2002::", 16], // 6to4 (can embed private IPv4)
+  ["fc00::", 7], // unique local
+  ["fe80::", 10], // link-local
+  ["fec0::", 10], // site-local (deprecated)
+  ["ff00::", 8], // multicast
+] as const) {
+  blocked.addSubnet(net6, prefix, "ipv6");
+}
+
+// Kept separate: Node's BlockList treats every IPv4 address as IPv4-mapped IPv6, so adding
+// ::ffff:0:0/96 to the main list would match ALL IPv4 addresses.
+const ipv4Mapped = new net.BlockList();
+ipv4Mapped.addSubnet("::ffff:0:0", 96, "ipv6");
+
+/** True for any address that is not a globally routable unicast address. */
 export function isPrivateAddress(ip: string): boolean {
-  let v = ip.toLowerCase();
-  const mapped = v.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-  if (mapped) v = mapped[1];
-  if (net.isIPv4(v)) {
-    const [a, b] = v.split(".").map(Number);
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 100 && b >= 64 && b <= 127) ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      (a === 192 && b === 0) ||
-      (a === 198 && (b === 18 || b === 19)) ||
-      a >= 224
-    );
-  }
-  if (net.isIPv6(v)) {
-    return v === "::" || v === "::1" || v.startsWith("fc") || v.startsWith("fd") || /^fe[89ab]/.test(v) || v.startsWith("ff") || v.startsWith("::ffff:") || v.startsWith("64:ff9b:");
-  }
+  const addr = ip.replace(/^\[|\]$/g, "").toLowerCase();
+  if (net.isIPv4(addr)) return blocked.check(addr, "ipv4");
+  if (net.isIPv6(addr)) return ipv4Mapped.check(addr, "ipv6") || blocked.check(addr, "ipv6"); // never connect via IPv4-mapped notation
   return true;
 }
 
-/** Validate a URL for server-side fetching: http(s) on standard ports, resolving only to public addresses. */
-export async function assertPublicUrl(url: URL): Promise<void> {
-  if (!["http:", "https:"].includes(url.protocol)) throw new Error("Only http(s) URLs can be fetched.");
-  if (url.port && !["80", "443"].includes(url.port)) throw new Error("Only standard ports can be fetched.");
-  if (url.username || url.password) throw new Error("URLs with credentials can't be fetched.");
-  const host = url.hostname.replace(/^\[|\]$/g, "");
-  const addrs = net.isIP(host) ? [{ address: host }] : await dns.lookup(host, { all: true, verbatim: true });
-  if (!addrs.length || addrs.some((a) => isPrivateAddress(a.address))) throw new Error("This address isn't publicly reachable.");
+const INTERNAL_HOST = /(^|\.)(localhost|local|internal|intranet|lan|home|corp|localdomain|home\.arpa)$/i;
+const METADATA_HOSTS = new Set(["metadata", "metadata.google.internal", "metadata.goog", "instance-data", "instance-data.ec2.internal"]);
+
+export class UnsafeUrlError extends Error {}
+
+/** Syntactic URL policy (no DNS). Returns the normalised hostname. */
+export function checkUrlPolicy(url: URL): string {
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new UnsafeUrlError("Only http(s) URLs can be fetched.");
+  if (url.username || url.password) throw new UnsafeUrlError("URLs with credentials can't be fetched.");
+  if (url.port && url.port !== "80" && url.port !== "443") throw new UnsafeUrlError("Only standard ports can be fetched.");
+  const host = url.hostname.replace(/^\[|\]$/g, "").replace(/\.$/, "").toLowerCase();
+  if (!host) throw new UnsafeUrlError("Missing host.");
+  if (net.isIP(host)) {
+    if (isPrivateAddress(host)) throw new UnsafeUrlError("This address isn't publicly reachable.");
+    return host;
+  }
+  if (!host.includes(".") || INTERNAL_HOST.test(host) || METADATA_HOSTS.has(host)) throw new UnsafeUrlError("Internal hostnames can't be fetched.");
+  return host;
 }
 
+export type Resolved = { address: string; family: 4 | 6 };
+export type Resolver = (host: string) => Promise<Resolved[]>;
+
+const systemResolver: Resolver = async (host) =>
+  (await dns.lookup(host, { all: true, verbatim: true })).map((a) => ({ address: a.address, family: a.family === 6 ? 6 : 4 }));
+
+/** Resolve once and require EVERY address to be public (mixed answers are rejected). */
+export async function resolvePublic(host: string, resolver: Resolver = systemResolver): Promise<Resolved> {
+  if (net.isIP(host)) return { address: host, family: net.isIPv6(host) ? 6 : 4 };
+  let addrs: Resolved[];
+  try {
+    addrs = await resolver(host);
+  } catch {
+    throw new UnsafeUrlError("The hostname couldn't be resolved.");
+  }
+  if (!addrs.length) throw new UnsafeUrlError("The hostname couldn't be resolved.");
+  if (addrs.some((a) => isPrivateAddress(a.address))) throw new UnsafeUrlError("This hostname resolves to a non-public address.");
+  return addrs[0];
+}
+
+export type PinnedResponse = { status: number; location: string | null; contentType: string; body: string };
+export type Requester = (url: URL, pinned: Resolved, signal: AbortSignal) => Promise<PinnedResponse>;
+
+/** HTTP(S) GET connected to a pre-validated IP. Never follows redirects; caps the body. */
+export const requestPinned: Requester = (url, pinned, signal) =>
+  new Promise((resolve, reject) => {
+    const mod = url.protocol === "https:" ? https : http;
+    const req = mod.request(
+      url,
+      {
+        method: "GET",
+        headers: { "user-agent": "BrandPilotBot/0.1 (+brand research)", accept: "text/html,text/plain" },
+        // Pin the connection: the hostname is NOT resolved again at connect time.
+        lookup: (_h, opts, cb) => {
+          const o = opts as { all?: boolean };
+          if (o?.all) (cb as unknown as (e: null, a: { address: string; family: number }[]) => void)(null, [{ address: pinned.address, family: pinned.family }]);
+          else cb(null, pinned.address, pinned.family);
+        },
+        signal,
+        agent: false,
+      },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        const location = (res.headers.location as string | undefined) ?? null;
+        const contentType = String(res.headers["content-type"] ?? "");
+        if ((status >= 300 && status < 400) || status >= 400 || !/^text\/(html|plain)/i.test(contentType)) {
+          res.destroy();
+          return resolve({ status, location, contentType, body: "" });
+        }
+        const declared = Number(res.headers["content-length"] ?? 0);
+        if (declared > LIMITS.maxBytes * 10) {
+          res.destroy();
+          return resolve({ status: 413, location: null, contentType, body: "" });
+        }
+        const chunks: Buffer[] = [];
+        let total = 0;
+        res.on("data", (c: Buffer) => {
+          chunks.push(c);
+          total += c.length;
+          if (total >= LIMITS.maxBytes) res.destroy(); // stop reading; keep what we have
+        });
+        const done = () => resolve({ status, location, contentType, body: Buffer.concat(chunks).subarray(0, LIMITS.maxBytes).toString("utf8") });
+        res.on("end", done);
+        res.on("close", done);
+        res.on("error", done);
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+
 /**
- * Fetch a public web page as plain text (SSRF-guarded). Every redirect hop is re-validated, so a
- * public page can't bounce the server to an internal address. Returns null on any failure.
- *
- * Residual risk: DNS can change between validation and connection (rebinding). Run the app
- * where outbound traffic to internal networks is also blocked at the network layer.
+ * Fetch a public web page as plain text. Returns null on any failure or policy violation.
+ * Dependencies are injectable for tests.
  */
-export async function fetchPublicText(rawUrl: string, maxChars = 8000): Promise<string | null> {
+export async function fetchPublicText(
+  rawUrl: string,
+  maxChars = 8000,
+  deps: { resolver?: Resolver; requester?: Requester; timeoutMs?: number } = {},
+): Promise<string | null> {
   let url: URL;
   try {
     url = new URL(/^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`);
   } catch {
     return null;
   }
+  const signal = AbortSignal.timeout(deps.timeoutMs ?? LIMITS.timeoutMs);
   try {
-    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-      await assertPublicUrl(url);
-      const res = await fetch(url, {
-        redirect: "manual",
-        signal: AbortSignal.timeout(8000),
-        headers: { "user-agent": "BrandPilotBot/0.1 (+brand research)", accept: "text/html,text/plain" },
-      });
+    for (let hop = 0; hop <= LIMITS.maxRedirects; hop++) {
+      const host = checkUrlPolicy(url);
+      const pinned = await resolvePublic(host, deps.resolver);
+      const res = await (deps.requester ?? requestPinned)(url, pinned, signal);
       if (res.status >= 300 && res.status < 400) {
-        const loc = res.headers.get("location");
-        await res.body?.cancel();
-        if (!loc) return null;
-        url = new URL(loc, url);
+        if (!res.location) return null;
+        url = new URL(res.location, url);
         continue;
       }
-      if (!res.ok || !(res.headers.get("content-type") ?? "").includes("text")) {
-        await res.body?.cancel();
-        return null;
-      }
-      const html = await readCapped(res, MAX_BYTES);
-      return htmlToText(html).slice(0, maxChars);
+      if (res.status !== 200 || !res.body) return null;
+      return htmlToText(res.body).slice(0, maxChars);
     }
-    return null;
+    return null; // too many redirects
   } catch {
     return null;
   }
 }
 
-async function readCapped(res: Response, max: number): Promise<string> {
-  if (!res.body) return "";
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (total < max) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    total += value.length;
-  }
-  await reader.cancel().catch(() => {});
-  return new TextDecoder().decode(Buffer.concat(chunks).subarray(0, max));
+/** Kept for callers/tests that validate a URL fully (policy + DNS) without fetching. */
+export async function assertPublicUrl(url: URL, resolver?: Resolver): Promise<void> {
+  await resolvePublic(checkUrlPolicy(url), resolver);
 }
 
 export function htmlToText(html: string): string {
