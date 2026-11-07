@@ -34,7 +34,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         ) : ai.provider === "mock" ? (
           <div className="border-b border-line bg-sunken px-6 py-2 text-[12px] text-muted md:px-10">Mock AI provider active (AI_PROVIDER=mock). Generated content is placeholder output for development.</div>
         ) : null}
-        <main className="mx-auto max-w-[1280px] px-4 py-6 sm:px-6 md:px-10 md:py-10">{children}</main>
+        <main className="mx-auto max-w-[1280px] px-4 pb-28 pt-6 sm:px-6 md:px-10 md:pt-10">{children}</main>
       </div>
       <Toaster />
       <Assistant

@@ -19,7 +19,12 @@ const UPLOADS = [
   { kind: "creative", label: "Existing marketing creatives", hint: "Ads, banners, posters" },
   { kind: "post", label: "Previous social posts", hint: "Screenshots or exports" },
   { kind: "reference", label: "Reference designs", hint: "Work you admire" },
+  { kind: "presentation", label: "Brand presentations", hint: "PPTX or PDF decks" },
+  { kind: "document", label: "Marketing documents", hint: "DOCX, PDF, TXT or MD" },
 ] as const;
+
+const ACCEPT = ".png,.jpg,.jpeg,.webp,.gif,.svg,.pdf,.docx,.pptx,.txt,.md";
+const MAX_BYTES = 15 * 1024 * 1024;
 
 export function OnboardingWizard({ userName }: { userName: string }) {
   const router = useRouter();
@@ -59,10 +64,14 @@ export function OnboardingWizard({ userName }: { userName: string }) {
     router.push("/brand?fresh=1");
   }
 
-  if (phase !== "form") return <Analyzing phase={phase} />;
-
+  // The form stays mounted while saving so a failed submission never loses the user's answers.
   return (
     <div className="min-h-screen bg-canvas">
+      {phase !== "form" ? (
+        <div className="fixed inset-0 z-50">
+          <Analyzing phase={phase} />
+        </div>
+      ) : null}
       <header className="flex items-center justify-between px-6 py-5 md:px-10">
         <div className="flex items-center gap-2 text-[15px] font-semibold">
           <span className="grid size-8 place-items-center rounded-lg bg-ink text-white">
@@ -104,7 +113,10 @@ export function OnboardingWizard({ userName }: { userName: string }) {
               <Input name="name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Kora Ceramics" autoFocus />
             </Field>
             <Field label="Website" hint="We'll read it to learn your story">
-              <Input name="website" placeholder="https://kora.studio" />
+              <Input name="website" placeholder="https://kora.studio" inputMode="url" />
+            </Field>
+            <Field label="Business description" hint="What you do, in your words">
+              <Textarea name="description" rows={3} maxLength={4000} placeholder="A two-person studio in Bengaluru making small-batch stoneware for everyday use. We sell online and run weekend pottery workshops." />
             </Field>
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Industry">
@@ -254,7 +266,7 @@ function StepIntro({ step, userName }: { step: number; userName: string }) {
     ["How should your brand feel?", "Positioning and voice keep every caption sounding like you."],
     ["What should marketing achieve?", "Objectives drive what the strategist prioritises and what analytics measures."],
     ["Who else is in the room?", "We'll find the gaps your competitors leave open."],
-    ["Show us your visual identity", "Logos, guidelines and past work teach the Creative Director your aesthetic."],
+    ["Show us your visual identity", "Logos, guidelines, decks and past work teach your AI team your aesthetic and story."],
     ["Let your AI team study the brand", "This takes about a minute."],
   ][step];
   return (
@@ -302,6 +314,13 @@ function ChipGroup({ name, label, options, defaults }: { name: string; label: st
   );
 }
 
+/** Client-side pre-check for fast feedback; the server re-validates every file by content. */
+function accept(list: File[]) {
+  const ok = list.filter((f) => f.size <= MAX_BYTES && ACCEPT.split(",").some((ext) => f.name.toLowerCase().endsWith(ext)));
+  if (ok.length < list.length) alert(`${list.length - ok.length} file(s) skipped: use ${ACCEPT.replaceAll(",", " ")} up to 15 MB.`);
+  return ok;
+}
+
 function Dropzone({ label, hint, files, onChange }: { label: string; hint: string; files: File[]; onChange: (f: File[]) => void }) {
   const ref = useRef<HTMLInputElement>(null);
   const [over, setOver] = useState(false);
@@ -315,12 +334,12 @@ function Dropzone({ label, hint, files, onChange }: { label: string; hint: strin
       onDrop={(e) => {
         e.preventDefault();
         setOver(false);
-        onChange([...files, ...Array.from(e.dataTransfer.files)]);
+        onChange([...files, ...accept(Array.from(e.dataTransfer.files))]);
       }}
       onClick={() => ref.current?.click()}
       className={cn("cursor-pointer rounded-xl border border-dashed p-4 transition", over ? "border-accent bg-accent-soft" : "border-line-strong bg-surface hover:bg-sunken/40")}
     >
-      <input ref={ref} type="file" multiple accept="image/*,application/pdf" className="hidden" onChange={(e) => onChange([...files, ...Array.from(e.target.files ?? [])])} />
+      <input ref={ref} type="file" multiple accept={ACCEPT} className="hidden" onChange={(e) => onChange([...files, ...accept(Array.from(e.target.files ?? []))])} />
       <div className="flex items-center gap-3">
         <span className="grid size-9 place-items-center rounded-lg bg-sunken text-muted">
           <Upload className="size-4" />
@@ -348,7 +367,7 @@ function Dropzone({ label, hint, files, onChange }: { label: string; hint: strin
 }
 
 function Analyzing({ phase }: { phase: "saving" | "analyzing" }) {
-  const steps = ["Saving brand & uploads", "Reading your website", "Analysing visual assets", "Mapping positioning & personas", "Defining voice & visual identity"];
+  const steps = ["Saving brand & checking uploads", "Reading your website", "Analysing logos, images & documents", "Identifying positioning, values & audience", "Defining voice, visual identity & content pillars"];
   return (
     <div className="grid min-h-screen place-items-center ai-gradient p-6">
       <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white/80 p-8 shadow-pop backdrop-blur">
