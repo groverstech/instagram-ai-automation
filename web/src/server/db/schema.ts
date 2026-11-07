@@ -42,7 +42,20 @@ export const workspaces = pgTable("workspaces", {
   name: text("name").notNull(),
   type: text("type").$type<"creator" | "business" | "agency">().notNull().default("business"),
   plan: text("plan").$type<"starter" | "growth" | "agency">().notNull().default("starter"),
+  // Billing state is written only from verified Stripe webhooks, never from client redirects.
+  stripeCustomerId: text("stripe_customer_id").unique(),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  subscriptionStatus: text("subscription_status"),
+  currentPeriodEnd: timestamp("current_period_end", { withTimezone: true }),
+  cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
   createdAt: createdAt(),
+});
+
+/** Processed Stripe webhook event ids, for idempotency (Stripe retries and may redeliver). */
+export const stripeEvents = pgTable("stripe_events", {
+  id: text("id").primaryKey(),
+  type: text("type").notNull(),
+  processedAt: timestamp("processed_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
 export type Role = "owner" | "admin" | "editor" | "viewer";

@@ -59,6 +59,23 @@ Create an app with each platform and set the env vars in `.env.example`. Registe
 Pinterest and TikTok fetch media from a public URL, so `APP_URL` must be a public
 https domain when publishing.
 
+## Billing (Stripe)
+
+1. In Stripe, create two recurring monthly Prices for the Growth and Agency plans.
+2. Set `STRIPE_SECRET_KEY`, `STRIPE_PRICE_GROWTH`, `STRIPE_PRICE_AGENCY`.
+3. Add a webhook endpoint at `{APP_URL}/api/billing/webhook` for `checkout.session.completed`
+   and `customer.subscription.created|updated|deleted|paused|resumed`, then set
+   `STRIPE_WEBHOOK_SECRET` to its signing secret. For local testing:
+   `stripe listen --forward-to localhost:3000/api/billing/webhook`.
+4. Enable the Customer Portal (plan switching, cancellation, payment methods, invoices).
+
+Owners upgrade from **Settings → Billing** (Stripe Checkout) and manage the subscription in
+the Stripe Customer Portal. The workspace plan changes **only** when a signature-verified
+webhook confirms it. Each event is processed once, and subscription state is re-read from
+Stripe so out-of-order deliveries can't apply stale data. `past_due` keeps the paid plan while
+Stripe retries the payment; cancellation drops to Starter at period end. Downgrades never delete
+data, they only block adding beyond the new limits.
+
 ## Jobs
 
 With embedded PGlite, the web server runs scheduled publishing and metric syncs every 30s.
@@ -73,8 +90,3 @@ npm run build       # production build (type-checks)
 npm test            # integration tests: full agent pipeline on in-memory Postgres + pgvector
 npm run typecheck
 ```
-
-## Legacy prototype
-
-The Python scripts at the repository root (`main.py`, `ai/`, `meta/`, …) are the original
-single-account Instagram prototype. The platform in `web/` replaces them.

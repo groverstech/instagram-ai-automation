@@ -4,7 +4,7 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/server/db/client";
 import { getSession, setActiveBrand } from "@/server/auth/session";
-import { AccessError, requireBrand, listAccessibleBrands } from "@/server/auth/guard";
+import { AccessError, requireBrand } from "@/server/auth/guard";
 import { roleAtLeast } from "@/lib/roles";
 import { storage, extFor } from "@/server/storage";
 import { safe } from "@/server/action";
@@ -172,8 +172,3 @@ export async function deleteMemory(brandId: string, memoryId: string) {
   });
 }
 
-export async function myBrands() {
-  const s = await getSession();
-  if (!s) return [];
-  return (await listAccessibleBrands(s.user.id)).map((b) => ({ id: b.brand.id, name: b.brand.name, role: b.role }));
-}

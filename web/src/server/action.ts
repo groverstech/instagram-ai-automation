@@ -2,6 +2,7 @@ import "server-only";
 import { AccessError } from "./auth/guard";
 import { AIConfigError, AIRefusalError } from "./ai/llm";
 import { QuotaError } from "./quota";
+import { BillingError } from "./billing";
 
 export type Result<T = undefined> = { ok: true; data: T } | { ok: false; error: string };
 
@@ -11,7 +12,7 @@ export async function safe<T>(fn: () => Promise<T>): Promise<Result<T>> {
     return { ok: true, data: await fn() };
   } catch (e) {
     if (e && typeof e === "object" && "digest" in e && String((e as { digest: string }).digest).startsWith("NEXT_REDIRECT")) throw e;
-    if (e instanceof AccessError || e instanceof AIConfigError || e instanceof AIRefusalError || e instanceof QuotaError) return { ok: false, error: e.message };
+    if (e instanceof AccessError || e instanceof AIConfigError || e instanceof AIRefusalError || e instanceof QuotaError || e instanceof BillingError) return { ok: false, error: e.message };
     console.error("[action]", e);
     const msg = e instanceof Error ? e.message : "Something went wrong.";
     return { ok: false, error: msg.length > 400 ? msg.slice(0, 400) + "…" : msg };

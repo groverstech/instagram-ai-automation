@@ -4,7 +4,8 @@ import { useState } from "react";
 import { format } from "date-fns";
 import { Plus, Trash2 } from "lucide-react";
 import { changeRole, inviteMember, removeMember, updateWorkspace } from "@/app/actions/settings";
-import { Badge, Button, Card, CardBody, CardHeader, Field, Input, PageHeader, Select } from "@/components/ui";
+import { openBillingPortal, startCheckout } from "@/app/actions/billing";
+import { Badge, Button, Card, CardBody, CardHeader, Field, Input, Notice, PageHeader, Select } from "@/components/ui";
 import { useRun } from "@/components/hooks";
 import { PLANS, type PlanId } from "@/lib/plans";
 import { ROLE_DESCRIPTIONS, roleAtLeast, type Role } from "@/lib/roles";
@@ -16,6 +17,15 @@ export function SettingsView(props: {
   role: Role;
   me: string;
   workspace: { id: string; name: string; type: "creator" | "business" | "agency"; plan: string };
+  billing: {
+    configured: boolean;
+    prices: { growth: boolean; agency: boolean };
+    notice?: "success" | "cancelled";
+    hasCustomer: boolean;
+    status: string | null;
+    currentPeriodEnd: Date | null;
+    cancelAtPeriodEnd: boolean;
+  };
   usage: { brands: number; seats: number; aiRuns: number; socialAccounts: number };
   members: Member[];
   brands: { id: string; name: string; createdAt: Date }[];
@@ -117,18 +127,10 @@ export function SettingsView(props: {
               <Meter label="Brands" used={props.usage.brands} max={plan.brands} />
               <Meter label="Seats" used={props.usage.seats} max={plan.seats} />
               <Meter label="Social accounts" used={props.usage.socialAccounts} max={plan.socialAccounts} />
-              <div className="grid grid-cols-3 gap-2 pt-2">
-                {(Object.keys(PLANS) as PlanId[]).map((id) => (
-                  <div key={id} className={cn("rounded-xl border p-3 text-center", id === props.workspace.plan ? "border-ink" : "border-line")}>
-                    <p className="text-[12px] font-medium">{PLANS[id].label}</p>
-                    <p className="text-[18px] font-semibold">${PLANS[id].price}</p>
-                    <p className="text-[10px] text-faint">/ month</p>
-                  </div>
-                ))}
-              </div>
-              <p className="text-[11px] text-faint">Self-serve billing (Stripe) is on the Phase 8 roadmap. Contact us to change plans.</p>
             </CardBody>
           </Card>
+
+          <BillingCard workspaceId={props.workspace.id} currentPlan={props.workspace.plan} isOwner={props.role === "owner"} billing={props.billing} />
 
           <Card>
             <CardHeader title="Integrations" />
@@ -162,5 +164,68 @@ function Row({ k, v, ok }: { k: string; v: string; ok: boolean }) {
       <span className="text-muted">{k}</span>
       <span className={cn("text-right", ok ? "text-ink" : "text-warn")}>{v}</span>
     </div>
+  );
+}
+
+const STATUS_TONE: Record<string, string> = { active: "success", trialing: "info", past_due: "warn", unpaid: "danger", canceled: "neutral", incomplete: "warn", incomplete_expired: "neutral", paused: "neutral" };
+
+function BillingCard({ workspaceId, currentPlan, isOwner, billing }: { workspaceId: string; currentPlan: string; isOwner: boolean; billing: Parameters<typeof SettingsView>[0]["billing"] }) {
+  const { run, busy } = useRun();
+  const subscribed = ["active", "trialing", "past_due"].includes(billing.status ?? "");
+  const go = (url: string) => {
+    window.location.href = url;
+  };
+  return (
+    <Card>
+      <CardHeader
+        title="Billing"
+        description={billing.configured ? "Payments are handled securely by Stripe." : "Stripe isn't configured on this server."}
+        action={billing.status ? <Badge tone={STATUS_TONE[billing.status] ?? "neutral"} className="capitalize">{billing.status.replace("_", " ")}</Badge> : null}
+      />
+      <CardBody className="space-y-3">
+        {billing.notice === "success" ? (
+          <Notice tone="success">Thanks! Your plan updates as soon as Stripe confirms the payment, usually within a few seconds. Refresh if it hasn&apos;t changed yet.</Notice>
+        ) : null}
+        {billing.notice === "cancelled" ? <Notice tone="info">Checkout was cancelled. You haven&apos;t been charged.</Notice> : null}
+        {billing.status === "past_due" ? <Notice tone="warn">Your last payment failed. Stripe is retrying; update your payment method to keep your plan.</Notice> : null}
+        {billing.currentPeriodEnd && billing.status !== "canceled" ? (
+          <p className="text-[12px] text-muted">
+            {billing.cancelAtPeriodEnd ? "Cancels" : "Renews"} on {format(billing.currentPeriodEnd, "d MMM yyyy")}
+            {billing.cancelAtPeriodEnd ? " — you'll move to Starter then." : "."}
+          </p>
+        ) : null}
+
+        <div className="grid grid-cols-3 gap-2">
+          {(Object.keys(PLANS) as PlanId[]).map((id) => {
+            const current = id === currentPlan;
+            const purchasable = id !== "starter" && billing.configured && billing.prices[id as "growth" | "agency"];
+            return (
+              <div key={id} className={cn("flex flex-col rounded-xl border p-3 text-center", current ? "border-ink" : "border-line")}>
+                <p className="text-[12px] font-medium">{PLANS[id].label}</p>
+                <p className="text-[18px] font-semibold">${PLANS[id].price}</p>
+                <p className="text-[10px] text-faint">/ month</p>
+                <div className="mt-2 flex-1" />
+                {current ? (
+                  <span className="text-[11px] font-medium text-ink-2">Current</span>
+                ) : isOwner && purchasable && !subscribed ? (
+                  <Button size="sm" variant="accent" className="h-7 text-[11px]" loading={busy(id)} onClick={() => run(() => startCheckout(workspaceId, id as "growth" | "agency"), { key: id, refresh: false, onOk: (d) => go(d.url) })}>
+                    Upgrade
+                  </Button>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+
+        {isOwner && billing.configured && billing.hasCustomer ? (
+          <Button variant="secondary" className="w-full" loading={busy("portal")} onClick={() => run(() => openBillingPortal(workspaceId), { key: "portal", refresh: false, onOk: (d) => go(d.url) })}>
+            Manage billing, plan &amp; invoices
+          </Button>
+        ) : null}
+        {!isOwner ? <p className="text-[11px] text-faint">Only workspace owners can change billing.</p> : null}
+        {!billing.configured ? <p className="text-[11px] text-faint">Set STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET and the plan price ids to enable self-serve billing.</p> : null}
+        <p className="text-[11px] text-faint">Downgrading keeps your existing brands, members and accounts; you just can&apos;t add more beyond the new plan&apos;s limits.</p>
+      </CardBody>
+    </Card>
   );
 }
