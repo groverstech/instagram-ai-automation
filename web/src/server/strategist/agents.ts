@@ -516,7 +516,7 @@ Plan entries from ${from} to ${to} inclusive: about ${target} entries in total a
     const { kept, dropped: d } = cleanEntries(out.data.entries, halfOpts, entries);
     entries.push(...kept);
     dropped += d;
-    if (out.data.notes) notes.push(out.data.notes);
+    if (out.data.notes && !notes.includes(out.data.notes)) notes.push(out.data.notes);
   }
   if (dropped) notes.push(`${dropped} generated entr${dropped === 1 ? "y was" : "ies were"} removed because they fell outside the window, used an unselected platform or repeated another entry.`);
   entries.sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
