@@ -6,6 +6,7 @@ on-brand creatives and copy, builds campaigns and a calendar, publishes through 
 platform APIs after human approval, and analyses real performance.
 
 **Architecture, schema, agent design and roadmap:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+**Brand Intelligence Agent (Phase 1):** [`docs/BRAND_INTELLIGENCE.md`](docs/BRAND_INTELLIGENCE.md)
 
 ## Quick start
 
@@ -92,6 +93,7 @@ With Postgres, set `RUN_JOBS_IN_PROCESS=false` and run `npm run worker`, or call
 ```bash
 npm run dev         # development server
 npm run build       # production build (type-checks)
-npm test            # integration tests: full agent pipeline on in-memory Postgres + pgvector
+npm test            # integration tests: agents, brand intelligence, billing on in-memory Postgres + pgvector
+npm run lint        # ESLint (next/core-web-vitals + TypeScript)
 npm run typecheck
 ```

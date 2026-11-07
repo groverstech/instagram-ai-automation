@@ -239,7 +239,7 @@ web/
 | Phase | Scope | State |
 |---|---|---|
 | 1 Foundation | Auth, workspaces, RBAC, onboarding, brand profile, dashboard shell | ✅ |
-| 2 Brand intelligence | Vision analysis of assets, profile generation/approval, pgvector memory, feedback loop | ✅ |
+| 2 Brand intelligence | Vision + document analysis of assets, sectioned profile with provenance, per-section review, Brand Q&A, completeness score, pgvector memory (see `docs/BRAND_INTELLIGENCE.md`) | ✅ |
 | 3 Strategy + content | Strategist, Content Studio (captions/hooks/hashtags per platform/objective) | ✅ |
 | 4 Creative Studio | Formats, styles, concepts, image generation, brand renderer, variations, resize, download | ✅ |
 | 5 Campaigns + calendar | Campaign pipeline, calendar autopopulate, drag/drop, approvals | ✅ |
