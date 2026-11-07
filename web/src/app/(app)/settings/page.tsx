@@ -5,8 +5,10 @@ import { usage } from "@/server/quota";
 import { aiStatus } from "@/server/ai/llm";
 import { imageStatus } from "@/server/ai/image";
 import { SettingsView } from "@/components/settings/view";
+import { billingStatus } from "@/server/billing";
 
-export default async function Page() {
+export default async function Page({ searchParams }: { searchParams: Promise<{ billing?: string }> }) {
+  const { billing } = await searchParams;
   const { brand, role, session } = await requireActiveBrand();
   const db = await getDb();
   const [ws] = await db.select().from(schema.workspaces).where(eq(schema.workspaces.id, brand.workspaceId));
@@ -21,6 +23,14 @@ export default async function Page() {
       role={role}
       me={session.user.id}
       workspace={{ id: ws.id, name: ws.name, type: ws.type, plan: ws.plan }}
+      billing={{
+        ...billingStatus(),
+        notice: billing === "success" || billing === "cancelled" ? billing : undefined,
+        hasCustomer: Boolean(ws.stripeCustomerId),
+        status: ws.subscriptionStatus,
+        currentPeriodEnd: ws.currentPeriodEnd,
+        cancelAtPeriodEnd: ws.cancelAtPeriodEnd,
+      }}
       usage={await usage(ws.id)}
       members={members}
       brands={brands}

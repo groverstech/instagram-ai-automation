@@ -108,7 +108,8 @@ Defined in `src/server/db/schema.ts`; migrations in `drizzle/`.
 |---|---|---|
 | `users` | Accounts | email (unique), name, password_hash (scrypt) |
 | `sessions` | Cookie sessions | id = SHA-256(token), user_id, expires_at |
-| `workspaces` | Tenants | name, type (creator/business/agency), plan |
+| `workspaces` | Tenants | name, type (creator/business/agency), plan, Stripe customer/subscription, status, period end |
+| `stripe_events` | Webhook idempotency | Stripe event id, type |
 | `workspace_members` | RBAC + invites | workspace_id, user_id?, invited_email, role, status |
 | `brands` | Onboarding inputs | name, website, industry, products, audience, geography, positioning, personality, tone, objectives[], platforms[], competitors[], colors[], fonts[] |
 | `brand_assets` | Uploaded files | kind (logo/guideline/product/creative/reference/post), path, mime, AI analysis |
@@ -244,10 +245,10 @@ web/
 | 5 Campaigns + calendar | Campaign pipeline, calendar autopopulate, drag/drop, approvals | ✅ |
 | 6 Integrations | OAuth, token vault, publishers, scheduler/worker, status tracking | ✅ IG/FB/LinkedIn/Pinterest · YT/TikTok declared |
 | 7 Analytics + competitors | Insights sync, AI analysis, competitor research | ✅ IG/FB metrics |
-| 8 Agency + scale | Invites/roles ✅, plan limits ✅ · Stripe billing, SSO, audit export, S3/Supabase storage adapter, OpenTelemetry, rate limiting, Python AI worker | next |
+| 8 Agency + scale | Invites/roles ✅, plan limits ✅, Stripe billing ✅ · SSO, audit export, S3/Supabase storage adapter, OpenTelemetry, rate limiting, Python AI worker | next |
 
 ### Next up, in order
-1. Stripe subscriptions on `workspaces.plan` (limits are already enforced in `lib/plans.ts`).
+1. Invite emails (transactional email provider).
 2. Supabase Storage / S3 adapter for `StorageProvider`; CDN for rendered creatives.
 3. Insights fetchers for LinkedIn, Pinterest and YouTube analytics; Reels/video publishing.
 4. Brand consistency scoring: compare uploaded or generated creatives against the profile with vision.
