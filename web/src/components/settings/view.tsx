@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { format } from "date-fns";
 import { Plus, Trash2 } from "lucide-react";
-import { changeRole, inviteMember, removeMember, updateWorkspace } from "@/app/actions/settings";
+import { changeRole, inviteMember, removeMember, setMemberBrands, updateWorkspace } from "@/app/actions/settings";
 import { openBillingPortal, startCheckout } from "@/app/actions/billing";
 import { Badge, Button, Card, CardBody, CardHeader, Field, Input, Notice, PageHeader, Select } from "@/components/ui";
 import { useRun } from "@/components/hooks";
@@ -11,11 +11,12 @@ import { PLANS, type PlanId } from "@/lib/plans";
 import { ROLE_DESCRIPTIONS, roleAtLeast, type Role } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
-type Member = { id: string; role: Role; status: string; invitedEmail: string | null; userId: string | null; name: string | null; email: string | null };
+type Member = { id: string; role: Role; brandIds: string[] | null; status: string; invitedEmail: string | null; userId: string | null; name: string | null; email: string | null };
 
 export function SettingsView(props: {
   role: Role;
   me: string;
+  scoped?: boolean;
   workspace: { id: string; name: string; type: "creator" | "business" | "agency"; plan: string };
   billing: {
     configured: boolean;
@@ -31,11 +32,14 @@ export function SettingsView(props: {
   brands: { id: string; name: string; createdAt: Date }[];
   integrations: { ai: { provider: string; ready: boolean; model: string }; image: { ready: boolean; provider: string }; embeddings: string; database: string };
 }) {
-  const isAdmin = roleAtLeast(props.role, "admin");
+  const isAdmin = roleAtLeast(props.role, "admin") && !props.scoped;
   const [name, setName] = useState(props.workspace.name);
   const [type, setType] = useState(props.workspace.type);
   const [email, setEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<Role>("editor");
+  const [inviteScope, setInviteScope] = useState<string>("all");
+  const isAgency = props.workspace.type === "agency";
+  const brandName = (id: string) => props.brands.find((b) => b.id === id)?.name ?? "Unknown brand";
   const { run, busy } = useRun();
   const plan = PLANS[(props.workspace.plan as PlanId) ?? "starter"] ?? PLANS.starter;
 
@@ -70,7 +74,13 @@ export function SettingsView(props: {
                     <option value="editor">Editor</option>
                     <option value="viewer">Viewer</option>
                   </Select>
-                  <Button loading={busy("inv")} disabled={!email} onClick={() => run(() => inviteMember(props.workspace.id, email, inviteRole), { key: "inv", success: "Member added. Pending invites join when they sign up with this email.", onOk: () => setEmail("") })}>
+                  {props.brands.length > 1 || isAgency ? (
+                    <Select value={inviteScope} onChange={(e) => setInviteScope(e.target.value)} className="w-44" aria-label="Brand access">
+                      <option value="all">All brands</option>
+                      {props.brands.map((b) => <option key={b.id} value={b.id}>Only {b.name}</option>)}
+                    </Select>
+                  ) : null}
+                  <Button loading={busy("inv")} disabled={!email} onClick={() => run(() => inviteMember(props.workspace.id, email, inviteRole, inviteScope === "all" ? null : [inviteScope]), { key: "inv", success: "Member added. Pending invites join when they sign up with this email.", onOk: () => setEmail("") })}>
                     <Plus /> Invite
                   </Button>
                 </div>
@@ -80,11 +90,22 @@ export function SettingsView(props: {
                   <li key={m.id} className="flex items-center gap-3 py-2.5">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[13px] font-medium">{m.name ?? m.invitedEmail}</p>
-                      <p className="truncate text-[11px] text-faint">{m.email ?? m.invitedEmail}{m.status === "invited" ? " · invitation pending" : ""}</p>
+                      <p className="truncate text-[11px] text-faint">{m.email ?? m.invitedEmail}{m.status === "invited" ? " · invitation pending" : ""}{m.brandIds ? ` · client access: ${m.brandIds.map(brandName).join(", ")}` : ""}</p>
                     </div>
+                    {isAdmin && m.userId !== props.me && (m.role === "editor" || m.role === "viewer") && (props.brands.length > 1 || isAgency) ? (
+                      <Select
+                        value={m.brandIds ? m.brandIds[0] : "all"}
+                        onChange={(e) => run(() => setMemberBrands(props.workspace.id, m.id, e.target.value === "all" ? null : [e.target.value]), { success: "Brand access updated" })}
+                        className="h-8 w-36 text-[12px]"
+                        aria-label="Brand access"
+                      >
+                        <option value="all">All brands</option>
+                        {props.brands.map((b) => <option key={b.id} value={b.id}>Only {b.name}</option>)}
+                      </Select>
+                    ) : null}
                     {isAdmin && m.userId !== props.me ? (
                       <Select value={m.role} onChange={(e) => run(() => changeRole(props.workspace.id, m.id, e.target.value as Role), { success: "Role updated" })} className="h-8 w-28 text-[12px]">
-                        {(["owner", "admin", "editor", "viewer"] as Role[]).map((r) => <option key={r} value={r} className="capitalize">{r}</option>)}
+                        {(m.brandIds ? (["editor", "viewer"] as Role[]) : (["owner", "admin", "editor", "viewer"] as Role[])).map((r) => <option key={r} value={r} className="capitalize">{r}</option>)}
                       </Select>
                     ) : (
                       <Badge className="capitalize">{m.role}</Badge>

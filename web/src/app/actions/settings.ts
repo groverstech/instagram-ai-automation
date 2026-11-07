@@ -1,6 +1,6 @@
 "use server";
 import { revalidatePath } from "next/cache";
-import { and, count, eq } from "drizzle-orm";
+import { and, count, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/server/db/client";
 import { requireWorkspaceRole } from "@/server/auth/guard";
@@ -17,10 +17,23 @@ export async function updateWorkspace(workspaceId: string, input: { name: string
   });
 }
 
-export async function inviteMember(workspaceId: string, email: string, role: Role) {
+/** Validate a client-user brand scope: brands must belong to this workspace; scoped users can't be admins. */
+async function checkScope(workspaceId: string, role: Role, brandIds: string[] | null | undefined) {
+  if (brandIds == null) return null;
+  const ids = [...new Set(brandIds)];
+  if (!ids.length) throw new Error("Choose at least one brand, or give access to all brands.");
+  if (role === "owner" || role === "admin") throw new Error("Admins and owners always have access to every brand. Use the editor or viewer role for client access.");
+  const db = await getDb();
+  const rows = await db.select({ id: schema.brands.id }).from(schema.brands).where(and(eq(schema.brands.workspaceId, workspaceId), inArray(schema.brands.id, ids)));
+  if (rows.length !== ids.length) throw new Error("One of those brands isn't in this workspace.");
+  return ids;
+}
+
+export async function inviteMember(workspaceId: string, email: string, role: Role, brandIds?: string[] | null) {
   return safe(async () => {
     await requireWorkspaceRole(workspaceId, "admin");
     if (role === "owner") throw new Error("Invite as admin, then transfer ownership.");
+    const scope = await checkScope(workspaceId, role, brandIds);
     const e = z.string().trim().toLowerCase().email("Enter a valid email").parse(email);
     await assertCanAdd(workspaceId, "seats");
     const db = await getDb();
@@ -28,10 +41,10 @@ export async function inviteMember(workspaceId: string, email: string, role: Rol
     if (user) {
       const [exists] = await db.select().from(schema.workspaceMembers).where(and(eq(schema.workspaceMembers.workspaceId, workspaceId), eq(schema.workspaceMembers.userId, user.id)));
       if (exists) throw new Error("That person is already a member.");
-      await db.insert(schema.workspaceMembers).values({ workspaceId, userId: user.id, role, status: "active", invitedEmail: e });
+      await db.insert(schema.workspaceMembers).values({ workspaceId, userId: user.id, role, status: "active", invitedEmail: e, brandIds: scope });
     } else {
       // Pending until they sign up with this email. (Email delivery is a Phase 8 integration.)
-      await db.insert(schema.workspaceMembers).values({ workspaceId, invitedEmail: e, role, status: "invited" });
+      await db.insert(schema.workspaceMembers).values({ workspaceId, invitedEmail: e, role, status: "invited", brandIds: scope });
     }
     revalidatePath("/settings");
   });
@@ -44,11 +57,25 @@ export async function changeRole(workspaceId: string, memberId: string, role: Ro
     const db = await getDb();
     const [m] = await db.select().from(schema.workspaceMembers).where(and(eq(schema.workspaceMembers.id, memberId), eq(schema.workspaceMembers.workspaceId, workspaceId)));
     if (!m) throw new Error("Member not found");
+    if (Array.isArray(m.brandIds) && (role === "owner" || role === "admin")) throw new Error("This member only has access to specific brands. Give them access to all brands first.");
     if (m.role === "owner") {
       const [{ n }] = await db.select({ n: count() }).from(schema.workspaceMembers).where(and(eq(schema.workspaceMembers.workspaceId, workspaceId), eq(schema.workspaceMembers.role, "owner")));
       if (n <= 1) throw new Error("A workspace needs at least one owner.");
     }
     await db.update(schema.workspaceMembers).set({ role }).where(eq(schema.workspaceMembers.id, memberId));
+    revalidatePath("/settings");
+  });
+}
+
+/** Limit a member to specific brands (client access), or pass null for every brand. */
+export async function setMemberBrands(workspaceId: string, memberId: string, brandIds: string[] | null) {
+  return safe(async () => {
+    await requireWorkspaceRole(workspaceId, "admin");
+    const db = await getDb();
+    const [m] = await db.select().from(schema.workspaceMembers).where(and(eq(schema.workspaceMembers.id, memberId), eq(schema.workspaceMembers.workspaceId, workspaceId)));
+    if (!m) throw new Error("Member not found");
+    const scope = await checkScope(workspaceId, m.role, brandIds);
+    await db.update(schema.workspaceMembers).set({ brandIds: scope }).where(eq(schema.workspaceMembers.id, memberId));
     revalidatePath("/settings");
   });
 }

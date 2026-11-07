@@ -6,7 +6,7 @@ import { getDb, schema } from "@/server/db/client";
 import { requireBrand, type BrandAccess } from "@/server/auth/guard";
 import { safe } from "@/server/action";
 import { guardedAi } from "@/server/ai-guard";
-import { generateStrategy, approveStrategy, planCalendar, suggestIdeas, writeCopy } from "@/server/agents/strategy";
+import { planCalendar, suggestIdeas, writeCopy } from "@/server/agents/strategy";
 import { generateCreatives, createVariation, generateCreativeImage, updateConcept, setCreativeStatus } from "@/server/agents/creative";
 import { createCampaign, producePost } from "@/server/agents/campaign";
 import { analyzePerformance } from "@/server/agents/analytics";
@@ -27,23 +27,7 @@ const day = (s: string | undefined, fallback: Date) => {
   return Number.isNaN(d.getTime()) ? fallback : startOfDay(d);
 };
 
-// ---------- Strategy ----------
-export async function generateStrategyAction(brandId: string, month: string, focus: string) {
-  return aiAction(brandId, "ai_heavy", async ({ brand, scope }) => {
-    const s = await generateStrategy(scope, brand, month, focus || undefined);
-    revalidatePath("/strategist");
-    return { id: s.id };
-  });
-}
-
-export async function approveStrategyAction(brandId: string, strategyId: string) {
-  return safe(async () => {
-    await requireBrand(brandId, "admin");
-    await approveStrategy(brandId, strategyId);
-    revalidatePath("/strategist");
-  });
-}
-
+// ---------- Calendar ----------
 export async function planCalendarAction(brandId: string, input: { start?: string; days: number; platforms: string[]; postsPerWeek?: number; note?: string }) {
   return aiAction(brandId, "ai_heavy", async ({ brand, scope }) => {
     const r = await planCalendar(scope, brand, { start: day(input.start, addDays(new Date(), 1)), days: Math.min(Math.max(input.days, 1), 60), platforms: input.platforms, postsPerWeek: input.postsPerWeek, note: input.note });

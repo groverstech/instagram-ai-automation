@@ -6,6 +6,7 @@ import { BillingError } from "./billing";
 import { UploadError } from "./assets";
 import { RateLimitError } from "./ratelimit";
 import { log } from "./log";
+import { StrategyError } from "./strategist/store";
 
 export type Result<T = undefined> = { ok: true; data: T } | { ok: false; error: string; status?: number; retryAfter?: number };
 
@@ -16,7 +17,11 @@ export async function safe<T>(fn: () => Promise<T>): Promise<Result<T>> {
   } catch (e) {
     if (e && typeof e === "object" && "digest" in e && String((e as { digest: string }).digest).startsWith("NEXT_REDIRECT")) throw e;
     if (e instanceof RateLimitError) return { ok: false, error: e.message, status: 429, retryAfter: e.retryAfter };
-    if (e instanceof AccessError || e instanceof QuotaError || e instanceof BillingError || e instanceof UploadError) return { ok: false, error: e.message };
+    if (e instanceof AccessError || e instanceof QuotaError || e instanceof BillingError || e instanceof UploadError || e instanceof StrategyError) return { ok: false, error: e.message };
+    if (e && typeof e === "object" && (e as { name?: string }).name === "ZodError") {
+      const issues = (e as { issues?: { path: (string | number)[]; message: string }[] }).issues ?? [];
+      return { ok: false, error: `Please check your input: ${issues.slice(0, 3).map((i) => `${i.path.join(".") || "value"} — ${i.message}`).join("; ")}` };
+    }
     const ai = friendlyAIError(e);
     if (ai) {
       log.error("action.ai_failed", { error: e instanceof Error ? e.message : String(e) });

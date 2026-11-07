@@ -32,6 +32,7 @@ export const BrandAnswer = z.object({
 });
 export type BrandAnswer = z.infer<typeof BrandAnswer>;
 
+/** Legacy (schemaVersion 1) monthly strategy. New strategies use src/lib/strategy.ts. */
 export const Strategy = z.object({
   summary: z.string(),
   monthlyFocus: z.string(),

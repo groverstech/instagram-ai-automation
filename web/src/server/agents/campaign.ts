@@ -8,6 +8,7 @@ import { runAgent, type RunScope } from "./orchestrator";
 import { buildContext, renderContext } from "./context";
 import { CampaignPlan } from "./schemas";
 import { insertPlannedPosts, writeCopy, latestStrategy } from "./strategy";
+import { summarizeStrategy } from "@/lib/strategy";
 import { generateCreatives } from "./creative";
 import type { Brand } from "../db/schema";
 import { PLATFORM_IDS } from "@/lib/domain";
@@ -37,7 +38,7 @@ export async function createCampaign(scope: RunScope, brand: Brand, req: Campaig
   const ctx = await buildContext(brand, `campaign ${req.type} ${req.brief}`);
   const strategy = await latestStrategy(brand.id);
   const prompt = `${renderContext(ctx)}
-${strategy ? `<current_strategy>${JSON.stringify((strategy.data as Record<string, unknown>).pillars)}</current_strategy>` : ""}
+${strategy ? `<current_strategy>${JSON.stringify(summarizeStrategy(strategy.data, strategy.schemaVersion).pillars)}</current_strategy>` : ""}
 
 Design a ${days}-day ${req.type} campaign starting ${fmt(req.start, "yyyy-MM-dd")} on ${platforms.join(", ") || "instagram"}.
 Primary objective: ${req.objective}.

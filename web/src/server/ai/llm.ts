@@ -18,11 +18,16 @@ export type StructuredRequest<T> = {
   /** Images and PDFs (brand guidelines) for vision analysis. */
   images?: ImageInput[];
   effort?: Effort;
+  /** Output budget (incl. thinking). Kept ≤ 16k so non-streaming requests stay within SDK limits. */
+  maxTokens?: number;
   /** Only used when AI_PROVIDER=mock. Agents supply a deterministic stand-in. */
   mock: () => T;
 };
 
-export type Usage = { inputTokens?: number; outputTokens?: number };
+export type Usage = { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; webSearches?: number; model?: string };
+
+/** A search result the model actually received from the web search tool. */
+export type ResearchSource = { url: string; title: string; publishedAt: string | null; cited: boolean };
 export type StructuredResult<T> = { data: T; usage: Usage; provider: string };
 
 export class AIConfigError extends Error {}
@@ -36,7 +41,10 @@ export interface LLMProvider {
   /** Free-form research with Claude's web search tool. Returns notes + cited URLs. */
   research(req: { system: string; prompt: string; maxSearches?: number; mock: () => string }): Promise<{
     text: string;
+    /** URLs of results and citations (legacy shape). */
     sources: string[];
+    /** Every search result returned by the tool, with title and page age; `cited` if the text cites it. */
+    results: ResearchSource[];
     usage: Usage;
     provider: string;
   }>;
@@ -79,7 +87,7 @@ const anthropicProvider: LLMProvider = {
     const format = betaZodOutputFormat(req.schema) as unknown as { schema: Record<string, unknown> };
     const res = await anthropic().beta.messages.create({
       model: MODEL,
-      max_tokens: 16000,
+      max_tokens: Math.min(req.maxTokens ?? 16000, 16000),
       betas: [FALLBACK_BETA],
       fallbacks: "default",
       thinking: { type: "adaptive" },
@@ -105,11 +113,7 @@ const anthropicProvider: LLMProvider = {
     }
     const parsed = req.schema.safeParse(json);
     if (!parsed.success) throw new AIOutputError("The AI returned output that didn't match the expected format. Please try again.");
-    return {
-      data: parsed.data,
-      usage: { inputTokens: res.usage.input_tokens, outputTokens: res.usage.output_tokens },
-      provider: `anthropic:${res.model}`,
-    };
+    return { data: parsed.data, usage: usageOf(res), provider: `anthropic:${res.model}` };
   },
   async research(req) {
     const res = await anthropic().beta.messages.create({
@@ -125,23 +129,78 @@ const anthropicProvider: LLMProvider = {
     });
     if (res.stop_reason === "refusal") throw new AIRefusalError("The AI declined this research request.");
     const sources = new Set<string>();
+    const results = new Map<string, ResearchSource>();
+    const cited = new Set<string>();
     let text = "";
     for (const block of res.content) {
       if (block.type === "text") {
         text += block.text;
-        for (const c of block.citations ?? []) if ("url" in c && c.url) sources.add(c.url);
+        for (const c of block.citations ?? []) {
+          if ("url" in c && c.url) {
+            sources.add(c.url);
+            cited.add(c.url);
+          }
+        }
       } else if (block.type === "web_search_tool_result" && Array.isArray(block.content)) {
-        for (const r of block.content) if (r.type === "web_search_result") sources.add(r.url);
+        for (const r of block.content) {
+          if (r.type !== "web_search_result") continue;
+          sources.add(r.url);
+          if (!results.has(r.url)) results.set(r.url, { url: r.url, title: r.title, publishedAt: r.page_age ?? null, cited: false });
+        }
       }
+    }
+    for (const u of cited) {
+      const r = results.get(u);
+      if (r) r.cited = true;
     }
     return {
       text,
       sources: [...sources].slice(0, 20),
-      usage: { inputTokens: res.usage.input_tokens, outputTokens: res.usage.output_tokens },
+      results: [...results.values()].slice(0, 40),
+      usage: usageOf(res),
       provider: `anthropic:${res.model}`,
     };
   },
 };
+
+function usageOf(res: Anthropic.Beta.BetaMessage): Usage {
+  return {
+    inputTokens: res.usage.input_tokens,
+    outputTokens: res.usage.output_tokens,
+    cacheReadTokens: res.usage.cache_read_input_tokens ?? 0,
+    cacheWriteTokens: res.usage.cache_creation_input_tokens ?? 0,
+    webSearches: res.usage.server_tool_use?.web_search_requests ?? 0,
+    model: res.model,
+  };
+}
+
+/** True for failures worth retrying: unusable output, network errors, overload and 5xx. Never auth/config/refusal/4xx. */
+export function isRetryable(e: unknown): boolean {
+  if (e instanceof AIOutputError) return true;
+  if (e instanceof Anthropic.APIConnectionError) return true;
+  if (e instanceof Anthropic.APIError) return e.status === 408 || e.status === 409 || e.status === 429 || (e.status !== undefined && e.status >= 500);
+  return false;
+}
+
+/**
+ * Retry an AI call on transient failures with exponential backoff. The SDK already retries
+ * HTTP-level failures twice; this adds retries for unusable model output and keeps the count.
+ */
+export async function withRetry<T>(fn: (attempt: number) => Promise<T>, opts: { attempts?: number; baseMs?: number; onRetry?: (e: unknown, attempt: number) => void } = {}): Promise<T> {
+  const attempts = opts.attempts ?? 2;
+  let last: unknown;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await fn(i);
+    } catch (e) {
+      last = e;
+      if (i === attempts || !isRetryable(e)) throw e;
+      opts.onRetry?.(e, i);
+      await new Promise((r) => setTimeout(r, (opts.baseMs ?? 1500) * 2 ** (i - 1)));
+    }
+  }
+  throw last;
+}
 
 const mockProvider: LLMProvider = {
   name: "mock",
@@ -149,7 +208,7 @@ const mockProvider: LLMProvider = {
     return { data: req.schema.parse(req.mock()), usage: {}, provider: "mock" };
   },
   async research(req) {
-    return { text: req.mock(), sources: [], usage: {}, provider: "mock" };
+    return { text: req.mock(), sources: [], results: [], usage: {}, provider: "mock" };
   },
 };
 

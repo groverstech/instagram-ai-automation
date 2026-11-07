@@ -7,7 +7,11 @@ process.env.IMAGE_PROVIDER = "none";
 
 const { getDb, schema } = await import("./db/client");
 const { generateBrandProfile, approveProfile } = await import("./agents/brand");
-const { generateStrategy, planCalendar } = await import("./agents/strategy");
+const { planCalendar } = await import("./agents/strategy");
+const { createStrategy, getStrategy, docOf } = await import("./strategist/store");
+const { startTask } = await import("./strategist/workflow");
+const { requireBrandForUser } = await import("./auth/guard");
+const { SECTION_KEYS, StrategyInputs } = await import("@/lib/strategy");
 const { createCampaign } = await import("./agents/campaign");
 const { generateCreatives, setCreativeStatus } = await import("./agents/creative");
 const { recall } = await import("./memory");
@@ -51,8 +55,13 @@ describe("agent pipeline (mock provider)", () => {
   it("builds strategy, calendar and a campaign with drafts only", async () => {
     const db = await getDb();
     const [brand] = await db.select().from(schema.brands).where(eq(schema.brands.id, brandId));
-    const s = await generateStrategy({ brandId, userId }, brand, "2026-12");
+    const access = await requireBrandForUser({ sessionId: "s", activeBrandId: null, user: { id: userId, email: "t@example.com", name: "T" } }, brandId, "editor");
+    const inputs = StrategyInputs.parse({ accountType: "business", businessObjectives: ["Grow online sales"], platforms: ["instagram", "pinterest"], startDate: "2026-12-01", postsPerWeek: 5 });
+    const created = await createStrategy(brandId, userId, inputs, [], null);
+    await startTask(access, created.id, { sections: [...SECTION_KEYS], inline: true });
+    const s = (await getStrategy(brandId, created.id))!;
     expect(s.month).toBe("2026-12");
+    expect(Object.keys(docOf(s).sections).sort()).toEqual([...SECTION_KEYS].sort());
     const cal = await planCalendar({ brandId, userId }, brand, { start: new Date("2026-12-01"), days: 14 });
     expect(cal.postIds.length).toBeGreaterThan(3);
     const camp = await createCampaign({ brandId, userId }, brand, { brief: "Winter glaze launch", type: "launch", objective: "awareness", start: new Date("2026-12-05"), days: 10, produceFirst: 2 });

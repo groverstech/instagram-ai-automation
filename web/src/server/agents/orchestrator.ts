@@ -2,7 +2,8 @@ import "server-only";
 import { desc, eq } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
 import { AGENTS, type AgentId } from "./registry";
-import type { Usage } from "../ai/llm";
+import { withRetry, type Usage } from "../ai/llm";
+import { estimateCost } from "../ai/pricing";
 
 export type RunScope = { brandId: string; userId: string; parentId?: string };
 
@@ -16,23 +17,32 @@ export async function runAgent<T>(
   task: string,
   input: unknown,
   fn: (runId: string) => Promise<{ data: T; usage?: Usage; provider?: string }>,
-): Promise<{ runId: string; data: T; provider?: string }> {
+  opts: { retries?: number } = {},
+): Promise<{ runId: string; data: T; provider?: string; usage?: Usage; costUsd: number }> {
   const db = await getDb();
   const [run] = await db
     .insert(schema.agentRuns)
     .values({ brandId: scope.brandId, userId: scope.userId, parentId: scope.parentId, agent, task, input: input ?? null })
     .returning({ id: schema.agentRuns.id });
+  let attempts = 0;
   try {
-    const { data, usage, provider } = await fn(run.id);
+    const { data, usage, provider } = await withRetry(
+      () => {
+        attempts++;
+        return fn(run.id);
+      },
+      { attempts: 1 + (opts.retries ?? 0) },
+    );
+    const costUsd = estimateCost(usage);
     await db
       .update(schema.agentRuns)
-      .set({ status: "succeeded", output: data as unknown, usage: usage ?? null, provider, finishedAt: new Date() })
+      .set({ status: "succeeded", output: data as unknown, usage: usage ?? null, provider, model: usage?.model ?? null, costUsd, attempts, finishedAt: new Date() })
       .where(eq(schema.agentRuns.id, run.id));
-    return { runId: run.id, data, provider };
+    return { runId: run.id, data, provider, usage, costUsd };
   } catch (e) {
     await db
       .update(schema.agentRuns)
-      .set({ status: "failed", error: e instanceof Error ? e.message : String(e), finishedAt: new Date() })
+      .set({ status: "failed", error: e instanceof Error ? e.message : String(e), attempts, finishedAt: new Date() })
       .where(eq(schema.agentRuns.id, run.id));
     throw e;
   }

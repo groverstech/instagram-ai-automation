@@ -95,13 +95,14 @@ export async function enforce(kind: LimitKind, subject: Subject, now = new Date(
 }
 
 /**
- * Run an AI task inside a concurrency lease. Throws RateLimitError when the user or the
- * organisation already has the maximum number of AI tasks running.
+ * Take a concurrency lease. Throws RateLimitError when the user or the organisation already has
+ * the maximum number of AI tasks running. Release it with releaseAiSlot; long background work
+ * renews it with renewAiSlot so a crashed worker's lease still expires.
  */
-export async function withAiSlot<T>(subject: { userId: string; workspaceId: string; plan: PlanId }, kind: string, fn: () => Promise<T>): Promise<T> {
+export async function acquireAiSlot(subject: { userId: string; workspaceId: string; plan: PlanId }, kind: string, leaseSec: number = CONCURRENCY.leaseSec): Promise<string> {
   const db = await getDb();
   const now = new Date();
-  const leaseId = await db.transaction(async (tx) => {
+  return db.transaction(async (tx) => {
     // Serialise lease checks per organisation so concurrent requests can't both slip through.
     await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${"ai-lease:" + subject.workspaceId}))`);
     await tx.delete(schema.aiTaskLeases).where(and(eq(schema.aiTaskLeases.workspaceId, subject.workspaceId), lt(schema.aiTaskLeases.expiresAt, now)));
@@ -120,13 +121,28 @@ export async function withAiSlot<T>(subject: { userId: string; workspaceId: stri
     }
     const [lease] = await tx
       .insert(schema.aiTaskLeases)
-      .values({ workspaceId: subject.workspaceId, userId: subject.userId, kind, expiresAt: new Date(now.getTime() + CONCURRENCY.leaseSec * 1000) })
+      .values({ workspaceId: subject.workspaceId, userId: subject.userId, kind, expiresAt: new Date(now.getTime() + leaseSec * 1000) })
       .returning({ id: schema.aiTaskLeases.id });
     return lease.id;
   });
+}
+
+export async function renewAiSlot(leaseId: string, leaseSec: number = CONCURRENCY.leaseSec) {
+  const db = await getDb();
+  await db.update(schema.aiTaskLeases).set({ expiresAt: new Date(Date.now() + leaseSec * 1000) }).where(eq(schema.aiTaskLeases.id, leaseId)).catch(() => {});
+}
+
+export async function releaseAiSlot(leaseId: string) {
+  const db = await getDb();
+  await db.delete(schema.aiTaskLeases).where(eq(schema.aiTaskLeases.id, leaseId)).catch(() => {});
+}
+
+/** Run an AI task inside a concurrency lease (see acquireAiSlot). */
+export async function withAiSlot<T>(subject: { userId: string; workspaceId: string; plan: PlanId }, kind: string, fn: () => Promise<T>): Promise<T> {
+  const leaseId = await acquireAiSlot(subject, kind);
   try {
     return await fn();
   } finally {
-    await db.delete(schema.aiTaskLeases).where(eq(schema.aiTaskLeases.id, leaseId)).catch(() => {});
+    await releaseAiSlot(leaseId);
   }
 }

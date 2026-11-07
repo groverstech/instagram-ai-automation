@@ -12,16 +12,22 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ b
   const { brand, role, session } = await requireActiveBrand();
   const db = await getDb();
   const [ws] = await db.select().from(schema.workspaces).where(eq(schema.workspaces.id, brand.workspaceId));
-  const members = await db
-    .select({ id: schema.workspaceMembers.id, role: schema.workspaceMembers.role, status: schema.workspaceMembers.status, invitedEmail: schema.workspaceMembers.invitedEmail, userId: schema.workspaceMembers.userId, name: schema.users.name, email: schema.users.email })
+  const allMembers = await db
+    .select({ id: schema.workspaceMembers.id, role: schema.workspaceMembers.role, brandIds: schema.workspaceMembers.brandIds, status: schema.workspaceMembers.status, invitedEmail: schema.workspaceMembers.invitedEmail, userId: schema.workspaceMembers.userId, name: schema.users.name, email: schema.users.email })
     .from(schema.workspaceMembers)
     .leftJoin(schema.users, eq(schema.users.id, schema.workspaceMembers.userId))
     .where(eq(schema.workspaceMembers.workspaceId, ws.id));
-  const brands = await db.select({ id: schema.brands.id, name: schema.brands.name, createdAt: schema.brands.createdAt }).from(schema.brands).where(eq(schema.brands.workspaceId, ws.id));
+  const allBrands = await db.select({ id: schema.brands.id, name: schema.brands.name, createdAt: schema.brands.createdAt }).from(schema.brands).where(eq(schema.brands.workspaceId, ws.id));
+  // Client users (brand-scoped) only see their own brands and their own membership.
+  const myScope = allMembers.find((m) => m.userId === session.user.id)?.brandIds ?? null;
+  const scoped = Array.isArray(myScope);
+  const brands = scoped ? allBrands.filter((b) => myScope.includes(b.id)) : allBrands;
+  const members = scoped ? allMembers.filter((m) => m.userId === session.user.id) : allMembers;
   return (
     <SettingsView
       role={role}
       me={session.user.id}
+      scoped={scoped}
       workspace={{ id: ws.id, name: ws.name, type: ws.type, plan: ws.plan }}
       billing={{
         ...billingStatus(),
