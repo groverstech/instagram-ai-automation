@@ -5,10 +5,11 @@ export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     if (process.env.RUN_JOBS_IN_PROCESS === "false") return;
     const { tick } = await import("./server/jobs/handlers");
+    const { log } = await import("./server/log");
     const g = globalThis as unknown as { __bpTicker?: NodeJS.Timeout };
     if (g.__bpTicker) return;
     g.__bpTicker = setInterval(() => {
-      tick().catch((e) => console.error("[jobs] tick failed", e));
+      tick().catch((e) => log.error("jobs.tick_failed", { error: e instanceof Error ? e.message : String(e) }));
     }, 30_000);
   }
 }

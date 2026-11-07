@@ -44,7 +44,7 @@ export function Assistant({ brandId, brandName, initial, canRun }: { brandId: st
     setInput("");
     setMsgs((m) => [...m, { id: crypto.randomUUID(), role: "user", content: t, actions: [] }]);
     start(async () => {
-      const r = await assistantAction(brandId, t);
+      const r = await assistantAction(brandId, t).catch(() => ({ ok: false as const, error: "The server is busy or unreachable. Please wait a moment and try again." }));
       setMsgs((m) => [...m, r.ok ? { id: crypto.randomUUID(), role: "assistant", content: r.data.text, actions: r.data.actions } : { id: crypto.randomUUID(), role: "assistant", content: r.error, actions: [], error: true }]);
       router.refresh();
     });

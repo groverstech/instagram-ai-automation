@@ -5,6 +5,26 @@ import { z } from "zod";
 import { getDb, schema } from "@/server/db/client";
 import { hashPassword, verifyPassword } from "@/server/auth/password";
 import { createSession, destroySession } from "@/server/auth/session";
+import { headers } from "next/headers";
+import { enforce, RateLimitError } from "@/server/ratelimit";
+import { sha256 } from "@/server/crypto";
+
+/** Client IP from the platform's proxy headers (first hop). */
+async function clientIp() {
+  const h = await headers();
+  return (h.get("x-forwarded-for")?.split(",")[0] ?? h.get("x-real-ip") ?? "unknown").trim();
+}
+
+/** Brute-force protection; keys are hashed so emails/IPs never appear in the limiter table. */
+async function limited(kind: "login" | "signup", ...parts: string[]): Promise<string | null> {
+  try {
+    for (const p of parts) await enforce("login", { key: sha256(`${kind}:${p}`) });
+    return null;
+  } catch (e) {
+    if (e instanceof RateLimitError) return e.message;
+    throw e;
+  }
+}
 
 const SignUp = z.object({
   name: z.string().trim().min(1, "Enter your name"),
@@ -18,6 +38,9 @@ export async function signUp(_: unknown, fd: FormData): Promise<{ error?: string
   const parsed = SignUp.safeParse(Object.fromEntries(fd));
   if (!parsed.success) return { error: parsed.error.issues[0].message };
   const { name, email, password, workspace, type } = parsed.data;
+  const ip = await clientIp();
+  const blocked = await limited("signup", `ip:${ip}`);
+  if (blocked) return { error: blocked };
   const db = await getDb();
   const [exists] = await db.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.email, email));
   if (exists) return { error: "An account with this email already exists." };
@@ -40,6 +63,8 @@ export async function signUp(_: unknown, fd: FormData): Promise<{ error?: string
 export async function logIn(_: unknown, fd: FormData): Promise<{ error?: string }> {
   const email = String(fd.get("email") ?? "").trim().toLowerCase();
   const password = String(fd.get("password") ?? "");
+  const blocked = await limited("login", `email:${email}`, `ip:${await clientIp()}`);
+  if (blocked) return { error: blocked };
   const db = await getDb();
   const [user] = await db.select().from(schema.users).where(eq(schema.users.email, email));
   if (!user || !(await verifyPassword(password, user.passwordHash))) return { error: "Email or password is incorrect." };

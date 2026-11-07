@@ -4,14 +4,14 @@ import { format, formatDistanceToNow, subDays } from "date-fns";
 import { ArrowRight, Brain, CalendarDays, CheckCircle2, CircleDashed, Megaphone, Palette, Share2, Sparkles, XCircle } from "lucide-react";
 import { requireActiveBrand } from "@/server/auth/guard";
 import { getDb, schema } from "@/server/db/client";
-import { latestProfile } from "@/server/agents/context";
+import { latestProfile, profileOf } from "@/server/agents/context";
 import { latestStrategy } from "@/server/agents/strategy";
 import { recentRuns } from "@/server/agents/orchestrator";
 import { performanceDataset, summarize } from "@/server/agents/analytics";
 import { Badge, Card, CardBody, CardHeader, Empty } from "@/components/ui";
 import { CreativeThumb, PlatformTag, SourceTag, StatusBadge } from "@/components/bits";
 import { AskButton } from "@/components/dashboard/ask";
-import type { BrandProfile, Strategy } from "@/server/agents/schemas";
+import type { Strategy } from "@/server/agents/schemas";
 import { compact, pct } from "@/lib/utils";
 
 export default async function Dashboard() {
@@ -29,7 +29,7 @@ export default async function Dashboard() {
     db.select().from(schema.socialAccounts).where(eq(schema.socialAccounts.brandId, brand.id)),
     performanceDataset(brand.id, 30),
   ]);
-  const profile = (approved ?? latest)?.data as BrandProfile | undefined;
+  const profile = profileOf(approved ?? latest);
   const strat = strategy?.data as Strategy | undefined;
   const summary = summarize(perf);
   const totalReach = perf.reduce((s, p) => s + (p.reach ?? 0), 0);
@@ -47,7 +47,7 @@ export default async function Dashboard() {
 
   const recs = [
     ...(strat?.campaignIdeas ?? []).slice(0, 2).map((c) => ({ title: c.name, body: c.concept, prompt: `Create a 14-day campaign: ${c.name}. ${c.concept}` })),
-    ...(profile?.contentOpportunities ?? []).slice(0, 3).map((o) => ({ title: o.title, body: o.why, prompt: `Generate three creatives for: ${o.title}` })),
+    ...(profile?.marketing.contentOpportunities ?? []).slice(0, 3).map((o) => ({ title: o.title, body: o.why, prompt: `Generate three creatives for: ${o.title}` })),
     ...(strat?.moments ?? []).filter((m) => new Date(m.date) >= subDays(now, 1)).slice(0, 2).map((m) => ({ title: `${m.name} · ${m.date}`, body: m.idea, prompt: `Generate five premium creatives for ${m.name}: ${m.idea}` })),
   ].slice(0, 5);
 
@@ -104,17 +104,17 @@ export default async function Dashboard() {
               <div className="grid gap-5 md:grid-cols-3">
                 <div>
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-faint">Positioning</p>
-                  <p className="mt-1 text-[13px]">{profile.positioning.statement}</p>
+                  <p className="mt-1 text-[13px]">{profile.identity.positioning.statement || "—"}</p>
                 </div>
                 <div>
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-faint">Voice</p>
-                  <p className="mt-1 text-[13px]">{profile.voice.description}</p>
+                  <p className="mt-1 text-[13px]">{profile.communication.voice.text || "—"}</p>
                 </div>
                 <div>
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-faint">Palette</p>
                   <div className="mt-2 flex gap-1.5">
-                    {profile.visualIdentity.palette.slice(0, 6).map((c) => (
-                      <span key={c.hex} title={`${c.name} · ${c.usage}`} className="size-7 rounded-lg border border-black/5" style={{ background: c.hex }} />
+                    {profile.visual.palette.slice(0, 6).map((c) => (
+                      <span key={c.hex} title={`${c.name} · ${c.role}`} className="size-7 rounded-lg border border-black/5" style={{ background: c.hex }} />
                     ))}
                   </div>
                 </div>

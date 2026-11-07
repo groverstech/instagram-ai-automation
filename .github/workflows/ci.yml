@@ -11,7 +11,7 @@ concurrency:
 
 jobs:
   web:
-    name: Typecheck, test, build
+    name: Typecheck, lint, test, build
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -34,8 +34,14 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Lint
+        run: npm run lint
+
       - name: Integration tests
         run: npm test
 
       - name: Production build
         run: npm run build
+
+      - name: Client bundle secret check
+        run: npm run check:secrets

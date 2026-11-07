@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element -- Satori (next/og) renders plain <img>; next/image does not apply */
 import "server-only";
 import { ImageResponse } from "next/og";
 import { and, eq } from "drizzle-orm";
@@ -95,7 +96,7 @@ export async function renderCreative(creative: Creative, brand: Brand, formatOve
 
   const Logo = ({ color }: { color: string }) =>
     logo ? (
-      <img src={logo} style={{ height: Math.round(64 * unit), objectFit: "contain" }} />
+      <img src={logo} alt="" style={{ height: Math.round(64 * unit), objectFit: "contain" }} />
     ) : (
       <div style={{ display: "flex", fontFamily: heading, fontSize: Math.round(30 * unit), color, letterSpacing: "0.08em" }}>{brand.name.toUpperCase()}</div>
     );
@@ -133,7 +134,7 @@ export async function renderCreative(creative: Creative, brand: Brand, formatOve
 
   const Img = ({ style: s }: { style: Record<string, unknown> }) =>
     image ? (
-      <img src={image} style={{ objectFit: "cover", ...s }} />
+      <img src={image} alt="" style={{ objectFit: "cover", ...s }} />
     ) : (
       <div style={{ display: "flex", background: `linear-gradient(135deg, ${accent} 0%, ${bg} 55%, ${fg} 140%)`, ...s }} />
     );
@@ -177,7 +178,7 @@ export async function renderCreative(creative: Creative, brand: Brand, formatOve
           </div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end" }}>
             <Cta dark />
-            {image ? <img src={image} style={{ width: Math.round(260 * unit), height: Math.round(260 * unit), borderRadius: 999, objectFit: "cover" }} /> : null}
+            {image ? <img src={image} alt="" style={{ width: Math.round(260 * unit), height: Math.round(260 * unit), borderRadius: 999, objectFit: "cover" }} /> : null}
           </div>
         </div>
       );

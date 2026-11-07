@@ -1,50 +1,72 @@
 "use client";
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Check, FileText, Pencil, RefreshCw, Sparkles, Trash2, Upload, X } from "lucide-react";
-import { approveBrandProfile, addBrandNote, deleteAsset, deleteMemory, runBrandIntelligence, saveProfile, updateBrand, uploadAssets } from "@/app/actions/brand";
-import { Badge, Button, Card, CardBody, CardHeader, Empty, Field, Input, Notice, PageHeader, Segmented, Select, Textarea } from "@/components/ui";
+import { AlertTriangle, Check, HelpCircle, Info, RefreshCw, Sparkles, X } from "lucide-react";
+import { approveBrandProfile, addBrandNote, deleteMemory, runBrandIntelligence, updateBrand } from "@/app/actions/brand";
+import { Badge, Button, Card, CardBody, CardHeader, Empty, Field, Input, Notice, PageHeader, Textarea } from "@/components/ui";
 import { Rationale } from "@/components/bits";
 import { useRun } from "@/components/hooks";
-import type { BrandProfile } from "@/server/agents/schemas";
+import { ProfileSections, SourceChip, SourceLegend } from "./profile-sections";
+import { BrandChat, type ChatMsg } from "./brand-chat";
+import { AssetsPanel, type AssetRow } from "./assets-panel";
 import type { Brand } from "@/server/db/schema";
-import { OBJECTIVES, PLATFORMS, STYLES, objectiveLabel, styleById } from "@/lib/domain";
+import { OBJECTIVES, PLATFORMS, objectiveLabel } from "@/lib/domain";
 import { roleAtLeast, type Role } from "@/lib/roles";
 import { cn } from "@/lib/utils";
+import { SECTIONS, type BrandProfileV2, type ScorePart, type SectionStatus } from "@/lib/brand-profile";
 
-type Tab = "profile" | "inputs" | "assets" | "memory";
+type Tab = "profile" | "ask" | "assets" | "details" | "memory";
 
 export function BrandWorkspace(props: {
   role: Role;
   brand: Brand;
-  profile: { id: string; version: number; status: string; data: BrandProfile } | null;
+  ai: { provider: string; ready: boolean };
+  profile: { id: string; version: number; status: string; data: BrandProfileV2; sectionStatus: SectionStatus } | null;
+  profileUnreadable: boolean;
   approvedVersion: number | null;
   history: { id: string; version: number; status: string; createdAt: Date }[];
-  assets: { id: string; kind: string; name: string; mime: string; analysis: Record<string, unknown> | null }[];
+  score: { score: number; parts: ScorePart[] };
+  assets: AssetRow[];
   memories: { id: string; kind: string; content: string; source: string; createdAt: Date }[];
+  chat: { id: string; role: "user" | "assistant"; content: string; meta: Record<string, unknown> | null }[];
   analysisError?: string;
   fresh: boolean;
+  initialTab?: string;
 }) {
-  const [tab, setTab] = useState<Tab>("profile");
+  const tabs: { value: Tab; label: string }[] = [
+    { value: "profile", label: "Brand profile" },
+    { value: "ask", label: "Ask your brand" },
+    { value: "assets", label: `Assets (${props.assets.length})` },
+    { value: "details", label: "Business details" },
+    { value: "memory", label: "Memory & instructions" },
+  ];
+  const [tab, setTab] = useState<Tab>(tabs.some((t) => t.value === props.initialTab) ? (props.initialTab as Tab) : "profile");
   const { run, busy } = useRun();
   const canEdit = roleAtLeast(props.role, "editor");
   const canApprove = roleAtLeast(props.role, "admin");
   const p = props.profile;
+  const confirmed = p ? SECTIONS.filter((s) => p.sectionStatus[s.id] === "confirmed").length : 0;
+
+  const generate = () =>
+    run(() => runBrandIntelligence(props.brand.id), {
+      key: "gen",
+      success: (d) => `New profile draft generated${d.assetsFailed ? ` · ${d.assetsFailed} asset(s) couldn't be analysed` : ""}`,
+    });
 
   return (
     <div>
       <PageHeader
         eyebrow="Brand Intelligence"
         title={props.brand.name}
-        description="Your brand's source of truth. Every agent reads this profile and the memory it builds from your approvals and edits."
+        description="Your brand's source of truth. Every agent reads this profile, your instructions and approved assets before creating anything."
         actions={
           canEdit ? (
             <>
-              <Button variant="secondary" loading={busy("gen")} onClick={() => run(() => runBrandIntelligence(props.brand.id), { key: "gen", success: "New profile draft generated" })}>
-                <RefreshCw /> {p ? "Regenerate" : "Generate profile"}
+              <Button variant="secondary" loading={busy("gen")} onClick={generate} disabled={!props.ai.ready}>
+                <RefreshCw /> {p ? "Re-analyse" : "Analyse my brand"}
               </Button>
               {p && p.status === "draft" && canApprove ? (
-                <Button variant="accent" loading={busy("approve")} onClick={() => run(() => approveBrandProfile(props.brand.id, p.id), { key: "approve", success: "Profile approved and saved to brand memory" })}>
+                <Button variant="accent" loading={busy("approve")} onClick={() => run(() => approveBrandProfile(props.brand.id, p.id), { key: "approve", success: "Profile approved. Agents now use it as the source of truth." })}>
                   <Check /> Approve v{p.version}
                 </Button>
               ) : null}
@@ -53,269 +75,183 @@ export function BrandWorkspace(props: {
         }
       />
 
+      {busy("gen") ? (
+        <Notice tone="info" className="mb-6">
+          The Brand Intelligence agent is reading your answers, website and assets. This usually takes a minute or two.
+        </Notice>
+      ) : null}
       {props.analysisError ? (
         <Notice tone="warn" className="mb-6">
-          Your brand was saved, but analysis didn&apos;t finish: {props.analysisError}
+          Your brand was saved, but the analysis didn&apos;t finish: {props.analysisError}. You can retry with <strong>Analyse my brand</strong>.
+        </Notice>
+      ) : null}
+      {props.profileUnreadable ? (
+        <Notice tone="danger" className="mb-6">
+          The latest profile couldn&apos;t be read. Re-analyse to create a fresh version; your inputs and assets are safe.
         </Notice>
       ) : null}
       {props.fresh && p?.status === "draft" ? (
         <Notice tone="info" className="mb-6">
-          Your Brand Intelligence Profile is ready. Review it, edit anything that&apos;s off, then approve it so every agent uses it.
+          Your Brand Intelligence Profile is ready. Review each section, edit anything that&apos;s off, confirm it, then approve the profile.
         </Notice>
       ) : null}
 
-      <div className="mb-6 flex items-center justify-between gap-3">
-        <Segmented
-          value={tab}
-          onChange={setTab}
-          options={[
-            { value: "profile", label: "Intelligence profile" },
-            { value: "inputs", label: "Business details" },
-            { value: "assets", label: `Assets (${props.assets.length})` },
-            { value: "memory", label: `Memory (${props.memories.length})` },
-          ]}
-        />
-        {p ? (
-          <div className="flex items-center gap-2 text-[12px] text-muted">
-            <Badge tone={p.status === "approved" ? "success" : "warn"}>{p.status === "approved" ? "Approved" : "Draft"}</Badge>v{p.version}
-            {props.approvedVersion && props.approvedVersion !== p.version ? <span>· agents use approved v{props.approvedVersion}</span> : null}
-          </div>
-        ) : null}
+      <div className="mb-6 grid gap-6 lg:grid-cols-[340px_1fr]">
+        <ScoreCard score={props.score} />
+        <Card className="overflow-hidden">
+          {p ? (
+            <div className="flex h-full flex-col">
+              <div className="ai-gradient p-6">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={p.status === "approved" ? "success" : "warn"}>{p.status === "approved" ? "Approved" : "Draft"}</Badge>
+                  <span className="text-[12px] text-ink-2">
+                    v{p.version}
+                    {props.approvedVersion && props.approvedVersion !== p.version ? ` · agents currently use approved v${props.approvedVersion}` : ""}
+                  </span>
+                  {p.data.identity.archetype ? <span className="text-[12px] text-ink-2">· {p.data.identity.archetype}</span> : null}
+                </div>
+                <p className="mt-3 font-display text-[26px] leading-[1.2]">{p.data.summary || "No summary"}</p>
+              </div>
+              <div className="flex flex-1 flex-col justify-between gap-4 p-5">
+                <div>
+                  <div className="mb-2 flex items-center justify-between text-[12px]">
+                    <span className="font-medium">Review progress</span>
+                    <span className="text-muted">
+                      {confirmed} of {SECTIONS.length} sections confirmed
+                    </span>
+                  </div>
+                  <div className="flex gap-1">
+                    {SECTIONS.map((s) => (
+                      <a key={s.id} href={`#section-${s.id}`} onClick={() => setTab("profile")} title={`${s.label}: ${p.sectionStatus[s.id] === "confirmed" ? "confirmed" : "needs review"}`} className={cn("h-2 flex-1 rounded-full", p.sectionStatus[s.id] === "confirmed" ? "bg-success" : "bg-line-strong")} />
+                    ))}
+                  </div>
+                </div>
+                <SourceLegend />
+              </div>
+            </div>
+          ) : (
+            <div className="grid h-full place-items-center p-8">
+              <Empty icon={<Sparkles />} title="No Brand Intelligence Profile yet" action={canEdit ? <Button variant="accent" loading={busy("gen")} disabled={!props.ai.ready} onClick={generate}><Sparkles /> Analyse my brand</Button> : null}>
+                {props.ai.ready ? "The agent reads your answers, website and uploaded assets, then builds a profile you review section by section." : "Configure ANTHROPIC_API_KEY on the server to enable analysis."}
+              </Empty>
+            </div>
+          )}
+        </Card>
+      </div>
+
+      <div className="scrollbar-thin -mx-4 mb-6 overflow-x-auto px-4 sm:mx-0 sm:px-0">
+        <div className="inline-flex rounded-lg border border-line bg-sunken p-0.5" role="tablist">
+          {tabs.map((t) => (
+            <button
+              key={t.value}
+              role="tab"
+              aria-selected={tab === t.value}
+              onClick={() => setTab(t.value)}
+              className={cn("whitespace-nowrap rounded-md px-3 py-1.5 text-[12px] font-medium transition", tab === t.value ? "bg-surface text-ink shadow-sm" : "text-muted hover:text-ink")}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {tab === "profile" ? (
         p ? (
-          <ProfileView key={p.id} brandId={props.brand.id} profile={p} canEdit={canEdit} />
+          <div className="space-y-6">
+            {p.data.openQuestions.length ? (
+              <Card>
+                <CardHeader title={<span className="flex items-center gap-2"><HelpCircle className="size-4 text-accent" /> Questions to sharpen your profile</span>} description="The agent couldn't determine these. Answer them in Business details or as an instruction, then re-analyse." />
+                <CardBody className="pt-3">
+                  <ul className="space-y-1.5 text-[13px]">{p.data.openQuestions.map((q) => <li key={q}>· {q}</li>)}</ul>
+                </CardBody>
+              </Card>
+            ) : null}
+            <ProfileSections key={`${p.id}-${JSON.stringify(p.sectionStatus)}`} brandId={props.brand.id} profileId={p.id} profile={p.data} sectionStatus={p.sectionStatus} canEdit={canEdit} locked={p.status === "superseded"} />
+            {p.data.competitors.length ? (
+              <Card>
+                <CardHeader title="Competitive landscape" />
+                <CardBody className="grid gap-3 md:grid-cols-2">
+                  {p.data.competitors.map((c) => (
+                    <div key={c.name} className="rounded-xl border border-line p-4">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="font-medium">{c.name}</p>
+                        <SourceChip source={c.source} />
+                      </div>
+                      {c.positioning ? <p className="mt-1 text-[12px] text-muted">{c.positioning}</p> : null}
+                      {c.howWeDiffer ? (
+                        <p className="mt-2 text-[13px]">
+                          <span className="font-medium text-accent-ink">How we differ: </span>
+                          {c.howWeDiffer}
+                        </p>
+                      ) : null}
+                    </div>
+                  ))}
+                </CardBody>
+              </Card>
+            ) : null}
+            <Rationale>{p.data.rationale}</Rationale>
+            {props.history.length > 1 ? (
+              <p className="text-[12px] text-faint">
+                Versions: {props.history.map((h) => `v${h.version} (${h.status}, ${formatDistanceToNow(h.createdAt, { addSuffix: true })})`).join(" · ")}
+              </p>
+            ) : null}
+          </div>
         ) : (
-          <Empty icon={<Sparkles />} title="No profile yet" action={canEdit ? <Button loading={busy("gen")} onClick={() => run(() => runBrandIntelligence(props.brand.id), { key: "gen", success: "Profile generated" })}><Sparkles /> Generate brand intelligence</Button> : null}>
-            The Brand Intelligence agent reads your answers, website and uploaded assets to build your profile.
-          </Empty>
+          <Empty icon={<Info />} title="Generate the profile to see your brand intelligence" />
         )
       ) : null}
-      {tab === "inputs" ? <InputsForm brand={props.brand} canEdit={canEdit} /> : null}
-      {tab === "assets" ? <Assets brandId={props.brand.id} assets={props.assets} canEdit={canEdit} /> : null}
+      {tab === "ask" ? (
+        <BrandChat brandId={props.brand.id} initial={props.chat as ChatMsg[]} canAsk={props.ai.ready} canClear={canEdit} hasProfile={Boolean(p)} />
+      ) : null}
+      {tab === "assets" ? <AssetsPanel brandId={props.brand.id} assets={props.assets} canEdit={canEdit} /> : null}
+      {tab === "details" ? <InputsForm brand={props.brand} canEdit={canEdit} /> : null}
       {tab === "memory" ? <Memory brandId={props.brand.id} memories={props.memories} canEdit={canEdit} /> : null}
     </div>
   );
 }
 
-function ProfileView({ brandId, profile, canEdit }: { brandId: string; profile: { id: string; data: BrandProfile }; canEdit: boolean }) {
-  const [d, setD] = useState<BrandProfile>(profile.data);
-  const [editing, setEditing] = useState(false);
-  const { run, busy } = useRun();
-  const dirty = useMemo(() => JSON.stringify(d) !== JSON.stringify(profile.data), [d, profile.data]);
-  const set = <K extends keyof BrandProfile>(k: K, v: BrandProfile[K]) => setD((x) => ({ ...x, [k]: v }));
-
+function ScoreCard({ score }: { score: { score: number; parts: ScorePart[] } }) {
+  const r = 42;
+  const c = 2 * Math.PI * r;
   return (
-    <div className="space-y-6">
-      {canEdit ? (
-        <div className="flex justify-end gap-2">
-          {editing ? (
-            <>
-              <Button variant="ghost" onClick={() => (setD(profile.data), setEditing(false))}>
-                Cancel
-              </Button>
-              <Button disabled={!dirty} loading={busy()} onClick={() => run(() => saveProfile(brandId, profile.id, d), { success: "Profile saved", onOk: () => setEditing(false) })}>
-                Save changes
-              </Button>
-            </>
-          ) : (
-            <Button variant="secondary" onClick={() => setEditing(true)}>
-              <Pencil /> Edit profile
-            </Button>
-          )}
-        </div>
-      ) : null}
-
-      <Card className="overflow-hidden">
-        <div className="ai-gradient p-6 md:p-8">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-2/70">{d.personality.archetype}</p>
-          {editing ? (
-            <Textarea className="mt-2 bg-white/80 font-display text-[22px]" value={d.summary} onChange={(e) => set("summary", e.target.value)} />
-          ) : (
-            <p className="mt-2 max-w-3xl font-display text-[28px] leading-[1.2]">{d.summary}</p>
-          )}
-          <div className="mt-4 flex flex-wrap gap-1.5">
-            {d.personality.traits.map((t) => (
-              <span key={t} className="rounded-full bg-white/70 px-2.5 py-1 text-[12px]">
-                {t}
-              </span>
-            ))}
+    <Card>
+      <CardBody>
+        <div className="flex items-center gap-5">
+          <div className="relative size-28 shrink-0">
+            <svg viewBox="0 0 100 100" className="size-full -rotate-90">
+              <circle cx="50" cy="50" r={r} fill="none" stroke="var(--color-sunken)" strokeWidth="9" />
+              <circle cx="50" cy="50" r={r} fill="none" stroke="var(--color-accent)" strokeWidth="9" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - score.score / 100)} />
+            </svg>
+            <div className="absolute inset-0 grid place-items-center text-center">
+              <div>
+                <p className="text-[28px] font-semibold leading-none tracking-tight">{score.score}</p>
+                <p className="text-[10px] text-faint">/ 100</p>
+              </div>
+            </div>
+          </div>
+          <div>
+            <p className="text-[14px] font-semibold">Brand Intelligence Score</p>
+            <p className="mt-1 text-[12px] text-muted">How completely your AI team knows the brand. An indicative completeness measure, not a quality rating.</p>
           </div>
         </div>
-      </Card>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader title="Positioning" description={d.positioning.category} />
-          <CardBody className="space-y-4">
-            {editing ? (
-              <Textarea value={d.positioning.statement} onChange={(e) => set("positioning", { ...d.positioning, statement: e.target.value })} />
-            ) : (
-              <p className="text-[15px] leading-relaxed">{d.positioning.statement}</p>
-            )}
-            <ListBlock title="Differentiators" items={d.positioning.differentiators} editing={editing} onChange={(v) => set("positioning", { ...d.positioning, differentiators: v })} />
-            <ListBlock title="Unique selling propositions" items={d.usps} editing={editing} onChange={(v) => set("usps", v)} />
-          </CardBody>
-        </Card>
-
-        <Card>
-          <CardHeader title="Voice & communication" />
-          <CardBody className="space-y-4">
-            {editing ? <Textarea value={d.voice.description} onChange={(e) => set("voice", { ...d.voice, description: e.target.value })} /> : <p className="text-[15px]">{d.voice.description}</p>}
-            <div className="grid gap-4 sm:grid-cols-2">
-              <ListBlock title="Do" items={d.voice.do} editing={editing} tone="success" onChange={(v) => set("voice", { ...d.voice, do: v })} />
-              <ListBlock title="Don't" items={d.voice.dont} editing={editing} tone="danger" onChange={(v) => set("voice", { ...d.voice, dont: v })} />
-            </div>
-            <div>
-              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-faint">Sounds like</p>
-              <div className="space-y-1.5">
-                {d.voice.sampleLines.map((l) => (
-                  <p key={l} className="border-l-2 border-accent/40 pl-3 font-display text-[18px] italic text-ink-2">
-                    “{l}”
-                  </p>
-                ))}
+        <ul className="mt-5 space-y-2.5">
+          {score.parts.map((p) => (
+            <li key={p.id}>
+              <div className="flex items-center justify-between text-[12px]">
+                <span className="text-ink-2">{p.label}</span>
+                <span className="tabular-nums text-muted">
+                  {p.earned}/{p.max}
+                </span>
               </div>
-            </div>
-          </CardBody>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader title="Audience personas" />
-        <CardBody className="grid gap-4 md:grid-cols-3">
-          {d.personas.map((p) => (
-            <div key={p.name} className="rounded-xl border border-line p-4">
-              <p className="font-medium">{p.name}</p>
-              <p className="mt-1 text-[13px] text-muted">{p.snapshot}</p>
-              <p className="mt-3 text-[11px] font-semibold uppercase tracking-wider text-faint">Goals</p>
-              <ul className="mt-1 space-y-0.5 text-[12px]">{p.goals.map((g) => <li key={g}>· {g}</li>)}</ul>
-              <p className="mt-3 text-[11px] font-semibold uppercase tracking-wider text-faint">Pain points</p>
-              <ul className="mt-1 space-y-0.5 text-[12px]">{p.painPoints.map((g) => <li key={g}>· {g}</li>)}</ul>
-              <div className="mt-3 flex flex-wrap gap-1">{p.channels.map((c) => <Badge key={c}>{c}</Badge>)}</div>
-            </div>
-          ))}
-        </CardBody>
-      </Card>
-
-      <div className="grid gap-6 lg:grid-cols-[1.3fr_1fr]">
-        <Card>
-          <CardHeader title="Visual identity" />
-          <CardBody className="space-y-5">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {d.visualIdentity.palette.map((c, i) => (
-                <div key={i} className="overflow-hidden rounded-xl border border-line">
-                  <div className="h-16" style={{ background: c.hex }} />
-                  <div className="p-2.5">
-                    {editing ? (
-                      <Input value={c.hex} onChange={(e) => set("visualIdentity", { ...d.visualIdentity, palette: d.visualIdentity.palette.map((x, j) => (j === i ? { ...x, hex: e.target.value } : x)) })} className="h-7 font-mono text-[12px]" />
-                    ) : (
-                      <p className="font-mono text-[12px] uppercase">{c.hex}</p>
-                    )}
-                    <p className="text-[12px] font-medium">{c.name}</p>
-                    <p className="text-[11px] text-muted">{c.usage}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Kv k="Headings" v={d.visualIdentity.typography.heading} />
-              <Kv k="Body" v={d.visualIdentity.typography.body} />
-              <Kv k="Imagery" v={d.visualIdentity.imagery} />
-              <Kv k="Layout" v={d.visualIdentity.layout} />
-              <Kv k="Logo usage" v={d.visualIdentity.logoUsage} />
-              <Kv k="Type notes" v={d.visualIdentity.typography.notes} />
-            </div>
-            <div>
-              <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-faint">Preferred creative styles</p>
-              {editing ? (
-                <div className="flex flex-wrap gap-1.5">
-                  {STYLES.map((s) => {
-                    const on = d.preferredStyles.includes(s.id);
-                    return (
-                      <button key={s.id} type="button" onClick={() => set("preferredStyles", on ? d.preferredStyles.filter((x) => x !== s.id) : [...d.preferredStyles, s.id])} className={cn("rounded-full border px-2.5 py-1 text-[12px]", on ? "border-ink bg-ink text-white" : "border-line")}>
-                        {s.label}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="flex flex-wrap gap-1.5">{d.preferredStyles.map((s) => <Badge key={s} tone="accent">{styleById(s).label}</Badge>)}</div>
-              )}
-            </div>
-          </CardBody>
-        </Card>
-
-        <div className="space-y-6">
-          <Card>
-            <CardHeader title="Content opportunities" />
-            <CardBody className="space-y-2.5">
-              {d.contentOpportunities.map((o) => (
-                <div key={o.title}>
-                  <p className="text-[13px] font-medium">{o.title}</p>
-                  <p className="text-[12px] text-muted">{o.why}</p>
-                </div>
-              ))}
-            </CardBody>
-          </Card>
-          <Card>
-            <CardHeader title="Customer pain points" />
-            <CardBody>
-              <ListBlock title="" items={d.painPoints} editing={editing} onChange={(v) => set("painPoints", v)} />
-            </CardBody>
-          </Card>
-        </div>
-      </div>
-
-      {d.competitorPositioning.length ? (
-        <Card>
-          <CardHeader title="Competitive positioning" />
-          <CardBody className="grid gap-3 md:grid-cols-2">
-            {d.competitorPositioning.map((c) => (
-              <div key={c.name} className="rounded-xl border border-line p-4">
-                <p className="font-medium">{c.name}</p>
-                <p className="mt-1 text-[12px] text-muted">{c.positioning}</p>
-                <p className="mt-2 text-[13px]">
-                  <span className="font-medium text-accent-ink">How we differ: </span>
-                  {c.howWeDiffer}
-                </p>
+              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-sunken">
+                <div className="h-full rounded-full bg-ink" style={{ width: `${(p.earned / p.max) * 100}%` }} />
               </div>
-            ))}
-          </CardBody>
-        </Card>
-      ) : null}
-
-      <Rationale>{d.rationale}</Rationale>
-    </div>
-  );
-}
-
-function Kv({ k, v }: { k: string; v: string }) {
-  return (
-    <div>
-      <p className="text-[11px] font-semibold uppercase tracking-wider text-faint">{k}</p>
-      <p className="mt-0.5 text-[13px]">{v}</p>
-    </div>
-  );
-}
-
-function ListBlock({ title, items, editing, onChange, tone }: { title: string; items: string[]; editing: boolean; onChange: (v: string[]) => void; tone?: "success" | "danger" }) {
-  return (
-    <div>
-      {title ? <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-faint">{title}</p> : null}
-      {editing ? (
-        <Textarea value={items.join("\n")} onChange={(e) => onChange(e.target.value.split("\n"))} onBlur={(e) => onChange(e.target.value.split("\n").map((s) => s.trim()).filter(Boolean))} rows={Math.max(3, items.length)} />
-      ) : (
-        <ul className="space-y-1 text-[13px]">
-          {items.map((i) => (
-            <li key={i} className="flex gap-2">
-              <span className={cn("mt-2 size-1.5 shrink-0 rounded-full", tone === "success" ? "bg-success" : tone === "danger" ? "bg-danger" : "bg-faint")} />
-              {i}
+              {p.tip ? <p className="mt-0.5 text-[11px] text-faint">{p.tip}</p> : null}
             </li>
           ))}
         </ul>
-      )}
-    </div>
+      </CardBody>
+    </Card>
   );
 }
 
@@ -328,34 +264,35 @@ function InputsForm({ brand, canEdit }: { brand: Brand; canEdit: boolean }) {
       onSubmit={(e) => {
         e.preventDefault();
         const fd = new FormData(ref.current!);
-        run(() => updateBrand(brand.id, fd), { success: "Business details saved. Regenerate the profile to apply them." });
+        run(() => updateBrand(brand.id, fd), { success: "Business details saved. Re-analyse to update the profile." });
       }}
     >
       <fieldset disabled={!canEdit} className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader title="Business" />
           <CardBody className="space-y-4">
-            <Field label="Name"><Input name="name" defaultValue={brand.name} required /></Field>
-            <Field label="Website"><Input name="website" defaultValue={brand.website ?? ""} /></Field>
+            <Field label="Brand name"><Input name="name" defaultValue={brand.name} required /></Field>
+            <Field label="Website"><Input name="website" defaultValue={brand.website ?? ""} inputMode="url" /></Field>
+            <Field label="Business description"><Textarea name="description" rows={4} maxLength={4000} defaultValue={brand.description ?? ""} /></Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Industry"><Input name="industry" defaultValue={brand.industry ?? ""} /></Field>
               <Field label="Category"><Input name="category" defaultValue={brand.category ?? ""} /></Field>
             </div>
             <Field label="Products & services"><Textarea name="products" defaultValue={brand.products ?? ""} /></Field>
             <Field label="Target audience"><Textarea name="targetAudience" defaultValue={brand.targetAudience ?? ""} /></Field>
-            <Field label="Geographic market"><Input name="geography" defaultValue={brand.geography ?? ""} /></Field>
+            <Field label="Target geographical markets"><Input name="geography" defaultValue={brand.geography ?? ""} /></Field>
           </CardBody>
         </Card>
         <Card>
           <CardHeader title="Identity & goals" />
           <CardBody className="space-y-4">
-            <Field label="Positioning"><Textarea name="positioning" defaultValue={brand.positioning ?? ""} /></Field>
-            <Field label="Personality"><Input name="personality" defaultValue={brand.personality ?? ""} /></Field>
-            <Field label="Tone of voice"><Textarea name="tone" defaultValue={brand.tone ?? ""} /></Field>
+            <Field label="Brand positioning"><Textarea name="positioning" defaultValue={brand.positioning ?? ""} /></Field>
+            <Field label="Brand personality"><Input name="personality" defaultValue={brand.personality ?? ""} /></Field>
+            <Field label="Communication tone"><Textarea name="tone" defaultValue={brand.tone ?? ""} /></Field>
             <Field label="Marketing goals"><Textarea name="marketingGoals" defaultValue={brand.marketingGoals ?? ""} /></Field>
-            <Checks name="objectives" options={OBJECTIVES.map((o) => [o, objectiveLabel(o)])} values={brand.objectives} label="Objectives" />
-            <Checks name="platforms" options={PLATFORMS.map((p) => [p.id, p.label])} values={brand.platforms} label="Platforms" />
-            <Field label="Competitors" hint="Comma or line separated"><Textarea name="competitors" defaultValue={brand.competitors.join("\n")} /></Field>
+            <Checks name="objectives" options={OBJECTIVES.map((o) => [o, objectiveLabel(o)])} values={brand.objectives} label="Marketing objectives" />
+            <Checks name="platforms" options={PLATFORMS.map((p) => [p.id, p.label])} values={brand.platforms} label="Preferred platforms" />
+            <Field label="Competitors" hint="One per line"><Textarea name="competitors" defaultValue={brand.competitors.join("\n")} /></Field>
             <Field label="Brand colours" hint="Hex, comma separated"><Input name="colors" defaultValue={brand.colors.join(", ")} className="font-mono" /></Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Heading font"><Input name="headingFont" defaultValue={brand.fonts.heading ?? ""} /></Field>
@@ -389,127 +326,61 @@ function Checks({ name, options, values, label }: { name: string; options: [stri
   );
 }
 
-function Assets({ brandId, assets, canEdit }: { brandId: string; assets: { id: string; kind: string; name: string; mime: string; analysis: Record<string, unknown> | null }[]; canEdit: boolean }) {
-  const [kind, setKind] = useState("product");
-  const input = useRef<HTMLInputElement>(null);
-  const { run, busy } = useRun();
-  return (
-    <div className="space-y-6">
-      {canEdit ? (
-        <Card>
-          <CardBody className="flex flex-wrap items-end gap-3">
-            <Field label="Asset type" className="w-56">
-              <Select value={kind} onChange={(e) => setKind(e.target.value)}>
-                <option value="logo">Logo</option>
-                <option value="guideline">Brand guidelines</option>
-                <option value="product">Product photography</option>
-                <option value="creative">Marketing creative</option>
-                <option value="post">Previous social post</option>
-                <option value="reference">Reference design</option>
-              </Select>
-            </Field>
-            <input
-              ref={input}
-              type="file"
-              multiple
-              accept="image/*,application/pdf"
-              className="hidden"
-              onChange={(e) => {
-                const fd = new FormData();
-                for (const f of Array.from(e.target.files ?? [])) fd.append(`asset_${kind}`, f);
-                run(() => uploadAssets(brandId, fd), { success: (n) => `${n} file(s) uploaded. Regenerate the profile to analyse them.` });
-                e.target.value = "";
-              }}
-            />
-            <Button variant="secondary" loading={busy()} onClick={() => input.current?.click()}>
-              <Upload /> Upload files
-            </Button>
-            <p className="text-[12px] text-faint">PNG, JPG, WebP, SVG or PDF · up to 15 MB</p>
-          </CardBody>
-        </Card>
-      ) : null}
-      {assets.length ? (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {assets.map((a) => (
-            <Card key={a.id} className="group overflow-hidden">
-              {a.mime.startsWith("image/") ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={`/api/assets/${a.id}`} alt={a.name} className="aspect-[4/3] w-full bg-sunken object-contain p-2" />
-              ) : (
-                <div className="grid aspect-[4/3] place-items-center bg-sunken text-muted">
-                  <FileText className="size-8" />
-                </div>
-              )}
-              <div className="p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <Badge className="capitalize">{a.kind}</Badge>
-                  {canEdit ? (
-                    <button onClick={() => run(() => deleteAsset(brandId, a.id), { success: "Asset removed" })} className="text-faint opacity-0 transition hover:text-danger group-hover:opacity-100" aria-label="Delete asset">
-                      <Trash2 className="size-4" />
-                    </button>
-                  ) : null}
-                </div>
-                <p className="mt-2 truncate text-[13px] font-medium">{a.name}</p>
-                {a.analysis ? <p className="mt-1 line-clamp-3 text-[12px] text-muted">{String(a.analysis.aesthetic ?? a.analysis.description ?? "")}</p> : <p className="mt-1 text-[12px] text-faint">Not analysed yet</p>}
-                {Array.isArray(a.analysis?.palette) ? (
-                  <div className="mt-2 flex gap-1">
-                    {(a.analysis!.palette as string[]).slice(0, 6).map((c) => (
-                      <span key={c} className="size-4 rounded" style={{ background: c }} />
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            </Card>
-          ))}
-        </div>
-      ) : (
-        <Empty icon={<Upload />} title="No assets yet">
-          Upload your logo, guidelines and product photos so creatives match your visual identity.
-        </Empty>
-      )}
-    </div>
-  );
-}
-
 function Memory({ brandId, memories, canEdit }: { brandId: string; memories: { id: string; kind: string; content: string; source: string; createdAt: Date }[]; canEdit: boolean }) {
   const [note, setNote] = useState("");
   const { run, busy } = useRun();
+  const instructions = memories.filter((m) => m.kind === "instruction");
+  const learned = memories.filter((m) => m.kind !== "instruction");
   const tone: Record<string, string> = { fact: "neutral", preference: "accent", feedback: "warn", approval: "success", insight: "info", competitor: "outline" };
+  const Row = ({ m }: { m: (typeof memories)[number] }) => (
+    <li className="group flex items-start gap-3 py-2.5">
+      <Badge tone={tone[m.kind] ?? "neutral"} className="mt-0.5 w-20 shrink-0 justify-center capitalize">
+        {m.kind}
+      </Badge>
+      <div className="min-w-0 flex-1">
+        <p className="text-[13px]">{m.content}</p>
+        <p className="text-[11px] text-faint">
+          {m.source} · {formatDistanceToNow(m.createdAt, { addSuffix: true })}
+        </p>
+      </div>
+      {canEdit ? (
+        <button onClick={() => run(() => deleteMemory(brandId, m.id), { success: "Removed from memory" })} className="text-faint transition hover:text-danger md:opacity-0 md:group-hover:opacity-100" aria-label="Forget">
+          <X className="size-4" />
+        </button>
+      ) : null}
+    </li>
+  );
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
-      <Card>
-        <CardHeader title="What your AI team has learned" description="Retrieved by semantic search for every task. Remove anything that's wrong." />
-        <CardBody>
-          {memories.length ? (
-            <ul className="divide-y divide-line">
-              {memories.map((m) => (
-                <li key={m.id} className="group flex items-start gap-3 py-2.5">
-                  <Badge tone={tone[m.kind] ?? "neutral"} className="mt-0.5 w-20 justify-center capitalize">{m.kind}</Badge>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-[13px]">{m.content}</p>
-                    <p className="text-[11px] text-faint">{m.source} · {formatDistanceToNow(m.createdAt, { addSuffix: true })}</p>
-                  </div>
-                  {canEdit ? (
-                    <button onClick={() => run(() => deleteMemory(brandId, m.id), { success: "Memory removed" })} className="text-faint opacity-0 transition hover:text-danger group-hover:opacity-100" aria-label="Forget">
-                      <X className="size-4" />
-                    </button>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-[13px] text-muted">Memory grows as you approve the profile, edit captions, approve posts and sync analytics.</p>
-          )}
-        </CardBody>
-      </Card>
+    <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
+      <div className="space-y-6">
+        <Card>
+          <CardHeader title="Brand instructions" description="Standing rules included in every AI task, regardless of topic." />
+          <CardBody className="pt-3">
+            {instructions.length ? <ul className="divide-y divide-line">{instructions.map((m) => <Row key={m.id} m={m} />)}</ul> : <p className="text-[13px] text-muted">No instructions yet.</p>}
+          </CardBody>
+        </Card>
+        <Card>
+          <CardHeader title="What your AI team has learned" description="From confirmed profile sections, approvals, edits and analytics. Retrieved by relevance for each task." />
+          <CardBody className="pt-3">
+            {learned.length ? (
+              <ul className="divide-y divide-line">{learned.map((m) => <Row key={m.id} m={m} />)}</ul>
+            ) : (
+              <p className="text-[13px] text-muted">Memory grows as you confirm profile sections, approve assets and content, and edit AI output.</p>
+            )}
+          </CardBody>
+        </Card>
+      </div>
       {canEdit ? (
         <Card className="h-fit">
-          <CardHeader title="Teach your team" description="Rules every agent should follow" />
+          <CardHeader title="Add an instruction" description="e.g. compliance rules, words to avoid, mandatory mentions" />
           <CardBody className="space-y-3">
-            <Textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Never use the word 'luxury'. Always mention free shipping over ₹2,000." />
-            <Button className="w-full" disabled={!note.trim()} loading={busy()} onClick={() => run(() => addBrandNote(brandId, note), { success: "Saved to brand memory", onOk: () => setNote("") })}>
-              Add to memory
+            <Textarea value={note} maxLength={1000} onChange={(e) => setNote(e.target.value)} placeholder="Never use the word 'luxury'. Always mention free shipping over ₹2,000." />
+            <Button className="w-full" disabled={!note.trim()} loading={busy()} onClick={() => run(() => addBrandNote(brandId, note), { success: "Instruction saved. Every agent will follow it.", onOk: () => setNote("") })}>
+              Save instruction
             </Button>
+            <p className="flex gap-1.5 text-[11px] text-faint">
+              <AlertTriangle className="mt-0.5 size-3 shrink-0" /> Instructions are shared with every agent for this brand only.
+            </p>
           </CardBody>
         </Card>
       ) : null}

@@ -36,10 +36,12 @@ describe("agent pipeline (mock provider)", () => {
   it("generates, approves a brand profile and seeds memory", async () => {
     const db = await getDb();
     const [brand] = await db.select().from(schema.brands).where(eq(schema.brands.id, brandId));
-    const p = await generateBrandProfile({ brandId, userId }, brand);
+    const { profile: p } = await generateBrandProfile({ brandId, userId }, brand);
     expect(p.status).toBe("draft");
     expect(p.version).toBe(1);
     await approveProfile(brandId, p.id, userId);
+    const { setSectionStatus } = await import("./agents/brand");
+    await setSectionStatus(brandId, p.id, "communication", "confirmed");
     const mem = await recall(brandId, "voice tone copy rules", 5);
     expect(mem.length).toBeGreaterThan(0);
     const runs = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.brandId, brandId));

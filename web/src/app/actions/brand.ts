@@ -3,24 +3,29 @@ import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/server/db/client";
-import { getSession, setActiveBrand } from "@/server/auth/session";
-import { AccessError, requireBrand } from "@/server/auth/guard";
-import { roleAtLeast } from "@/lib/roles";
-import { storage, extFor } from "@/server/storage";
+import { setActiveBrand } from "@/server/auth/session";
+import { AccessError, requireBrand, requireWorkspaceRole } from "@/server/auth/guard";
+import { storage } from "@/server/storage";
+import { checkUploadForm, extFor } from "@/server/assets";
 import { safe } from "@/server/action";
-import { generateBrandProfile, saveProfileEdits, approveProfile } from "@/server/agents/brand";
+import { analyzeAssets, generateBrandProfile, saveProfileEdits, approveProfile, setSectionStatus, syncProfileMemory } from "@/server/agents/brand";
+import { askBrand, clearBrandChat } from "@/server/agents/brand-qa";
+import { SECTIONS, type SectionId } from "@/lib/brand-profile";
+import { log } from "@/server/log";
 import { BrandProfile } from "@/server/agents/schemas";
 import { remember } from "@/server/memory";
-import { assertAiQuota, assertCanAdd } from "@/server/quota";
+import { assertCanAdd } from "@/server/quota";
+import { guardedAi } from "@/server/ai-guard";
+import { enforce } from "@/server/ratelimit";
 import { splitList } from "@/lib/utils";
 import type { AssetKind } from "@/server/db/schema";
 
-const ASSET_KINDS: AssetKind[] = ["logo", "guideline", "product", "creative", "reference", "post"];
-const ALLOWED = new Set(["image/png", "image/jpeg", "image/webp", "image/gif", "image/svg+xml", "application/pdf"]);
+const ASSET_KINDS: AssetKind[] = ["logo", "guideline", "product", "creative", "reference", "post", "presentation", "document"];
 
 const BrandInput = z.object({
   name: z.string({ error: "Brand name is required" }).trim().min(1, "Brand name is required"),
   website: z.string().trim().optional(),
+  description: z.string().trim().max(4000).optional(),
   industry: z.string().trim().optional(),
   category: z.string().trim().optional(),
   products: z.string().trim().optional(),
@@ -40,7 +45,7 @@ const BrandInput = z.object({
 
 function parseBrandForm(fd: FormData) {
   const raw: Record<string, unknown> = {};
-  for (const k of ["name", "website", "industry", "category", "products", "targetAudience", "geography", "positioning", "personality", "tone", "marketingGoals", "headingFont", "bodyFont"]) {
+  for (const k of ["name", "website", "description", "industry", "category", "products", "targetAudience", "geography", "positioning", "personality", "tone", "marketingGoals", "headingFont", "bodyFont"]) {
     const v = String(fd.get(k) ?? "").trim();
     raw[k] = v || undefined;
   }
@@ -51,39 +56,42 @@ function parseBrandForm(fd: FormData) {
   return BrandInput.parse(raw);
 }
 
-async function saveUploads(brandId: string, fd: FormData) {
+const hasFiles = (fd: FormData) => ASSET_KINDS.some((k) => fd.getAll(`asset_${k}`).some((f) => f instanceof File && f.size > 0));
+
+/** Validate every file by content. Nothing is written until all files pass. */
+const checkUploads = (fd: FormData) => checkUploadForm(fd, ASSET_KINDS);
+
+async function storeUploads(brandId: string, checked: { kind: AssetKind; name: string; buf: Buffer; mime: string }[]) {
   const db = await getDb();
-  let saved = 0;
-  for (const kind of ASSET_KINDS) {
-    for (const f of fd.getAll(`asset_${kind}`)) {
-      if (!(f instanceof File) || !f.size) continue;
-      if (!ALLOWED.has(f.type)) throw new Error(`${f.name}: unsupported file type (${f.type || "unknown"}).`);
-      if (f.size > 15 * 1024 * 1024) throw new Error(`${f.name} is larger than 15 MB.`);
-      const id = crypto.randomUUID();
-      const key = `brands/${brandId}/assets/${id}.${extFor(f.type)}`;
-      await storage.put(key, Buffer.from(await f.arrayBuffer()), f.type);
-      await db.insert(schema.brandAssets).values({ id, brandId, kind, name: f.name.slice(0, 200), path: key, mime: f.type, size: f.size });
-      saved++;
-    }
+  for (const c of checked) {
+    const id = crypto.randomUUID();
+    const key = `brands/${brandId}/assets/${id}.${extFor(c.mime)}`;
+    await storage.put(key, c.buf, c.mime);
+    await db.insert(schema.brandAssets).values({ id, brandId, kind: c.kind, name: c.name, path: key, mime: c.mime, size: c.buf.length });
   }
-  return saved;
+  if (checked.length) log.info("brand.assets_uploaded", { brandId, count: checked.length, kinds: [...new Set(checked.map((c) => c.kind))] });
+  return checked.length;
 }
 
 export async function createBrand(fd: FormData) {
   return safe(async () => {
-    const session = await getSession();
-    if (!session) throw new AccessError("Not signed in.");
+    // The target organisation is explicit and verified, never "the user's first membership":
+    // agency users belong to several organisations.
+    const workspaceId = String(fd.get("workspaceId") ?? "");
+    if (!workspaceId) throw new AccessError("Choose the organisation this brand belongs to.");
+    const { session } = await requireWorkspaceRole(workspaceId, "admin");
     const db = await getDb();
-    const [m] = await db.select().from(schema.workspaceMembers).where(and(eq(schema.workspaceMembers.userId, session.user.id), eq(schema.workspaceMembers.status, "active")));
-    if (!m || !roleAtLeast(m.role, "admin")) throw new AccessError("You need admin access to add a brand.");
-    await assertCanAdd(m.workspaceId, "brands");
+    await assertCanAdd(workspaceId, "brands");
+    if (hasFiles(fd)) await enforce("upload", { userId: session.user.id, workspaceId });
     const input = parseBrandForm(fd);
+    // Validate files before creating anything, so a rejected upload leaves no partial brand behind.
+    const uploads = await checkUploads(fd);
     const { headingFont, bodyFont, ...rest } = input;
     const [brand] = await db
       .insert(schema.brands)
-      .values({ ...rest, workspaceId: m.workspaceId, fonts: { heading: headingFont || undefined, body: bodyFont || undefined } })
+      .values({ ...rest, workspaceId, fonts: { heading: headingFont || undefined, body: bodyFont || undefined } })
       .returning();
-    await saveUploads(brand.id, fd);
+    await storeUploads(brand.id, uploads);
     await setActiveBrand(session.sessionId, brand.id);
     return { brandId: brand.id };
   });
@@ -94,7 +102,7 @@ export async function updateBrand(brandId: string, fd: FormData) {
     await requireBrand(brandId, "editor");
     const { headingFont, bodyFont, ...rest } = parseBrandForm(fd);
     const db = await getDb();
-    const nulls = Object.fromEntries(["website", "industry", "category", "products", "targetAudience", "geography", "positioning", "personality", "tone", "marketingGoals"].map((k) => [k, (rest as Record<string, unknown>)[k] ?? null]));
+    const nulls = Object.fromEntries(["website", "description", "industry", "category", "products", "targetAudience", "geography", "positioning", "personality", "tone", "marketingGoals"].map((k) => [k, (rest as Record<string, unknown>)[k] ?? null]));
     await db.update(schema.brands).set({ ...rest, ...nulls, fonts: { heading: headingFont || undefined, body: bodyFont || undefined } }).where(eq(schema.brands.id, brandId));
     revalidatePath("/brand");
   });
@@ -102,8 +110,9 @@ export async function updateBrand(brandId: string, fd: FormData) {
 
 export async function uploadAssets(brandId: string, fd: FormData) {
   return safe(async () => {
-    await requireBrand(brandId, "editor");
-    const n = await saveUploads(brandId, fd);
+    const { session, brand } = await requireBrand(brandId, "editor");
+    await enforce("upload", { userId: session.user.id, workspaceId: brand.workspaceId });
+    const n = await storeUploads(brandId, await checkUploads(fd));
     revalidatePath("/brand");
     return n;
   });
@@ -129,20 +138,19 @@ export async function switchBrand(brandId: string) {
 
 export async function runBrandIntelligence(brandId: string) {
   return safe(async () => {
-    const { brand, session } = await requireBrand(brandId, "editor");
-    await assertAiQuota(brandId);
-    const p = await generateBrandProfile({ brandId, userId: session.user.id }, brand);
+    const access = await requireBrand(brandId, "editor");
+    const r = await guardedAi(access, "ai_heavy", () => generateBrandProfile({ brandId, userId: access.session.user.id }, access.brand));
     revalidatePath("/brand");
     revalidatePath("/dashboard");
-    return { profileId: p.id };
+    return { profileId: r.profile.id, assetsAnalyzed: r.assets.analyzed, assetsFailed: r.assets.failed };
   });
 }
 
 export async function saveProfile(brandId: string, profileId: string, data: unknown) {
   return safe(async () => {
     await requireBrand(brandId, "editor");
+    if (JSON.stringify(data ?? null).length > 200_000) throw new Error("This profile is too large to save. Shorten some sections.");
     await saveProfileEdits(brandId, profileId, BrandProfile.parse(data));
-    await remember(brandId, [{ kind: "feedback", content: "User edited the brand profile; the edited version reflects their intent.", source: "profile:edit", weight: 0.5 }]);
     revalidatePath("/brand");
   });
 }
@@ -158,7 +166,9 @@ export async function approveBrandProfile(brandId: string, profileId: string) {
 export async function addBrandNote(brandId: string, note: string) {
   return safe(async () => {
     await requireBrand(brandId, "editor");
-    await remember(brandId, [{ kind: "preference", content: note, source: "user:note", weight: 1.6 }]);
+    const text = note.trim().slice(0, 1000);
+    if (!text) throw new Error("Write an instruction first.");
+    await remember(brandId, [{ kind: "instruction", content: text, source: "user:instruction", weight: 2 }]);
     revalidatePath("/brand");
   });
 }
@@ -172,3 +182,65 @@ export async function deleteMemory(brandId: string, memoryId: string) {
   });
 }
 
+
+export async function setSectionStatusAction(brandId: string, profileId: string, section: SectionId, status: "confirmed" | "needs_review") {
+  return safe(async () => {
+    await requireBrand(brandId, "editor");
+    if (!SECTIONS.some((x) => x.id === section)) throw new Error("Unknown section.");
+    const r = await setSectionStatus(brandId, profileId, section, status);
+    revalidatePath("/brand");
+    return r;
+  });
+}
+
+export async function setAssetStatus(brandId: string, assetId: string, status: "approved" | "rejected" | "pending") {
+  return safe(async () => {
+    await requireBrand(brandId, "editor");
+    const db = await getDb();
+    const [a] = await db
+      .update(schema.brandAssets)
+      .set({ status })
+      .where(and(eq(schema.brandAssets.id, assetId), eq(schema.brandAssets.brandId, brandId)))
+      .returning();
+    if (!a) throw new Error("Asset not found.");
+    if (status !== "pending") {
+      await remember(brandId, [
+        { kind: status === "approved" ? "approval" : "feedback", content: `${status === "approved" ? "Approved" : "Rejected"} brand asset: ${a.kind} "${a.name}"${a.analysis ? ` (${String((a.analysis as { aesthetic?: string }).aesthetic ?? "")})` : ""}`, source: `asset:${status}`, weight: 1.1 },
+      ]);
+    }
+    revalidatePath("/brand");
+  });
+}
+
+export async function analyzeAssetsAction(brandId: string) {
+  return safe(async () => {
+    const access = await requireBrand(brandId, "editor");
+    const r = await guardedAi(access, "ai_heavy", () => analyzeAssets({ brandId, userId: access.session.user.id }, access.brand, { retryFailed: true }));
+    revalidatePath("/brand");
+    return r;
+  });
+}
+
+export async function askBrandAction(brandId: string, question: string) {
+  return safe(async () => {
+    const access = await requireBrand(brandId, "viewer");
+    const q = question.trim().slice(0, 2000);
+    if (!q) throw new Error("Ask a question first.");
+    return guardedAi(access, "ai", () => askBrand({ brandId, userId: access.session.user.id }, access.brand, q));
+  });
+}
+
+export async function clearBrandChatAction(brandId: string) {
+  return safe(async () => {
+    await requireBrand(brandId, "editor");
+    await clearBrandChat(brandId);
+    revalidatePath("/brand");
+  });
+}
+
+export async function resyncBrandMemory(brandId: string) {
+  return safe(async () => {
+    await requireBrand(brandId, "editor");
+    return syncProfileMemory(brandId);
+  });
+}

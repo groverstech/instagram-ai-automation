@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/server/db/client";
 import { requireBrand } from "@/server/auth/guard";
+import { enforce, RateLimitError } from "@/server/ratelimit";
 import { renderCreativePng } from "@/server/creative/render";
 import { formatById } from "@/lib/domain";
 
@@ -15,8 +16,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
   if (!c) return new Response("Not found", { status: 404 });
   let brand;
   try {
-    ({ brand } = await requireBrand(c.brandId, "viewer"));
-  } catch {
+    const access = await requireBrand(c.brandId, "viewer");
+    brand = access.brand;
+    await enforce("render", { userId: access.session.user.id });
+  } catch (e) {
+    if (e instanceof RateLimitError) return new Response(e.message, { status: 429, headers: { "retry-after": String(e.retryAfter) } });
     return new Response("Forbidden", { status: 403 });
   }
   const format = url.searchParams.get("format") ?? undefined;
