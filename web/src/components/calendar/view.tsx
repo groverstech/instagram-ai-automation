@@ -142,7 +142,8 @@ export function CalendarView(props: {
       </div>
 
       <div className="flex gap-6">
-        <div className="min-w-0 flex-1 overflow-hidden rounded-2xl border border-line bg-surface shadow-card">
+        <div className="min-w-0 flex-1 overflow-x-auto rounded-2xl border border-line bg-surface shadow-card">
+          <div className="min-w-[680px]">
           <div className="grid grid-cols-7 border-b border-line bg-sunken/50 text-[11px] font-semibold uppercase tracking-wider text-faint">
             {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => <div key={d} className="px-3 py-2">{d}</div>)}
           </div>
@@ -195,6 +196,7 @@ export function CalendarView(props: {
                 </div>
               );
             })}
+          </div>
           </div>
         </div>
 
@@ -270,7 +272,7 @@ function PostPanel({ post, brandId, role, accounts, creatives, campaignName, onC
     );
 
   return (
-    <aside className="sticky top-6 h-fit max-h-[calc(100vh-3rem)] w-[380px] shrink-0 overflow-y-auto rounded-2xl border border-line bg-surface shadow-pop scrollbar-thin">
+    <aside className="fixed inset-0 z-50 overflow-y-auto bg-surface scrollbar-thin md:sticky md:inset-auto md:top-6 md:z-auto md:h-fit md:max-h-[calc(100vh-3rem)] md:w-[380px] md:shrink-0 md:rounded-2xl md:border md:border-line md:shadow-pop">
       <div className="flex items-center justify-between border-b border-line px-4 py-3">
         <div className="flex items-center gap-2">
           <PlatformTag platform={post.platform} />
