@@ -72,6 +72,11 @@ export const workspaceMembers = pgTable(
     invitedEmail: text("invited_email"),
     role: text("role").$type<Role>().notNull().default("editor"),
     status: text("status").$type<"active" | "invited">().notNull().default("active"),
+    /**
+     * Brand scope for client users: null = every brand in the workspace; otherwise only these
+     * brand ids. Enforced in requireBrandForUser / listAccessibleBrands.
+     */
+    brandIds: jsonb("brand_ids").$type<string[] | null>(),
     createdAt: createdAt(),
   },
   (t) => [index("wm_user_idx").on(t.userId), index("wm_ws_idx").on(t.workspaceId)],
@@ -174,17 +179,96 @@ export const brandMemories = pgTable(
   (t) => [index("memories_brand_idx").on(t.brandId)],
 );
 
-export const strategies = pgTable("strategies", {
-  id: id(),
-  brandId: text("brand_id")
-    .notNull()
-    .references(() => brands.id, { onDelete: "cascade" }),
-  month: text("month").notNull(), // YYYY-MM
-  status: text("status").$type<"draft" | "approved">().notNull().default("draft"),
-  data: jsonb("data").$type<Record<string, unknown>>().notNull(),
-  runId: text("run_id"),
-  createdAt: createdAt(),
-});
+export type StrategyStatus = "draft" | "under_review" | "approved" | "archived";
+
+/**
+ * One row per strategy version. schemaVersion 1 rows are legacy monthly strategies; v2 rows hold
+ * the sectioned AI Marketing Strategist document (see src/lib/strategy.ts).
+ */
+export const strategies = pgTable(
+  "strategies",
+  {
+    id: id(),
+    brandId: text("brand_id")
+      .notNull()
+      .references(() => brands.id, { onDelete: "cascade" }),
+    month: text("month").notNull(),
+    status: text("status").$type<StrategyStatus>().notNull().default("draft"),
+    data: jsonb("data").$type<Record<string, unknown>>().notNull(),
+    runId: text("run_id"),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    /** Per-brand version number (1, 2, 3…). */
+    version: integer("version").notNull().default(1),
+    title: text("title"),
+    accountType: text("account_type").$type<"business" | "influencer" | "agency">(),
+    /** Optimistic-concurrency counter; bumped on every write. */
+    rev: integer("rev").notNull().default(0),
+    parentId: text("parent_id"),
+    revisionNote: text("revision_note"),
+    createdBy: text("created_by"),
+    submittedBy: text("submitted_by"),
+    approvedBy: text("approved_by"),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    archivedAt: timestamp("archived_at", { withTimezone: true }),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("strategies_brand_idx").on(t.brandId, t.createdAt)],
+);
+
+/** Append-only change history for a strategy version: every AI generation, user edit and restore. */
+export const strategyRevisions = pgTable(
+  "strategy_revisions",
+  {
+    id: id(),
+    strategyId: text("strategy_id")
+      .notNull()
+      .references(() => strategies.id, { onDelete: "cascade" }),
+    brandId: text("brand_id")
+      .notNull()
+      .references(() => brands.id, { onDelete: "cascade" }),
+    rev: integer("rev").notNull(),
+    source: text("source").$type<"ai" | "user" | "restore" | "status">().notNull(),
+    action: text("action").notNull(),
+    sections: jsonb("sections").$type<string[]>().notNull().default([]),
+    note: text("note"),
+    actorId: text("actor_id"),
+    /** Full document snapshot after the change (restorable). */
+    snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("strev_strategy_idx").on(t.strategyId, t.rev)],
+);
+
+export type AiTaskStep = { id: string; label: string; status: "pending" | "running" | "done" | "failed" | "skipped"; error?: string; startedAt?: string; finishedAt?: string };
+
+/** Long-running AI work (strategy workflows, research) tracked for progress, cost and failures. */
+export const aiTasks = pgTable(
+  "ai_tasks",
+  {
+    id: id(),
+    brandId: text("brand_id")
+      .notNull()
+      .references(() => brands.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id").notNull(),
+    userId: text("user_id").notNull(),
+    kind: text("kind").notNull(),
+    strategyId: text("strategy_id"),
+    status: text("status").$type<"queued" | "running" | "succeeded" | "failed">().notNull().default("queued"),
+    steps: jsonb("steps").$type<AiTaskStep[]>().notNull().default([]),
+    input: jsonb("input").$type<Record<string, unknown>>().notNull().default({}),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    webSearches: integer("web_searches").notNull().default(0),
+    costUsd: real("cost_usd").notNull().default(0),
+    error: text("error"),
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("ai_tasks_brand_idx").on(t.brandId, t.createdAt), index("ai_tasks_strategy_idx").on(t.strategyId)],
+);
 
 export const campaigns = pgTable("campaigns", {
   id: id(),
@@ -357,7 +441,10 @@ export const agentRuns = pgTable(
     output: jsonb("output").$type<unknown>(),
     error: text("error"),
     provider: text("provider"),
-    usage: jsonb("usage").$type<{ inputTokens?: number; outputTokens?: number }>(),
+    usage: jsonb("usage").$type<{ inputTokens?: number; outputTokens?: number; webSearches?: number }>(),
+    model: text("model"),
+    costUsd: real("cost_usd"),
+    attempts: integer("attempts"),
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
   },
@@ -390,8 +477,8 @@ export const assistantMessages = pgTable(
       .references(() => brands.id, { onDelete: "cascade" }),
     userId: text("user_id").notNull(),
     role: text("role").$type<"user" | "assistant">().notNull(),
-    /** "workflow" = action assistant; "brand" = Brand Q&A assistant */
-    channel: text("channel").$type<"workflow" | "brand">().notNull().default("workflow"),
+    /** "workflow" = action assistant; "brand" = Brand Q&A assistant; "strategy" = Marketing Advisor */
+    channel: text("channel").$type<"workflow" | "brand" | "strategy">().notNull().default("workflow"),
     content: text("content").notNull(),
     actions: jsonb("actions").$type<{ label: string; href: string }[]>().notNull().default([]),
     /** Brand Q&A metadata: sections used, whether the answer is grounded, missing info. */
@@ -407,6 +494,8 @@ export type Creative = typeof creatives.$inferSelect;
 export type Campaign = typeof campaigns.$inferSelect;
 export type SocialAccount = typeof socialAccounts.$inferSelect;
 export type AgentRun = typeof agentRuns.$inferSelect;
+export type StrategyRow = typeof strategies.$inferSelect;
+export type AiTask = typeof aiTasks.$inferSelect;
 
 /** Fixed-window rate-limit counters, shared by all app instances (see src/server/ratelimit.ts). */
 export const rateLimitBuckets = pgTable(
