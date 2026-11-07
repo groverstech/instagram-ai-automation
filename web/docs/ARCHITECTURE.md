@@ -95,8 +95,11 @@ users ─┬─< workspace_members >─ workspaces ─< brands ─< (everything 
 * Every brand-scoped call goes through `requireBrand(brandId, minRole)`. It resolves the
   brand → workspace → membership for the session user, and nothing below it trusts a
   client-supplied workspace id.
-* Brand memory, assets, campaigns, posts, creatives, accounts and metrics all carry `brand_id`
-  and are only queried through that guard.
+* Brand memory, assets, campaigns, posts, creatives, accounts, metrics, strategies, strategy
+  revisions and AI tasks all carry `brand_id` and are only queried through that guard.
+* **Client users:** `workspace_members.brand_ids` limits a member (editor/viewer only) to specific
+  brands. `requireBrandForUser` and `listAccessibleBrands` enforce it, and brand-scoped members
+  can't use workspace-admin actions. Agency staff (no scope) switch between client brands.
 
 ---
 
@@ -151,7 +154,10 @@ The assistant and agents can only create `draft` posts.
             │
   Workflows (multi-agent pipelines):
    • onboardBrand:    BrandIntelligence(vision on assets) → profile draft
-   • monthlyStrategy: Strategist → ContentStrategist(calendar draft) → Copywriter
+   • strategist:      MarketResearch(web search, verified sources) → AudienceIntelligence
+                      → Objectives → MarketingStrategy → ContentPillars → CampaignIdeation
+                      → ContentPlanner(30-day calendar); background task, per-section
+                      regeneration, versioned + approved (docs/STRATEGIST.md)
    • campaign:        CampaignManager(concept+timeline) → CreativeDirector(concepts)
                       → Copywriter(captions) → Designer(images) → draft posts
    • creatives:       CreativeDirector → Designer (+ Copywriter)
@@ -240,7 +246,7 @@ web/
 |---|---|---|
 | 1 Foundation | Auth, workspaces, RBAC, onboarding, brand profile, dashboard shell | ✅ |
 | 2 Brand intelligence | Vision + document analysis of assets, sectioned profile with provenance, per-section review, Brand Q&A, completeness score, pgvector memory (see `docs/BRAND_INTELLIGENCE.md`) | ✅ |
-| 3 Strategy + content | Strategist, Content Studio (captions/hooks/hashtags per platform/objective) | ✅ |
+| 3 Strategy + content | AI Marketing Strategist: research with verified sources, personas, objectives, 13-part strategy, 4–8 pillars, campaigns, 30-day calendar, advisor, versions & approvals (see `docs/STRATEGIST.md`); Content Studio | ✅ |
 | 4 Creative Studio | Formats, styles, concepts, image generation, brand renderer, variations, resize, download | ✅ |
 | 5 Campaigns + calendar | Campaign pipeline, calendar autopopulate, drag/drop, approvals | ✅ |
 | 6 Integrations | OAuth, token vault, publishers, scheduler/worker, status tracking | ✅ IG/FB/LinkedIn/Pinterest · YT/TikTok declared |

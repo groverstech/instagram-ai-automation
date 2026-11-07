@@ -127,6 +127,7 @@ export function NewStrategyWizard({ open, onClose, brand, brands, preflight, onS
             <p className="text-[13px] text-muted">The strategy is built for one brand and stays inside its workspace. Agencies: switch client here.</p>
             <Field label="Brand">
               <Select
+                aria-label="Brand"
                 value={brand.id}
                 onChange={(e) =>
                   run(async () => {
@@ -140,7 +141,7 @@ export function NewStrategyWizard({ open, onClose, brand, brands, preflight, onS
               </Select>
             </Field>
             <Field label="Account type" hint={`Workspace type: ${preflight.workspaceType}`}>
-              <Select value={d.accountType} onChange={(e) => set({ accountType: e.target.value as Draft["accountType"] })}>
+              <Select aria-label="Account type" value={d.accountType} onChange={(e) => set({ accountType: e.target.value as Draft["accountType"] })}>
                 {ACCOUNT_TYPES.map((t) => <option key={t} value={t}>{accountTypeLabel(t)}</option>)}
               </Select>
             </Field>
