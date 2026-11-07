@@ -2,9 +2,9 @@ import { desc, eq } from "drizzle-orm";
 import { requireActiveBrand } from "@/server/auth/guard";
 import { getDb, schema } from "@/server/db/client";
 import { imageStatus } from "@/server/ai/image";
-import { latestProfile } from "@/server/agents/context";
+import { latestProfile, profileOf } from "@/server/agents/context";
 import { CreativeStudio } from "@/components/creative/studio";
-import type { BrandProfile, CreativeConcept } from "@/server/agents/schemas";
+import type { CreativeConcept } from "@/server/agents/schemas";
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ c?: string }> }) {
   const { c } = await searchParams;
@@ -15,7 +15,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ c
     db.select({ id: schema.campaigns.id, name: schema.campaigns.name }).from(schema.campaigns).where(eq(schema.campaigns.brandId, brand.id)).orderBy(desc(schema.campaigns.createdAt)),
     latestProfile(brand.id),
   ]);
-  const profile = (approved ?? latest)?.data as BrandProfile | undefined;
+  const profile = profileOf(approved ?? latest);
   return (
     <CreativeStudio
       brandId={brand.id}
@@ -23,7 +23,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ c
       platforms={brand.platforms}
       initialOpen={c}
       imageProvider={imageStatus()}
-      preferredStyles={profile?.preferredStyles ?? []}
+      preferredStyles={profile?.visual.preferredStyles ?? []}
       campaigns={campaigns}
       creatives={creatives.map((x) => ({
         id: x.id,

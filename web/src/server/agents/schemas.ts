@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { FORMAT_IDS, OBJECTIVES, PLATFORM_IDS, STYLE_IDS } from "@/lib/domain";
+import { FORMAT_IDS, OBJECTIVES, PLATFORM_IDS } from "@/lib/domain";
 
 // Note: these schemas are sent to Claude as structured-output JSON Schemas. Keep them to
 // plain objects/arrays/enums (no numeric/length constraints) so they stay within the
@@ -11,48 +11,26 @@ const objective = z.enum(OBJECTIVES);
 
 export const AssetAnalysis = z.object({
   description: z.string(),
-  palette: z.array(z.string()).describe("hex colours, most dominant first"),
+  palette: z.array(z.string()).describe("hex colours, most dominant first; empty for text documents"),
   typography: z.string(),
   aesthetic: z.string(),
   notableElements: z.array(z.string()),
+  extractedFacts: z.array(z.string()).describe("Explicit brand facts or rules stated in the asset (values, tone rules, colour codes, logo rules, audience, claims)"),
 });
 export type AssetAnalysis = z.infer<typeof AssetAnalysis>;
 
-export const BrandProfile = z.object({
-  summary: z.string(),
-  personality: z.object({ archetype: z.string(), traits: z.array(z.string()), description: z.string() }),
-  positioning: z.object({ statement: z.string(), category: z.string(), differentiators: z.array(z.string()) }),
-  usps: z.array(z.string()),
-  personas: z.array(
-    z.object({
-      name: z.string(),
-      snapshot: z.string(),
-      goals: z.array(z.string()),
-      painPoints: z.array(z.string()),
-      channels: z.array(z.string()),
-    }),
-  ),
-  painPoints: z.array(z.string()),
-  voice: z.object({
-    description: z.string(),
-    do: z.array(z.string()),
-    dont: z.array(z.string()),
-    vocabulary: z.array(z.string()),
-    sampleLines: z.array(z.string()),
-  }),
-  visualIdentity: z.object({
-    palette: z.array(z.object({ hex: z.string(), name: z.string(), usage: z.string() })),
-    typography: z.object({ heading: z.string(), body: z.string(), notes: z.string() }),
-    imagery: z.string(),
-    layout: z.string(),
-    logoUsage: z.string(),
-  }),
-  preferredStyles: z.array(z.enum(STYLE_IDS)),
-  competitorPositioning: z.array(z.object({ name: z.string(), positioning: z.string(), howWeDiffer: z.string() })),
-  contentOpportunities: z.array(z.object({ title: z.string(), why: z.string() })),
-  rationale: z.string(),
+// The Brand Intelligence Profile schema (v2) lives in @/lib/brand-profile; re-exported for agents.
+export { BrandProfileV2 as BrandProfile } from "@/lib/brand-profile";
+
+export const BrandAnswer = z.object({
+  answer: z.string().describe("Plain-text answer, short paragraphs or simple '- ' bullets"),
+  basis: z.enum(["brand_knowledge", "mixed", "general_guidance"]),
+  usedSections: z.array(z.enum(["identity", "audience", "communication", "visual", "marketing", "memory", "assets"])),
+  unconfirmed: z.boolean().describe("True if the answer relies on AI suggestions the user hasn't confirmed"),
+  missingInfo: z.array(z.string()).describe("Brand information that would improve this answer"),
+  followUps: z.array(z.string()),
 });
-export type BrandProfile = z.infer<typeof BrandProfile>;
+export type BrandAnswer = z.infer<typeof BrandAnswer>;
 
 export const Strategy = z.object({
   summary: z.string(),

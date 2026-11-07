@@ -1,6 +1,6 @@
 import "server-only";
 import type Anthropic from "@anthropic-ai/sdk";
-import { asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq } from "drizzle-orm";
 import { addDays, format as fmt, parseISO, startOfDay } from "date-fns";
 import { z } from "zod";
 import { getDb, schema } from "../db/client";
@@ -177,7 +177,7 @@ async function runTool(scope: RunScope, brand: Brand, name: ToolName, raw: unkno
 
 export async function assistantHistory(brandId: string, limit = 30) {
   const db = await getDb();
-  const rows = await db.select().from(schema.assistantMessages).where(eq(schema.assistantMessages.brandId, brandId)).orderBy(desc(schema.assistantMessages.createdAt)).limit(limit);
+  const rows = await db.select().from(schema.assistantMessages).where(and(eq(schema.assistantMessages.brandId, brandId), eq(schema.assistantMessages.channel, "workflow"))).orderBy(desc(schema.assistantMessages.createdAt)).limit(limit);
   return rows.reverse();
 }
 
@@ -186,7 +186,7 @@ export async function chat(scope: RunScope, brand: Brand, message: string): Prom
   const history = await db
     .select()
     .from(schema.assistantMessages)
-    .where(eq(schema.assistantMessages.brandId, brand.id))
+    .where(and(eq(schema.assistantMessages.brandId, brand.id), eq(schema.assistantMessages.channel, "workflow")))
     .orderBy(asc(schema.assistantMessages.createdAt));
   await db.insert(schema.assistantMessages).values({ brandId: brand.id, userId: scope.userId, role: "user", content: message });
 
