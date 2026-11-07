@@ -71,7 +71,7 @@ export function Sidebar(props: SidebarProps) {
         <SidebarPanel {...props} />
       </aside>
 
-      <header className="fixed inset-x-0 top-0 z-40 flex h-14 items-center gap-3 border-b border-line bg-surface/90 px-3 backdrop-blur md:hidden" style={{ paddingTop: "env(safe-area-inset-top)" }}>
+      <header className="fixed inset-x-0 top-0 z-40 flex items-center gap-3 border-b border-line bg-surface/90 px-3 backdrop-blur md:hidden" style={{ height: "calc(3.5rem + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)" }}>
         <button onClick={() => setDrawer(true)} className="grid size-10 place-items-center rounded-lg text-ink hover:bg-sunken" aria-label="Open menu" aria-expanded={drawer}>
           <Menu className="size-5" />
         </button>

@@ -26,7 +26,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         user={{ name: session.user.name, email: session.user.email, role }}
         pendingApprovals={pending}
       />
-      <div className="min-w-0 flex-1 pt-14 md:pt-0">
+      <div className="min-w-0 flex-1 pt-[calc(3.5rem+env(safe-area-inset-top))] md:pt-0">
         {!ai.ready ? (
           <div className="border-b border-warn/20 bg-warn-soft px-6 py-2 text-[12px] text-warn md:px-10">
             AI is not configured. Add <code className="font-mono">ANTHROPIC_API_KEY</code> to the server environment to enable the agents.
