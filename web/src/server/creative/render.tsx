@@ -160,7 +160,7 @@ export async function renderCreative(creative: Creative, brand: Brand, formatOve
             <div style={{ display: "flex", width: Math.round(120 * unit), height: 2, background: accent }} />
           </div>
           <Img style={{ width: W - pad * 2, flex: 1, borderRadius: style.id === "playful_youthful" ? Math.round(48 * unit) : 0 }} />
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", gap: pad }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: Math.round(28 * unit) }}>
             <Text color={fg} />
             <Cta />
           </div>

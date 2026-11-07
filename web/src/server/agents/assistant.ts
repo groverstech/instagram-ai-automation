@@ -275,7 +275,9 @@ async function mockChat(scope: RunScope, brand: Brand, message: string) {
     input = { brief: message, type: "launch", objective: "awareness", start_date: tomorrow, days, platforms: brand.platforms };
   } else if (m.includes("creative") || m.includes("design")) {
     tool = "generate_creatives";
-    input = { brief: message, format: "instagram_post", style: "premium_editorial", count: Number(m.match(/(\d+)/)?.[1] ?? 3) };
+    const words: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 };
+    const n = Number(m.match(/(\d+)/)?.[1] ?? words[m.match(/\b(one|two|three|four|five|six)\b/)?.[1] ?? ""] ?? 3);
+    input = { brief: message, format: "instagram_post", style: "premium_editorial", count: n };
   } else if (m.includes("calendar")) {
     tool = "plan_calendar";
     input = { start_date: tomorrow, days, platforms: brand.platforms, posts_per_week: 4, note: message };

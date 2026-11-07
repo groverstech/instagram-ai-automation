@@ -115,3 +115,17 @@ describe("utilities", () => {
     expect(s.byPillar[0].avgEngagementRate).toBeCloseTo(0.06);
   });
 });
+
+describe("tenant isolation", () => {
+  it("denies brand access to users outside the workspace and enforces roles", async () => {
+    const { requireBrandForUser } = await import("./auth/guard");
+    const db = await getDb();
+    const [outsider] = await db.insert(schema.users).values({ email: "o@example.com", name: "O", passwordHash: "x" }).returning();
+    const sess = (id: string) => ({ sessionId: "s", activeBrandId: null, user: { id, email: "", name: "" } });
+    await expect(requireBrandForUser(sess(outsider.id), brandId, "viewer")).rejects.toThrow();
+    const [b] = await db.select().from(schema.brands).where(eq(schema.brands.id, brandId));
+    await db.insert(schema.workspaceMembers).values({ workspaceId: b.workspaceId, userId: outsider.id, role: "viewer" });
+    await expect(requireBrandForUser(sess(outsider.id), brandId, "viewer")).resolves.toBeTruthy();
+    await expect(requireBrandForUser(sess(outsider.id), brandId, "editor")).rejects.toThrow(/editor/);
+  });
+});
