@@ -245,7 +245,7 @@ export async function runTask(taskId: string): Promise<"claimed_elsewhere" | "wa
           const delay = RETRY_BASE_MS * 2 ** (t.attempts - 1);
           step.status = "pending";
           step.error = "Temporary AI service problem; retrying automatically.";
-          await save(taskId, token, { status: "queued", claimToken: null, steps, runAfter: new Date(Date.now() + delay), error: `${taskErrorMessage(e)} Retrying automatically (attempt ${t.attempts + 1} of ${t.maxAttempts}).` });
+          await save(taskId, token, { status: "queued", claimToken: null, steps, runAfter: new Date(Date.now() + delay), error: `${taskErrorMessage(e).replace(/\s*Please try again[^.]*\.$/, "")} Retrying automatically (attempt ${t.attempts + 1} of ${t.maxAttempts}).` });
           setTimeout(() => void runTask(taskId).catch(() => {}), delay + 500).unref?.();
           return (outcome = "retrying");
         }

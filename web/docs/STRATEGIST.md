@@ -80,21 +80,50 @@ Regenerating or editing a section flags its downstream sections as possibly stal
 - Roles: viewer reads and asks the advisor; editor generates, edits and submits; admin/owner
   approves items and strategies, requests revisions and archives.
 
-## Background processing, retries, costs, limits
+## Persistent jobs, recovery and retries (migration `0005_strategist_jobs`)
 
-- `startTask` admits work synchronously (plan quota → `ai_heavy` rate limit → concurrency lease
-  held for the task, 15 min, renewed by heartbeats), then runs it after the response with
-  Next.js `after()`.
-- Each step re-reads the strategy and saves its section when done. A failed step stops the task.
-  Completed sections are kept, and **Resume** generates only what's missing.
-- Tasks heartbeat every 20 seconds. A task with no heartbeat for 2 minutes (server restart, crash) is
-  reported as interrupted, and its concurrency lease is released so the user can resume at once.
-- Starting a task is atomic per strategy (advisory lock), so concurrent clicks can't start two runs.
-- Retries: one retry with backoff on unusable output (truncated, invalid JSON, wrong shape,
-  invalid pillar count, unusable calendar) and on transient API errors (429/5xx/network). The SDK
-  also retries HTTP failures itself. Auth, config and refusal errors are not retried.
-- Cost is an **estimate** from token usage and web searches (`src/server/ai/pricing.ts`). It is
-  shown per strategy and stored per run and task.
+Strategist runs are persistent jobs in `ai_tasks` (`attempts`, `max_attempts` = 3, `claim_token`,
+`run_after`, heartbeat).
+
+- **Admission once:** `startTask` checks plan quota → `ai_heavy` rate limit → concurrency lease,
+  then inserts a `queued` task (atomically per strategy, so two clicks can't start two runs).
+- **Any process can run it:** right after the request (`after()`), the in-process scheduler tick
+  (every 30 s, and once on server start), `npm run worker`, `GET /api/cron/tick`, or a progress
+  poll from the page. All of them call the same `runTask`.
+- **Atomic claim:** a worker must claim the task with one conditional UPDATE that sets a fresh
+  claim token and increments `attempts`. Only queued tasks whose `run_after` has passed, or running
+  tasks whose worker stopped heartbeating for 2 minutes, can be claimed. Two workers never run one
+  task at the same time.
+- **Lost claim:** heartbeats and section writes check the token. A worker that lost its claim (it
+  was paused and another worker took over) stops without writing.
+- **No duplicate work:** each section records the task that generated it (`envelope.taskId`). A
+  recovered task skips any step whose section it already saved, including a crash between saving
+  and marking the step done. The agent run that was in flight when a worker died is closed as
+  "Interrupted" (its usage is unknown, so nothing is counted).
+- **Automatic retries:** transient AI-service failures (network, 429, 5xx) put the task back in
+  the queue with exponential backoff (30 s, 60 s), up to `max_attempts`. A waiting task releases
+  its concurrency slot. Unusable output, refusals and configuration errors fail the task, which
+  the user can resume (only missing sections run).
+- **No re-charging:** recovery and retries never consume rate-limit counters or plan quota again.
+  They only need a concurrency slot; if the user is at the limit, the task waits without using up
+  an attempt.
+- Within one attempt, `runAgent` retries unusable output and transient errors once; the SDK also
+  retries HTTP failures itself.
+
+## AI usage and cost accounting
+
+- **One source of truth:** every AI call is an `agent_runs` row with `usage`, `model`, `cost_usd`,
+  `attempts` and `task_id`. Task totals are recomputed from their runs, and strategy totals sum
+  every run for the strategy (workflow tasks plus calendar-entry regenerations). Nothing is added
+  twice.
+- **Failed and retried requests count whenever the provider billed them.** A response the app
+  rejected (refusal, `max_tokens` truncation, invalid JSON, wrong shape, invalid pillar count)
+  carries its usage on the error; `runAgent` adds each attempt's usage exactly once and records it
+  even when the run fails.
+- Requests that got no response (network errors, 5xx) carry no usage, so they add nothing; the
+  attempt count still shows they happened.
+- Cost is an **estimate** from usage (`src/server/ai/pricing.ts`). It is shown per task and per
+  strategy.
 - Logs carry ids, agent names and error messages, never prompts, brand content or keys.
 
 ## Configuration
@@ -109,13 +138,18 @@ available for the API key's organisation; if it isn't, research degrades to hypo
 
 ## Testing
 
-- `src/server/strategist.test.ts` (mock provider, 20 tests): preflight, profile retrieval, full
+- `src/server/members.test.ts` (6 tests): Settings multi-brand access, brand switching, scope
+  validation, admin-only management, cross-organisation isolation, plan brand limit.
+- `src/server/strategist.test.ts` (mock provider, 26 tests): persistent-job recovery after a dead
+  worker, crash between save and step completion, racing workers, lost claims, waiting for a slot,
+  automatic retries with backoff; preflight, profile retrieval, full
   workflow, section regeneration and staleness, strict edits, calendar operations, the
   review/approve/version/restore/compare flow, apply-to-calendar, organisation and client-brand
   isolation, agency multi-client, retries and resumable failures, interrupted tasks, rate limits
   and concurrency, research verification, migration upgrade, concurrent task start, lease
   release on interruption, link safety.
-- `src/server/strategist-claude.test.ts` (real SDK, network intercepted, 6 tests): all seven agents and the
+- `src/server/strategist-claude.test.ts` (real SDK, network intercepted, 9 tests): billing of
+  rejected/refused/retried responses exactly once, no double counting after recovery, outage retries; all seven agents and the
   advisor end to end (each agent's schema, the approved profile in every prompt and never a newer
   draft, cost totals, entry regeneration), web search
   request shape, the approved profile in the prompt, source verification against real result
@@ -132,9 +166,9 @@ available for the API key's organisation; if it isn't, research degrades to hypo
 
 ## Known limitations
 
-- Background tasks run inside the web process. A restart interrupts a running task; it is then
-  shown as interrupted and can be resumed. There is no queue-based worker for strategist tasks yet.
+- On a serverless deployment with no long-running process, recovery relies on `GET /api/cron/tick`
+  (or a page poll); schedule the cron every minute. Self-hosted servers recover on their own.
+- An agent call that was in flight when a worker died is re-run on recovery; if the provider
+  billed that lost call, it can't be counted (no response reached the app).
 - The calendar is generated in two halves; very high cadences (>~25 posts per half) may be trimmed.
-- Client (brand-scoped) access is configured per member with one brand in the UI; the API
-  supports several.
-- Token usage of failed attempts isn't added to cost estimates.
+

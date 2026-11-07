@@ -489,7 +489,7 @@ describe("research source verification", () => {
   });
 });
 
-describe("migration 0004 on an existing database", () => {
+describe("migrations 0004 and 0005 on an existing database", () => {
   it("keeps legacy strategies and backfills per-brand version numbers", async () => {
     const { PGlite } = await import("@electric-sql/pglite");
     const { vector } = await import("@electric-sql/pglite-pgvector");
@@ -524,6 +524,10 @@ describe("migration 0004 on an existing database", () => {
     expect(m.brand_ids).toBeNull();
     const t = await client.query("select table_name from information_schema.tables where table_name in ('strategy_revisions','ai_tasks')");
     expect(t.rows).toHaveLength(2);
+    // 0005: persistent-job columns and run → task attribution.
+    const cols = await client.query<{ table_name: string; column_name: string; column_default: string | null }>("select table_name, column_name, column_default from information_schema.columns where (table_name = 'ai_tasks' and column_name in ('attempts','max_attempts','claim_token','run_after')) or (table_name = 'agent_runs' and column_name = 'task_id') order by table_name, column_name");
+    expect(cols.rows.map((r) => `${r.table_name}.${r.column_name}`)).toEqual(["agent_runs.task_id", "ai_tasks.attempts", "ai_tasks.claim_token", "ai_tasks.max_attempts", "ai_tasks.run_after"]);
+    expect(cols.rows.find((r) => r.column_name === "max_attempts")!.column_default).toBe("3");
     await client.close();
   });
 });

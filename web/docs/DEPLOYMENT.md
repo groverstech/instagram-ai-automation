@@ -104,7 +104,7 @@ For large deployments, also put a WAF or CDN rate limit in front.
 - **Single instance, PGlite or Postgres:** jobs run in-process every 30 seconds.
 - **Several instances:** set `RUN_JOBS_IN_PROCESS=false`, then either run one `npm run worker` process, or call `GET /api/cron/tick` with `Authorization: Bearer $CRON_SECRET` every minute.
 
-Strategist runs are background tasks inside the web process (Next.js `after()`). A restart interrupts a running task. It is then shown as interrupted, saved sections are kept, and users can resume. Deploy during quiet periods or drain first.
+- **Strategist jobs** are persistent (`ai_tasks`). After a restart or crash they are recovered automatically within about 2–3 minutes by whichever runner is active (in-process tick, `npm run worker`, or the cron route), without re-running finished sections or re-charging rate limits. On serverless hosting, schedule `GET /api/cron/tick` every minute so recovery doesn't depend on a user having the page open.
 
 ## 8. Third-party configuration
 - **Stripe:** register a webhook at `{APP_URL}/api/billing/webhook` (see README).
