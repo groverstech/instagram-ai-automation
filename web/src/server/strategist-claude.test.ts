@@ -199,7 +199,7 @@ describe("workflow failure handling on the real provider path", () => {
     expect(out.data.personas[0].approved).toBe(false);
   });
 
-  it("fails the task with a friendly message on an API outage, keeps completed work and releases the lease", async () => {
+  it("retries an API outage automatically with backoff, never re-runs finished steps, then fails cleanly", async () => {
     respond = (b) => {
       if (!isStructured(b)) return researchResponse();
       if (schemaKeys(b).includes("findings")) return structuredResearch();
@@ -209,19 +209,112 @@ describe("workflow failure handling on the real provider path", () => {
     const row = await store.createStrategy(brandId, userId, StrategyInputs.parse({ accountType: "business", businessObjectives: ["Grow sales"], platforms: ["instagram"], startDate: "2027-01-04", postsPerWeek: 4 }), [], null);
     const access = await requireBrandForUser({ sessionId: "s", activeBrandId: null, user: { id: userId, email: "s@example.com", name: "S" } }, brandId, "editor");
     const taskId = await wf.startTask(access, row.id, { sections: ["research", "audience"], inline: true });
-    const t = await wf.taskStatus(brandId, taskId);
+    let [t] = await db.select().from(schema.aiTasks).where(eq(schema.aiTasks.id, taskId));
+    // Attempt 1: research done, audience hit a 5xx → queued for an automatic retry, slot released.
+    expect(t.status).toBe("queued");
+    expect(t.attempts).toBe(1);
+    expect(t.runAfter.getTime()).toBeGreaterThan(Date.now());
+    expect(t.error).toMatch(/temporarily unavailable.*Retrying automatically \(attempt 2 of 3\)/);
+    expect(t.steps.map((s) => s.status)).toEqual(["done", "pending"]);
+    expect(await db.select().from(schema.aiTaskLeases)).toHaveLength(0);
+    expect(await store.activeTask(brandId, row.id)).not.toBeNull(); // still blocks edits / duplicate starts
+    // Attempts 2 and 3 (backoff skipped for the test).
+    for (const expected of ["retrying", "failed"]) {
+      await db.update(schema.aiTasks).set({ runAfter: new Date() }).where(eq(schema.aiTasks.id, taskId));
+      expect(await wf.runTask(taskId)).toBe(expected);
+    }
+    [t] = await db.select().from(schema.aiTasks).where(eq(schema.aiTasks.id, taskId));
     expect(t.status).toBe("failed");
+    expect(t.attempts).toBe(3);
     expect(t.error).toBe("The AI service is temporarily unavailable. Please try again shortly.");
     expect(t.steps.map((s) => s.status)).toEqual(["done", "failed"]);
+    // Research ran exactly once across three attempts: no duplicate AI spend.
+    const runs = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.taskId, taskId));
+    expect(runs.filter((r) => r.agent === "market_research")).toHaveLength(2); // web call + structuring call, once each
+    expect(runs.filter((r) => r.agent === "audience_intelligence").map((r) => [r.status, r.attempts, r.usage])).toEqual([
+      ["failed", 2, null],
+      ["failed", 2, null],
+      ["failed", 2, null],
+    ]); // 5xx responses carry no usage: nothing billed, nothing counted
     expect(t.inputTokens).toBe(20_000);
-    expect(t.costUsd).toBeGreaterThan(0);
+    expect(t.costUsd).toBeCloseTo(runs.reduce((s, r) => s + (r.costUsd ?? 0), 0), 6);
     const doc = store.docOf((await store.getStrategy(brandId, row.id))!);
     expect(doc.sections.research?.data.mode).toBe("web_search");
+    expect(doc.sections.research?.taskId).toBe(taskId);
     expect(doc.sections.audience).toBeUndefined();
     expect(await db.select().from(schema.aiTaskLeases)).toHaveLength(0);
-    // Error text stored for users never contains raw API payloads.
     expect(JSON.stringify(t)).not.toContain("api_error (test)");
-  }, 20_000);
+  }, 30_000);
+});
+
+describe("AI usage accounting for failed and retried requests", () => {
+  const AUD = { overview: "o", segments: [], personas: [{ name: "Host", summary: "s", demographics: "Not established", demographicsBasis: "assumption", interests: [], needs: [], painPoints: [], motivations: [], objections: [], contentPreferences: [], platforms: ["instagram"], engagementOpportunities: [] }], insights: [] };
+  const run = async (sections: ("research" | "audience")[]) => {
+    const row = await store.createStrategy(brandId, userId, StrategyInputs.parse({ accountType: "business", businessObjectives: ["Grow sales"], platforms: ["instagram"], startDate: "2027-01-04", postsPerWeek: 4 }), [], null);
+    const access = await requireBrandForUser({ sessionId: "s", activeBrandId: null, user: { id: userId, email: "s@example.com", name: "S" } }, brandId, "editor");
+    const taskId = await wf.startTask(access, row.id, { sections, inline: true });
+    const db = await getDb();
+    const [t] = await db.select().from(schema.aiTasks).where(eq(schema.aiTasks.id, taskId));
+    const runs = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.taskId, taskId));
+    return { t, runs, row };
+  };
+
+  it("bills a rejected (truncated) response and the successful retry, each exactly once", async () => {
+    let n = 0;
+    respond = (b) => {
+      if (!isStructured(b) || !schemaKeys(b).includes("personas")) return apiError(400, "invalid_request_error");
+      n++;
+      return n === 1 ? msg([{ type: "text", text: '{"overview":"cut' }], { input_tokens: 7_000, output_tokens: 16_000 }) : json(AUD);
+    };
+    const { t, runs, row } = await run(["audience"]);
+    expect(t.status).toBe("succeeded");
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ status: "succeeded", attempts: 2 });
+    // 7k + 10k input, 16k + 2k output: the truncated attempt was billed by the provider, so it counts.
+    expect(runs[0].usage).toMatchObject({ inputTokens: 17_000, outputTokens: 18_000 });
+    expect(runs[0].costUsd).toBeCloseTo(estimateCost({ inputTokens: 17_000, outputTokens: 18_000, model: "claude-opus-5-5" }), 6);
+    expect(t).toMatchObject({ inputTokens: 17_000, outputTokens: 18_000 });
+    expect(t.costUsd).toBeCloseTo(runs[0].costUsd!, 6);
+    expect((await wf.strategyCost(brandId, row.id)).costUsd).toBeCloseTo(runs[0].costUsd!, 6);
+  });
+
+  it("bills a step that failed on every attempt (refusal, invalid output) and shows it in task and strategy totals", async () => {
+    let n = 0;
+    respond = (b) => {
+      if (!isStructured(b)) return apiError(400, "invalid_request_error");
+      n++;
+      return n === 1
+        ? msg([{ type: "text", text: "{}" }], { input_tokens: 6_000, output_tokens: 900 }) // valid JSON, wrong shape → retried
+        : new Response(JSON.stringify({ id: "m", type: "message", role: "assistant", model: "claude-opus-5-5", content: [], stop_reason: "refusal", stop_sequence: null, usage: { input_tokens: 5_000, output_tokens: 100 } }), { status: 200, headers: { "content-type": "application/json" } }); // refusal → not retried
+    };
+    const { t, runs, row } = await run(["audience"]);
+    expect(t.status).toBe("failed"); // not a service error: no automatic retry of the task
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ status: "failed", attempts: 2, model: "claude-opus-5-5" });
+    expect(runs[0].usage).toMatchObject({ inputTokens: 11_000, outputTokens: 1_000 });
+    expect(runs[0].costUsd).toBeGreaterThan(0);
+    expect(t).toMatchObject({ inputTokens: 11_000, outputTokens: 1_000 });
+    expect((await wf.strategyCost(brandId, row.id)).inputTokens).toBe(11_000);
+  });
+
+  it("does not double count when a recovered task reuses finished work", async () => {
+    respond = (b) => (isStructured(b) ? (schemaKeys(b).includes("findings") ? structuredResearch() : json(AUD)) : researchResponse());
+    const { t, runs } = await run(["research", "audience"]);
+    expect(t.status).toBe("succeeded");
+    const before = { in: t.inputTokens, cost: t.costUsd, runs: runs.length };
+    // Simulate a crash right after the last section was written: task looks abandoned mid-run.
+    const db = await getDb();
+    await db.update(schema.aiTasks).set({ status: "running", heartbeatAt: new Date(Date.now() - 5 * 60_000), steps: t.steps.map((s) => (s.id === "audience" ? { ...s, status: "running" as const } : s)) }).where(eq(schema.aiTasks.id, t.id));
+    captured.length = 0;
+    await wf.recoverDueTasks({ wait: true });
+    const [after] = await db.select().from(schema.aiTasks).where(eq(schema.aiTasks.id, t.id));
+    expect(after.status).toBe("succeeded");
+    expect(after.attempts).toBe(2);
+    expect(captured).toHaveLength(0); // audience was already saved by this task: no new AI call
+    expect((await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.taskId, t.id))).length).toBe(before.runs);
+    expect(after.inputTokens).toBe(before.in);
+    expect(after.costUsd).toBeCloseTo(before.cost, 6);
+  });
 });
 
 // ---------------------------------------------------------------------------

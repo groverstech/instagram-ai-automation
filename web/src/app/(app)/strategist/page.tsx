@@ -50,7 +50,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ v
       }
       legacy={row && !v2 ? { id: row.id, month: row.month, version: row.version } : null}
       revisions={revs}
-      task={task ? { id: task.id, status: task.status, steps: task.steps, error: task.error, costUsd: task.costUsd, kind: task.kind } : null}
+      task={task ? { id: task.id, status: task.status, steps: task.steps, error: task.error, costUsd: task.costUsd, kind: task.kind, attempts: task.attempts, maxAttempts: task.maxAttempts, runAfter: task.runAfter, recovering: task.recovering } : null}
       running={Boolean(running)}
       cost={cost}
       chat={chat.map((m) => ({ id: m.id, role: m.role, content: m.content, meta: m.meta }))}

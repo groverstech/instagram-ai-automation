@@ -376,7 +376,7 @@ describe("AI failure handling", () => {
     expect(store.docOf((await store.getStrategy(A1.id, row.id))!).sections.calendar).toBeTruthy();
   });
 
-  it("succeeds after a transient bad response, and marks interrupted tasks as failed", async () => {
+  it("succeeds after a transient bad response; a task that keeps getting interrupted is failed once attempts run out", async () => {
     const provider = llm();
     const real = provider.structured.bind(provider);
     let n = 0;
@@ -392,12 +392,12 @@ describe("AI failure handling", () => {
     const row = await store.createStrategy(A2.id, ownerId, inputs(), [], null);
     const [stale] = await db
       .insert(schema.aiTasks)
-      .values({ brandId: A2.id, workspaceId: A2.workspaceId, userId: ownerId, kind: "strategy_workflow", strategyId: row.id, status: "running", steps: [{ id: "research", label: "x", status: "running" }], heartbeatAt: new Date(Date.now() - 20 * 60_000) })
+      .values({ brandId: A2.id, workspaceId: A2.workspaceId, userId: ownerId, kind: "strategy_workflow", strategyId: row.id, status: "running", attempts: 3, maxAttempts: 3, steps: [{ id: "research", label: "x", status: "running" }], heartbeatAt: new Date(Date.now() - 20 * 60_000) })
       .returning();
     expect(await store.activeTask(A2.id, row.id)).toBeNull();
     const t = await wf.taskStatus(A2.id, stale.id);
     expect(t.status).toBe("failed");
-    expect(t.error).toMatch(/interrupted/);
+    expect(t.error).toMatch(/interrupted repeatedly/);
   });
 
   it("blocks user edits while the AI is working on a strategy", async () => {
@@ -545,15 +545,15 @@ describe("review hardening", () => {
     }
   });
 
-  it("frees the concurrency lease of an interrupted task so the user can resume immediately", async () => {
+  it("frees the concurrency lease and closes the in-flight run of a task that has used all its attempts", async () => {
     const db = await getDb();
     const row = await store.createStrategy(A2.id, ownerId, inputs(), [], null);
     const lease = await acquireAiSlot({ userId: ownerId, workspaceId: A2.workspaceId, plan: "agency" }, "strategy_workflow", 900);
     const [t] = await db
       .insert(schema.aiTasks)
-      .values({ brandId: A2.id, workspaceId: A2.workspaceId, userId: ownerId, kind: "strategy_workflow", strategyId: row.id, status: "running", input: { leaseId: lease }, steps: [{ id: "research", label: "x", status: "running" }], heartbeatAt: new Date(Date.now() - 3 * 60_000) })
+      .values({ brandId: A2.id, workspaceId: A2.workspaceId, userId: ownerId, kind: "strategy_workflow", strategyId: row.id, status: "running", attempts: 3, maxAttempts: 3, input: { leaseId: lease }, steps: [{ id: "research", label: "x", status: "running" }], heartbeatAt: new Date(Date.now() - 3 * 60_000) })
       .returning();
-    const [orphan] = await db.insert(schema.agentRuns).values({ brandId: A2.id, userId: ownerId, agent: "market_research", task: "Web research", input: { strategyId: row.id }, startedAt: new Date(Date.now() - 3 * 60_000) }).returning();
+    const [orphan] = await db.insert(schema.agentRuns).values({ brandId: A2.id, userId: ownerId, taskId: t.id, agent: "market_research", task: "Web research", input: { strategyId: row.id }, startedAt: new Date(Date.now() - 3 * 60_000) }).returning();
     const st = await wf.taskStatus(A2.id, t.id);
     expect(st.status).toBe("failed");
     expect(st.steps[0]).toMatchObject({ status: "failed", error: "Interrupted" });
@@ -570,4 +570,142 @@ describe("review hardening", () => {
     expect(safeHref("data:text/html,x")).toBeNull();
     expect(safeHref("not a url")).toBeNull();
   });
+});
+
+describe("persistent jobs: recovery after restarts, no duplicate work or billing", () => {
+  const db = () => getDb();
+  async function strategyWithCrashedTask(b: Brand, crashAfter: "audience" | "written-not-marked") {
+    const d = await db();
+    const pf = await preflight(b);
+    const row = await store.createStrategy(b.id, ownerId, inputs(), [], pf.profile);
+    const acc = await access(ownerId, b);
+    // Run for real until the objectives step, which "crashes" (a non-retryable error stands in for the
+    // process dying), then rewrite the task row to look exactly like a worker that died mid-step.
+    const provider = llm();
+    const real = provider.structured.bind(provider);
+    vi.spyOn(provider, "structured").mockImplementation(async (req) => {
+      if (req.prompt.includes("Translate the business objectives")) throw new Error("process died");
+      return real(req);
+    });
+    const taskId = await wf.startTask(acc, row.id, { sections: [...SECTION_KEYS], inline: true });
+    vi.restoreAllMocks();
+    const [t] = await d.select().from(schema.aiTasks).where(eq(schema.aiTasks.id, taskId));
+    let steps = t.steps.map((s) => (s.id === "objectives" ? { ...s, status: "running" as const, error: undefined } : s.status === "skipped" ? { ...s, status: "pending" as const } : s));
+    if (crashAfter === "written-not-marked") steps = steps.map((s) => (s.id === "audience" ? { ...s, status: "running" as const } : s.id === "objectives" ? { ...s, status: "pending" as const } : s));
+    await d.update(schema.aiTasks).set({ status: "running", error: null, finishedAt: null, claimToken: "dead-worker", heartbeatAt: new Date(Date.now() - 5 * 60_000), steps }).where(eq(schema.aiTasks.id, taskId));
+    // The dead worker's in-flight agent run.
+    await d.update(schema.agentRuns).set({ status: "running", finishedAt: null }).where(and(eq(schema.agentRuns.taskId, taskId), eq(schema.agentRuns.agent, "marketing_strategist")));
+    return { row, taskId };
+  }
+  const runsOf = async (taskId: string) => (await db()).select().from(schema.agentRuns).where(eq(schema.agentRuns.taskId, taskId));
+
+  it("picks up a task whose worker died, finishes only the remaining steps and closes the orphaned run", async () => {
+    const { row, taskId } = await strategyWithCrashedTask(A1, "audience");
+    const before = await runsOf(taskId);
+    const researchBefore = before.filter((r) => r.agent === "market_research").length;
+    expect(await store.activeTask(A1.id, row.id)).not.toBeNull(); // recoverable → still counts as active
+    await wf.recoverDueTasks({ wait: true });
+    const d = await db();
+    const [t] = await d.select().from(schema.aiTasks).where(eq(schema.aiTasks.id, taskId));
+    expect(t.status).toBe("succeeded");
+    expect(t.attempts).toBe(2);
+    expect(t.claimToken).toBeNull();
+    const after = await runsOf(taskId);
+    expect(after.filter((r) => r.agent === "market_research")).toHaveLength(researchBefore); // not re-run
+    expect(after.filter((r) => r.agent === "audience_intelligence")).toHaveLength(1);
+    expect(after.find((r) => r.error?.startsWith("Interrupted"))).toBeTruthy(); // orphan closed, not left "running"
+    expect(after.every((r) => r.status !== "running")).toBe(true);
+    const doc = store.docOf((await store.getStrategy(A1.id, row.id))!);
+    expect(Object.keys(doc.sections).sort()).toEqual([...SECTION_KEYS].sort());
+    expect(await d.select().from(schema.aiTaskLeases)).toHaveLength(0);
+  });
+
+  it("does not regenerate a section that was saved just before the crash", async () => {
+    const { taskId } = await strategyWithCrashedTask(A1, "written-not-marked");
+    const audienceBefore = (await runsOf(taskId)).filter((r) => r.agent === "audience_intelligence").length;
+    await wf.recoverDueTasks({ wait: true });
+    const [t] = await (await db()).select().from(schema.aiTasks).where(eq(schema.aiTasks.id, taskId));
+    expect(t.status).toBe("succeeded");
+    expect((await runsOf(taskId)).filter((r) => r.agent === "audience_intelligence")).toHaveLength(audienceBefore);
+  });
+
+  it("lets exactly one of several racing workers run a task", async () => {
+    const d = await db();
+    const pf = await preflight(A2);
+    const row = await store.createStrategy(A2.id, ownerId, inputs(), [], pf.profile);
+    const lease = await acquireAiSlot({ userId: ownerId, workspaceId: A2.workspaceId, plan: "agency" }, "strategy_workflow", 900);
+    const [t] = await d.insert(schema.aiTasks).values({ brandId: A2.id, workspaceId: A2.workspaceId, userId: ownerId, kind: "strategy_workflow", strategyId: row.id, steps: SECTION_KEYS.map((k) => ({ id: k, label: k, status: "pending" as const })), input: { leaseId: lease }, runAfter: new Date(0) }).returning();
+    const results = await Promise.all([wf.runTask(t.id), wf.runTask(t.id), wf.runTask(t.id), wf.recoverDueTasks({ wait: true })]);
+    expect(results.slice(0, 3).filter((r) => r === "succeeded")).toHaveLength(1);
+    expect(results.slice(0, 3).filter((r) => r === "claimed_elsewhere")).toHaveLength(2);
+    const runs = await runsOf(t.id);
+    for (const agent of ["audience_intelligence", "content_pillars", "campaign_ideation"]) expect(runs.filter((r) => r.agent === agent), agent).toHaveLength(1);
+    const [done] = await d.select().from(schema.aiTasks).where(eq(schema.aiTasks.id, t.id));
+    expect(done.attempts).toBe(1);
+  });
+
+  it("stops without writing when another worker took over the task (lost claim)", async () => {
+    const d = await db();
+    const pf = await preflight(A2);
+    const row = await store.createStrategy(A2.id, ownerId, inputs(), [], pf.profile);
+    const [t] = await d.insert(schema.aiTasks).values({ brandId: A2.id, workspaceId: A2.workspaceId, userId: ownerId, kind: "strategy_workflow", strategyId: row.id, steps: [{ id: "research", label: "r", status: "pending" }, { id: "audience", label: "a", status: "pending" }], runAfter: new Date(0) }).returning();
+    const provider = llm();
+    const real = provider.structured.bind(provider);
+    vi.spyOn(provider, "structured").mockImplementation(async (req) => {
+      // While the audience agent is thinking, another worker steals the task.
+      if (req.prompt.includes("Build the audience intelligence")) await d.update(schema.aiTasks).set({ claimToken: "someone-else" }).where(eq(schema.aiTasks.id, t.id));
+      return real(req);
+    });
+    expect(await wf.runTask(t.id)).toBe("lost_claim");
+    const doc = store.docOf((await store.getStrategy(A2.id, row.id))!);
+    expect(doc.sections.research).toBeTruthy();
+    expect(doc.sections.audience).toBeUndefined(); // the losing worker's result was not written
+    await d.update(schema.aiTasks).set({ status: "failed" }).where(eq(schema.aiTasks.id, t.id));
+  });
+
+  it("waits for a concurrency slot during recovery without using up an attempt", async () => {
+    const d = await db();
+    const row = await store.createStrategy(A2.id, editorId, inputs(), [], null);
+    const l1 = await acquireAiSlot({ userId: editorId, workspaceId: A2.workspaceId, plan: "agency" }, "x");
+    const l2 = await acquireAiSlot({ userId: editorId, workspaceId: A2.workspaceId, plan: "agency" }, "x");
+    const [t] = await d.insert(schema.aiTasks).values({ brandId: A2.id, workspaceId: A2.workspaceId, userId: editorId, kind: "strategy_workflow", strategyId: row.id, steps: [{ id: "research", label: "r", status: "pending" }], runAfter: new Date(0) }).returning();
+    expect(await wf.runTask(t.id)).toBe("waiting_for_slot");
+    const [w] = await d.select().from(schema.aiTasks).where(eq(schema.aiTasks.id, t.id));
+    expect(w).toMatchObject({ status: "queued", attempts: 0, claimToken: null });
+    expect(w.runAfter.getTime()).toBeGreaterThan(Date.now());
+    await releaseAiSlot(l1);
+    await releaseAiSlot(l2);
+    await d.update(schema.aiTasks).set({ runAfter: new Date() }).where(eq(schema.aiTasks.id, t.id));
+    expect(await wf.runTask(t.id)).toBe("succeeded");
+  });
+
+  it("retries transient service errors automatically and gives up after max attempts", async () => {
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const d = await db();
+    const pf = await preflight(A2);
+    const row = await store.createStrategy(A2.id, ownerId, inputs(), [], pf.profile);
+    const provider = llm();
+    const real = provider.structured.bind(provider);
+    vi.spyOn(provider, "structured").mockImplementation(async (req) => {
+      if (req.prompt.includes("Build the audience intelligence")) throw new Anthropic.APIConnectionError({ message: "socket hang up" });
+      return real(req);
+    });
+    const taskId = await wf.startTask(await access(ownerId, A2), row.id, { sections: ["research", "audience"], inline: true });
+    let [t] = await d.select().from(schema.aiTasks).where(eq(schema.aiTasks.id, taskId));
+    expect(t.status).toBe("queued");
+    expect(t.error).toMatch(/Retrying automatically \(attempt 2 of 3\)/);
+    // Backoff doubles: attempt 2 waits ~60s.
+    await d.update(schema.aiTasks).set({ runAfter: new Date() }).where(eq(schema.aiTasks.id, taskId));
+    expect(await wf.runTask(taskId)).toBe("retrying");
+    [t] = await d.select().from(schema.aiTasks).where(eq(schema.aiTasks.id, taskId));
+    expect(t.runAfter.getTime() - Date.now()).toBeGreaterThan(50_000);
+    await d.update(schema.aiTasks).set({ runAfter: new Date() }).where(eq(schema.aiTasks.id, taskId));
+    expect(await wf.runTask(taskId)).toBe("failed");
+    vi.restoreAllMocks();
+    [t] = await d.select().from(schema.aiTasks).where(eq(schema.aiTasks.id, taskId));
+    expect(t).toMatchObject({ status: "failed", attempts: 3 });
+    expect((await runsOf(taskId)).filter((r) => r.agent === "market_research")).toHaveLength(1);
+    // The user can resume; only the missing section runs.
+    expect(await wf.resumeSections(A2.id, row.id)).toEqual(["audience", "objectives", "strategy", "pillars", "campaigns", "calendar"]);
+  }, 30_000);
 });

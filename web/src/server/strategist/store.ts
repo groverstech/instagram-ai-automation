@@ -83,9 +83,18 @@ export async function activeTask(brandId: string, strategyId: string) {
     .where(and(eq(schema.aiTasks.brandId, brandId), eq(schema.aiTasks.strategyId, strategyId), inArray(schema.aiTasks.status, ["queued", "running"])))
     .orderBy(desc(schema.aiTasks.createdAt))
     .limit(1);
-  if (!t) return null;
-  const beat = (t.heartbeatAt ?? t.createdAt).getTime();
-  return Date.now() - beat > STALE_TASK_MS ? null : t;
+  return t && isLiveTask(t) ? t : null;
+}
+
+/**
+ * A task that is running with a live worker, or that a worker will pick up (queued, or running
+ * with a dead worker but attempts left). Such a task blocks edits and new runs on its strategy.
+ */
+export function isLiveTask(t: { status: string; heartbeatAt: Date | null; createdAt: Date; attempts: number; maxAttempts: number }) {
+  if (t.status === "queued") return t.attempts < t.maxAttempts;
+  if (t.status !== "running") return false;
+  const fresh = Date.now() - (t.heartbeatAt ?? t.createdAt).getTime() <= STALE_TASK_MS;
+  return fresh || t.attempts < t.maxAttempts;
 }
 
 export async function createStrategy(brandId: string, actorId: string, inputs: StrategyInputs, assumptions: string[], profileRef: StrategyDoc["profileRef"]) {
@@ -149,9 +158,9 @@ function markStale(doc: StrategyDoc, key: SectionKey) {
 }
 
 /** Store an AI-generated section (workflow). Downstream sections are flagged as possibly stale. */
-export async function writeAiSection<K extends SectionKey>(brandId: string, id: string, key: K, data: SectionData[K], meta: { runId: string | null; provider: string | null; actorId: string }) {
+export async function writeAiSection<K extends SectionKey>(brandId: string, id: string, key: K, data: SectionData[K], meta: { runId: string | null; provider: string | null; actorId: string; taskId?: string }) {
   return mutate(brandId, id, meta.actorId, { source: "ai", action: `Generated ${SECTION_META[key].label.toLowerCase()}`, sections: [key] }, (doc) => {
-    const env: Envelope<SectionData[K]> = { data, origin: "ai", generatedAt: new Date().toISOString(), runId: meta.runId, provider: meta.provider, editedAt: null, editedBy: null, stale: false };
+    const env: Envelope<SectionData[K]> = { data, origin: "ai", generatedAt: new Date().toISOString(), runId: meta.runId, provider: meta.provider, editedAt: null, editedBy: null, stale: false, taskId: meta.taskId ?? null };
     (doc.sections as Record<string, unknown>)[key] = env;
     markStale(doc, key);
     return { doc };

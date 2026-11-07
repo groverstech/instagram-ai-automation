@@ -303,6 +303,8 @@ export type Envelope<T> = {
   editedBy: string | null;
   /** An upstream section changed after this one was generated. */
   stale: boolean;
+  /** The ai_tasks row that generated it; lets a recovered task skip steps it already finished. */
+  taskId?: string | null;
 };
 
 export type StrategyDoc = {

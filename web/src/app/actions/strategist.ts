@@ -64,7 +64,7 @@ export async function taskStatusAction(brandId: string, taskId: string) {
   return safe(async () => {
     await requireBrand(brandId, "viewer");
     const t = await taskStatus(brandId, Id.parse(taskId));
-    return { id: t.id, status: t.status, steps: t.steps, error: t.error, costUsd: t.costUsd, inputTokens: t.inputTokens, outputTokens: t.outputTokens, webSearches: t.webSearches, strategyId: t.strategyId };
+    return { id: t.id, status: t.status, steps: t.steps, error: t.error, costUsd: t.costUsd, inputTokens: t.inputTokens, outputTokens: t.outputTokens, webSearches: t.webSearches, strategyId: t.strategyId, attempts: t.attempts, maxAttempts: t.maxAttempts, runAfter: t.runAfter, recovering: t.recovering };
   });
 }
 

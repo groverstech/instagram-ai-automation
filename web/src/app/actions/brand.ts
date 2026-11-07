@@ -3,7 +3,8 @@ import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/server/db/client";
-import { setActiveBrand } from "@/server/auth/session";
+import { getSession, setActiveBrand } from "@/server/auth/session";
+import { switchBrandFor } from "@/server/members";
 import { AccessError, requireBrand, requireWorkspaceRole } from "@/server/auth/guard";
 import { storage } from "@/server/storage";
 import { checkUploadForm, extFor } from "@/server/assets";
@@ -130,8 +131,9 @@ export async function deleteAsset(brandId: string, assetId: string) {
 
 export async function switchBrand(brandId: string) {
   return safe(async () => {
-    const { session } = await requireBrand(brandId, "viewer");
-    await setActiveBrand(session.sessionId, brandId);
+    const session = await getSession();
+    if (!session) throw new AccessError("Not signed in.");
+    await switchBrandFor(session, brandId);
     revalidatePath("/", "layout");
   });
 }

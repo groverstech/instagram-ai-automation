@@ -30,5 +30,7 @@ export async function tick() {
     const planned = new Set(recent.map((r) => r.payload.brandId));
     for (const b of brands) if (!planned.has(b.brandId)) await enqueue("sync_metrics", { brandId: b.brandId });
   }
+  // Strategist jobs live in ai_tasks: pick up queued/abandoned ones (runs in the background).
+  await import("../strategist/workflow").then((m) => m.recoverDueTasks()).catch((e) => console.error("[strategist] recovery failed", e));
   return runDueJobs(handlers);
 }

@@ -84,6 +84,10 @@ export async function requireActiveBrand(): Promise<BrandAccess> {
 export async function requireWorkspaceRole(workspaceId: string, min: Role) {
   const session = await getSession();
   if (!session) throw new AccessError("Not signed in.");
+  return requireWorkspaceRoleForUser(session, workspaceId, min);
+}
+
+export async function requireWorkspaceRoleForUser(session: SessionUser, workspaceId: string, min: Role) {
   const db = await getDb();
   const [m] = await db
     .select()

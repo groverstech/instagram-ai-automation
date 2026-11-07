@@ -2,21 +2,26 @@
 import Link from "next/link";
 import { useState } from "react";
 import { format } from "date-fns";
-import { Plus, Trash2 } from "lucide-react";
+import { ArrowLeftRight, Building2, Check, Plus, Trash2 } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { switchBrand } from "@/app/actions/brand";
 import { changeRole, inviteMember, removeMember, setMemberBrands, updateWorkspace } from "@/app/actions/settings";
 import { openBillingPortal, startCheckout } from "@/app/actions/billing";
-import { Badge, Button, Card, CardBody, CardHeader, Field, Input, Notice, PageHeader, Select } from "@/components/ui";
+import { Badge, Button, Card, CardBody, CardHeader, Field, Input, Modal, Notice, PageHeader, Select } from "@/components/ui";
 import { useRun } from "@/components/hooks";
 import { PLANS, type PlanId } from "@/lib/plans";
 import { ROLE_DESCRIPTIONS, roleAtLeast, type Role } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
 type Member = { id: string; role: Role; brandIds: string[] | null; status: string; invitedEmail: string | null; userId: string | null; name: string | null; email: string | null };
+type BrandRow = { id: string; name: string; createdAt: Date; active: boolean; colors: string[]; access: { all: number; scoped: number } };
 
 export function SettingsView(props: {
   role: Role;
   me: string;
   scoped?: boolean;
+  brandLimit: number;
+  canAddBrand: boolean;
   workspace: { id: string; name: string; type: "creator" | "business" | "agency"; plan: string };
   billing: {
     configured: boolean;
@@ -29,7 +34,7 @@ export function SettingsView(props: {
   };
   usage: { brands: number; seats: number; aiRuns: number; socialAccounts: number };
   members: Member[];
-  brands: { id: string; name: string; createdAt: Date }[];
+  brands: BrandRow[];
   integrations: { ai: { provider: string; ready: boolean; model: string }; image: { ready: boolean; provider: string }; embeddings: string; database: string };
 }) {
   const isAdmin = roleAtLeast(props.role, "admin") && !props.scoped;
@@ -37,7 +42,9 @@ export function SettingsView(props: {
   const [type, setType] = useState(props.workspace.type);
   const [email, setEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<Role>("editor");
-  const [inviteScope, setInviteScope] = useState<string>("all");
+  const [inviteScope, setInviteScope] = useState<string[] | null>(null);
+  const [scopeFor, setScopeFor] = useState<Member | "invite" | null>(null);
+  const router = useRouter();
   const isAgency = props.workspace.type === "agency";
   const brandName = (id: string) => props.brands.find((b) => b.id === id)?.name ?? "Unknown brand";
   const { run, busy } = useRun();
@@ -75,12 +82,11 @@ export function SettingsView(props: {
                     <option value="viewer">Viewer</option>
                   </Select>
                   {props.brands.length > 1 || isAgency ? (
-                    <Select value={inviteScope} onChange={(e) => setInviteScope(e.target.value)} className="w-44" aria-label="Brand access">
-                      <option value="all">All brands</option>
-                      {props.brands.map((b) => <option key={b.id} value={b.id}>Only {b.name}</option>)}
-                    </Select>
+                    <Button variant="secondary" onClick={() => setScopeFor("invite")} aria-label="Brand access for the invitation">
+                      <Building2 /> {scopeLabel(inviteScope, brandName, props.brands.length)}
+                    </Button>
                   ) : null}
-                  <Button loading={busy("inv")} disabled={!email} onClick={() => run(() => inviteMember(props.workspace.id, email, inviteRole, inviteScope === "all" ? null : [inviteScope]), { key: "inv", success: "Member added. Pending invites join when they sign up with this email.", onOk: () => setEmail("") })}>
+                  <Button loading={busy("inv")} disabled={!email} onClick={() => run(() => inviteMember(props.workspace.id, email, inviteRole, inviteScope), { key: "inv", success: "Member added. Pending invites join when they sign up with this email.", onOk: () => { setEmail(""); setInviteScope(null); } })}>
                     <Plus /> Invite
                   </Button>
                 </div>
@@ -90,18 +96,12 @@ export function SettingsView(props: {
                   <li key={m.id} className="flex items-center gap-3 py-2.5">
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-[13px] font-medium">{m.name ?? m.invitedEmail}</p>
-                      <p className="truncate text-[11px] text-faint">{m.email ?? m.invitedEmail}{m.status === "invited" ? " · invitation pending" : ""}{m.brandIds ? ` · client access: ${m.brandIds.map(brandName).join(", ")}` : ""}</p>
+                      <p className="truncate text-[11px] text-faint">{m.email ?? m.invitedEmail}{m.status === "invited" ? " · invitation pending" : ""}{m.brandIds ? ` · client access: ${m.brandIds.map(brandName).join(", ")}` : m.role === "owner" || m.role === "admin" ? " · all brands" : ""}</p>
                     </div>
                     {isAdmin && m.userId !== props.me && (m.role === "editor" || m.role === "viewer") && (props.brands.length > 1 || isAgency) ? (
-                      <Select
-                        value={m.brandIds ? m.brandIds[0] : "all"}
-                        onChange={(e) => run(() => setMemberBrands(props.workspace.id, m.id, e.target.value === "all" ? null : [e.target.value]), { success: "Brand access updated" })}
-                        className="h-8 w-36 text-[12px]"
-                        aria-label="Brand access"
-                      >
-                        <option value="all">All brands</option>
-                        {props.brands.map((b) => <option key={b.id} value={b.id}>Only {b.name}</option>)}
-                      </Select>
+                      <Button size="sm" variant="secondary" onClick={() => setScopeFor(m)} aria-label={`Brand access for ${m.name ?? m.invitedEmail}`}>
+                        <Building2 /> {scopeLabel(m.brandIds, brandName, props.brands.length)}
+                      </Button>
                     ) : null}
                     {isAdmin && m.userId !== props.me ? (
                       <Select value={m.role} onChange={(e) => run(() => changeRole(props.workspace.id, m.id, e.target.value as Role), { success: "Role updated" })} className="h-8 w-28 text-[12px]">
@@ -125,17 +125,42 @@ export function SettingsView(props: {
           </Card>
 
           <Card>
-            <CardHeader title="Brands" description={`${props.usage.brands} of ${plan.brands}`} action={isAdmin ? <Link href="/onboarding" className="text-[12px] font-medium text-muted hover:text-ink">+ Add brand</Link> : null} />
+            <CardHeader
+              title="Brands"
+              description={props.scoped ? "The brands you have access to" : `${props.usage.brands} of ${props.brandLimit} on your plan`}
+              action={
+                props.canAddBrand ? (
+                  <Link href="/onboarding" className="inline-flex items-center gap-1 text-[12px] font-medium text-accent hover:text-accent-ink"><Plus className="size-3.5" /> Add brand</Link>
+                ) : isAdmin ? (
+                  <span className="text-[11px] text-faint">Brand limit reached · upgrade to add more</span>
+                ) : null
+              }
+            />
             <CardBody className="pt-3">
               <ul className="divide-y divide-line">
                 {props.brands.map((b) => (
-                  <li key={b.id} className="flex items-center justify-between py-2.5 text-[13px]">
-                    <span className="font-medium">{b.name}</span>
-                    <span className="text-[12px] text-faint">Created {format(b.createdAt, "d MMM yyyy")}</span>
+                  <li key={b.id} className="flex flex-wrap items-center gap-3 py-2.5 text-[13px]">
+                    <span className="grid size-8 shrink-0 place-items-center rounded-lg text-[11px] font-semibold text-white" style={{ background: b.colors[0] ?? "#1b1a17" }}>
+                      {b.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase()}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{b.name}</span>
+                      <span className="block text-[11px] text-faint">
+                        Created {format(new Date(b.createdAt), "d MMM yyyy")}
+                        {!props.scoped ? ` · ${b.access.all + b.access.scoped} member${b.access.all + b.access.scoped === 1 ? "" : "s"} with access${b.access.scoped ? ` (${b.access.scoped} client)` : ""}` : ""}
+                      </span>
+                    </span>
+                    {b.active ? (
+                      <Badge tone="success"><Check /> Current</Badge>
+                    ) : (
+                      <Button size="sm" variant="secondary" loading={busy(`sw-${b.id}`)} onClick={() => run(() => switchBrand(b.id), { key: `sw-${b.id}`, success: `Switched to ${b.name}`, onOk: () => router.refresh() })}>
+                        <ArrowLeftRight /> Switch
+                      </Button>
+                    )}
                   </li>
                 ))}
               </ul>
-              <p className="mt-3 text-[12px] text-faint">Each brand keeps separate memory, assets, campaigns and social connections.</p>
+              <p className="mt-3 text-[12px] text-faint">Each brand keeps separate memory, assets, strategies, campaigns and social connections. Switching changes the brand every page works on.</p>
             </CardBody>
           </Card>
         </div>
@@ -165,7 +190,64 @@ export function SettingsView(props: {
           </Card>
         </div>
       </div>
+      {scopeFor ? (
+        <BrandAccessModal
+          title={scopeFor === "invite" ? "Brand access for the invitation" : `Brand access · ${scopeFor.name ?? scopeFor.invitedEmail}`}
+          brands={props.brands}
+          initial={scopeFor === "invite" ? inviteScope : scopeFor.brandIds}
+          saving={busy("scope")}
+          onClose={() => setScopeFor(null)}
+          onSave={(ids) => {
+            if (scopeFor === "invite") {
+              setInviteScope(ids);
+              setScopeFor(null);
+            } else run(() => setMemberBrands(props.workspace.id, scopeFor.id, ids), { key: "scope", success: "Brand access updated", onOk: () => setScopeFor(null) });
+          }}
+        />
+      ) : null}
     </div>
+  );
+}
+
+function scopeLabel(ids: string[] | null, name: (id: string) => string, total: number) {
+  if (!ids) return "All brands";
+  if (ids.length === 1) return `Only ${name(ids[0])}`;
+  return `${ids.length} of ${total} brands`;
+}
+
+/** Choose "all brands" or a specific set of brands for a client user. */
+function BrandAccessModal({ title, brands, initial, saving, onClose, onSave }: { title: string; brands: BrandRow[]; initial: string[] | null; saving: boolean; onClose: () => void; onSave: (ids: string[] | null) => void }) {
+  const [all, setAll] = useState(initial === null);
+  const [sel, setSel] = useState<string[]>(initial ?? []);
+  return (
+    <Modal open onClose={onClose} title={title}>
+      <div className="space-y-4 p-5">
+        <div className="space-y-2">
+          <label className="flex items-start gap-2.5 rounded-xl border border-line p-3 text-[13px]">
+            <input type="radio" name="scope" className="mt-0.5" checked={all} onChange={() => setAll(true)} />
+            <span><span className="font-medium">All brands</span><span className="block text-[12px] text-muted">Including brands added later. For your own team.</span></span>
+          </label>
+          <label className="flex items-start gap-2.5 rounded-xl border border-line p-3 text-[13px]">
+            <input type="radio" name="scope" className="mt-0.5" checked={!all} onChange={() => setAll(false)} />
+            <span><span className="font-medium">Only selected brands</span><span className="block text-[12px] text-muted">For clients: they see nothing from other brands.</span></span>
+          </label>
+        </div>
+        {!all ? (
+          <fieldset className="space-y-1.5" aria-label="Brands">
+            {brands.map((b) => (
+              <label key={b.id} className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-[13px] hover:bg-sunken">
+                <input type="checkbox" checked={sel.includes(b.id)} onChange={(e) => setSel(e.target.checked ? [...sel, b.id] : sel.filter((x) => x !== b.id))} />
+                {b.name}
+              </label>
+            ))}
+          </fieldset>
+        ) : null}
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="accent" loading={saving} disabled={!all && !sel.length} onClick={() => onSave(all ? null : sel)}>Save access</Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

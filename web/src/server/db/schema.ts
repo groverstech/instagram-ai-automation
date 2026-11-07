@@ -256,6 +256,13 @@ export const aiTasks = pgTable(
     strategyId: text("strategy_id"),
     status: text("status").$type<"queued" | "running" | "succeeded" | "failed">().notNull().default("queued"),
     steps: jsonb("steps").$type<AiTaskStep[]>().notNull().default([]),
+    /** Persistent job state: each claim increments attempts; a task is retried up to maxAttempts. */
+    attempts: integer("attempts").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    /** Random token of the worker that currently owns the task; writes check it. */
+    claimToken: text("claim_token"),
+    /** Not claimable before this time (retry backoff). */
+    runAfter: timestamp("run_after", { withTimezone: true }).notNull().defaultNow(),
     input: jsonb("input").$type<Record<string, unknown>>().notNull().default({}),
     inputTokens: integer("input_tokens").notNull().default(0),
     outputTokens: integer("output_tokens").notNull().default(0),
@@ -267,7 +274,7 @@ export const aiTasks = pgTable(
     finishedAt: timestamp("finished_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
-  (t) => [index("ai_tasks_brand_idx").on(t.brandId, t.createdAt), index("ai_tasks_strategy_idx").on(t.strategyId)],
+  (t) => [index("ai_tasks_brand_idx").on(t.brandId, t.createdAt), index("ai_tasks_strategy_idx").on(t.strategyId), index("ai_tasks_due_idx").on(t.status, t.runAfter)],
 );
 
 export const campaigns = pgTable("campaigns", {
@@ -434,6 +441,8 @@ export const agentRuns = pgTable(
     brandId: text("brand_id").references(() => brands.id, { onDelete: "cascade" }),
     userId: text("user_id"),
     parentId: text("parent_id"),
+    /** The ai_tasks row this call ran for (strategist workflows); task totals are summed from here. */
+    taskId: text("task_id"),
     agent: text("agent").notNull(),
     task: text("task").notNull(),
     status: text("status").$type<"running" | "succeeded" | "failed">().notNull().default("running"),
@@ -448,7 +457,7 @@ export const agentRuns = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
   },
-  (t) => [index("runs_brand_idx").on(t.brandId, t.startedAt)],
+  (t) => [index("runs_brand_idx").on(t.brandId, t.startedAt), index("runs_task_idx").on(t.taskId)],
 );
 
 export const jobs = pgTable(

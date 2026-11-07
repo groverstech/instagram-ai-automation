@@ -35,6 +35,19 @@ export class AIRefusalError extends Error {}
 /** The model responded, but the output was unusable (truncated, invalid JSON, wrong shape). */
 export class AIOutputError extends Error {}
 
+/**
+ * Billed usage travels with an error when the provider returned a response we then rejected
+ * (refusal, truncation, invalid output). Errors with no response (network, 5xx) carry none.
+ */
+const USAGE = Symbol.for("brandpilot.aiUsage");
+export function attachUsage<E>(e: E, usage: Usage | undefined): E {
+  if (usage && e && typeof e === "object" && !(USAGE in (e as object))) Object.defineProperty(e, USAGE, { value: usage, enumerable: false });
+  return e;
+}
+export function usageFromError(e: unknown): Usage | undefined {
+  return e && typeof e === "object" ? ((e as Record<symbol, Usage | undefined>)[USAGE] ?? undefined) : undefined;
+}
+
 export interface LLMProvider {
   readonly name: string;
   structured<T>(req: StructuredRequest<T>): Promise<StructuredResult<T>>;
@@ -95,11 +108,12 @@ const anthropicProvider: LLMProvider = {
       system: req.system,
       messages: [{ role: "user", content: userContent(req.prompt, req.images) }],
     });
+    const usage = usageOf(res);
     if (res.stop_reason === "refusal") {
-      throw new AIRefusalError("The AI declined this request. Try rephrasing, or remove content that may be sensitive.");
+      throw attachUsage(new AIRefusalError("The AI declined this request. Try rephrasing, or remove content that may be sensitive."), usage);
     }
     if (res.stop_reason === "max_tokens") {
-      throw new AIOutputError("The AI response was cut off before it finished. Please try again.");
+      throw attachUsage(new AIOutputError("The AI response was cut off before it finished. Please try again."), usage);
     }
     const text = res.content
       .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
@@ -109,11 +123,11 @@ const anthropicProvider: LLMProvider = {
     try {
       json = JSON.parse(text);
     } catch {
-      throw new AIOutputError("The AI returned an incomplete response. Please try again.");
+      throw attachUsage(new AIOutputError("The AI returned an incomplete response. Please try again."), usage);
     }
     const parsed = req.schema.safeParse(json);
-    if (!parsed.success) throw new AIOutputError("The AI returned output that didn't match the expected format. Please try again.");
-    return { data: parsed.data, usage: usageOf(res), provider: `anthropic:${res.model}` };
+    if (!parsed.success) throw attachUsage(new AIOutputError("The AI returned output that didn't match the expected format. Please try again."), usage);
+    return { data: parsed.data, usage, provider: `anthropic:${res.model}` };
   },
   async research(req) {
     const res = await anthropic().beta.messages.create({
@@ -127,7 +141,7 @@ const anthropicProvider: LLMProvider = {
       tools: [{ type: "web_search_20260209", name: "web_search", max_uses: req.maxSearches ?? 5 }],
       messages: [{ role: "user", content: req.prompt }],
     });
-    if (res.stop_reason === "refusal") throw new AIRefusalError("The AI declined this research request.");
+    if (res.stop_reason === "refusal") throw attachUsage(new AIRefusalError("The AI declined this research request."), usageOf(res));
     const sources = new Set<string>();
     const results = new Map<string, ResearchSource>();
     const cited = new Set<string>();

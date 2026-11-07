@@ -19,7 +19,7 @@ import { NewStrategyWizard, type PreflightProps } from "./wizard";
 import { PillarShare } from "./charts";
 
 type Step = { id: string; label: string; status: "pending" | "running" | "done" | "failed" | "skipped"; error?: string };
-type Task = { id: string; status: "queued" | "running" | "succeeded" | "failed"; steps: Step[]; error: string | null; costUsd: number; kind?: string };
+type Task = { id: string; status: "queued" | "running" | "succeeded" | "failed"; steps: Step[]; error: string | null; costUsd: number; kind?: string; attempts?: number; maxAttempts?: number; runAfter?: Date | string; recovering?: boolean };
 
 type Props = {
   brand: { id: string; name: string; platforms: string[] };
@@ -313,7 +313,13 @@ function Progress({ task, canResume, onResume, resuming }: { task: Task; canResu
       <div className="ai-gradient flex flex-wrap items-center justify-between gap-2 px-5 py-3">
         <p className="flex items-center gap-2 text-[13px] font-semibold">
           {task.status === "failed" ? <XCircle className="size-4 text-danger" /> : <Loader2 className="size-4 animate-spin" />}
-          {task.status === "failed" ? "The strategist stopped" : `The strategist team is working · ${done}/${steps.length}`}
+          {task.status === "failed"
+            ? "The strategist stopped"
+            : task.recovering
+              ? `Recovering after an interruption · ${done}/${steps.length} saved`
+              : task.status === "queued" && (task.attempts ?? 0) > 0
+                ? `Retrying automatically (attempt ${(task.attempts ?? 0) + 1} of ${task.maxAttempts ?? 3})`
+                : `The strategist team is working · ${done}/${steps.length}`}
         </p>
         {task.costUsd > 0 ? <span className="text-[12px] text-ink-2/70">AI cost so far ≈ {money(task.costUsd)}</span> : null}
       </div>
@@ -339,7 +345,13 @@ function Progress({ task, canResume, onResume, resuming }: { task: Task; canResu
             ) : null}
           </div>
         ) : (
-          <p className="text-[12px] text-muted">You can keep reading finished sections or leave this page; progress is saved as each agent finishes.</p>
+          <p className="text-[12px] text-muted">
+            {task.recovering
+              ? "The server restarted while the strategist was working. Finished sections are saved and the remaining ones are being picked up automatically; nothing is generated twice."
+              : task.status === "queued" && (task.attempts ?? 0) > 0
+                ? `${task.error ?? "A temporary AI service problem interrupted this run."} Next try ${task.runAfter ? `at ${new Date(task.runAfter).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}` : "shortly"}.`
+                : "You can keep reading finished sections or leave this page; progress is saved as each agent finishes, and the job continues even if the server restarts."}
+          </p>
         )}
       </CardBody>
     </Card>

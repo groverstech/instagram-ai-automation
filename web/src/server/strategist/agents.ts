@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { addDays, format as fmt, parseISO } from "date-fns";
 import type { z } from "zod";
 import { getDb, schema } from "../db/client";
-import { AIOutputError, AIRefusalError, isServiceError, llm, mockActive, type Effort, type Usage } from "../ai/llm";
+import { AIOutputError, AIRefusalError, attachUsage, isServiceError, llm, mockActive, type Effort, type Usage } from "../ai/llm";
 import { addUsage } from "../ai/pricing";
 import { AGENTS, type AgentId } from "../agents/registry";
 import { runAgent, type RunScope } from "../agents/orchestrator";
@@ -70,7 +70,12 @@ async function call<T>(
     { strategyId: c.strategyId },
     async () => {
       const out = await llm().structured({ system: AGENTS[agent].system, prompt: req.prompt, schema: req.schema, effort: req.effort ?? AGENTS[agent].effort, maxTokens: req.maxTokens, mock: req.mock });
-      return { ...out, data: req.validate ? req.validate(out.data) : out.data };
+      try {
+        return { ...out, data: req.validate ? req.validate(out.data) : out.data };
+      } catch (e) {
+        // The response was billed even though we rejected it.
+        throw attachUsage(e, out.usage);
+      }
     },
     { retries: 1 },
   );

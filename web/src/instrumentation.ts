@@ -8,6 +8,12 @@ export async function register() {
     const { log } = await import("./server/log");
     const g = globalThis as unknown as { __bpTicker?: NodeJS.Timeout };
     if (g.__bpTicker) return;
+    // Recover strategist jobs interrupted by the previous process shortly after start.
+    setTimeout(() => {
+      import("./server/strategist/workflow")
+        .then((m) => m.recoverDueTasks())
+        .catch((e) => log.error("strategist.boot_recovery_failed", { error: e instanceof Error ? e.message : String(e) }));
+    }, 5_000);
     g.__bpTicker = setInterval(() => {
       tick().catch((e) => log.error("jobs.tick_failed", { error: e instanceof Error ? e.message : String(e) }));
     }, 30_000);
