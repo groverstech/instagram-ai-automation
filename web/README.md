@@ -90,8 +90,3 @@ npm run build       # production build (type-checks)
 npm test            # integration tests: full agent pipeline on in-memory Postgres + pgvector
 npm run typecheck
 ```
-
-## Legacy prototype
-
-The Python scripts at the repository root (`main.py`, `ai/`, `meta/`, …) are the original
-single-account Instagram prototype. The platform in `web/` replaces them.

@@ -1,6 +1,6 @@
 import "server-only";
 import { and, desc, eq } from "drizzle-orm";
-import { addDays, format as fmt, startOfMonth, endOfMonth, parseISO } from "date-fns";
+import { addDays, format as fmt, parseISO } from "date-fns";
 import { getDb, schema } from "../db/client";
 import { llm } from "../ai/llm";
 import { AGENTS } from "./registry";
@@ -237,5 +237,3 @@ function mockIdeas(brand: Brand): ContentIdeas {
   };
 }
 
-export const _test = { toDate, mockCalendar };
-export { startOfMonth, endOfMonth };
