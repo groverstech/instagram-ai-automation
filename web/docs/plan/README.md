@@ -1,7 +1,11 @@
 # BrandPilot: production and Phase 4 plan
 
 **Status:** planning only. Nothing in this folder is implemented yet. Phase 4 work starts only
-after explicit approval, and each major phase ships as its own pull request.
+after explicit approval, and each major deliverable ships as its own pull request.
+
+**Start here:** [Phase 4 plan: Production Readiness & Platform Foundation](PHASE4_PLAN.md). It is
+the plan awaiting approval: 7 PRs, with dependencies, migrations, testing and acceptance
+criteria. Documents 1–9 below are the detailed reference it builds on.
 
 **Product vision (approved):** an AI marketing operating system.
 
@@ -21,7 +25,7 @@ settings.
 | 3 | Three autonomy levels (**Advisor, Assisted, Autonomous**); **human approval is the default**. The brand owner controls permissions, categories, frequency, schedules, budget and emergency pause. |
 | 4 | **Credit-based AI consumption.** Monthly credits per plan; separate text, image and video tracking; organisation and brand limits; hard caps; alerts at 70/90/100%; paid top-ups; an admin cost dashboard; failed and retried requests tracked. AI cost target ≈15–20% of subscription revenue. **Nothing hardcoded.** |
 | 5 | **Anthropic** for brand intelligence, strategy and content; **OpenAI** for images; a modular provider layer. Credentials come through secure environment configuration. Until they are configured, clearly labelled mock mode, and real-provider validation is reported as **pending**. |
-| 6 | PR #6 continues under monitoring and won't be merged without approval. |
+| 6 | PR #6 (Phase 3) approved and merged into `main` on 8 Nov 2026 (`f47e245`). |
 
 ## Documents
 

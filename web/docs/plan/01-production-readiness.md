@@ -4,7 +4,7 @@
 
 | Area | State |
 |---|---|
-| Brand intelligence, strategist, creative studio (PR #6, open) | Built and tested in demo mode; **real-provider validation pending** (no credentials yet) |
+| Brand intelligence, strategist, creative studio (PR #6, merged into `main` as `f47e245`) | Built and tested in demo mode; **real-provider validation pending** (no credentials yet) |
 | Multi-tenant auth, roles, client (brand-scoped) users | Built; isolation tested in the browser |
 | Persistent job engine (claim, heartbeat, recovery, retries) | Built; recovery tested |
 | Cost ledger (per agent run, failed and retried attempts) | Built; tokens priced; images priced from configuration |
