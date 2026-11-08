@@ -380,7 +380,7 @@ function DesignTab(p: { brandId: string; creative: StudioCreative; canEdit: bool
         <div className="space-y-2 rounded-xl border border-line p-3">
           <p className="text-[12px] font-medium">Visual</p>
           <div className="flex flex-wrap gap-2">
-            <Select value={source} onChange={(e) => setSource(e.target.value as VisualSourceId)} className="w-40" aria-label="Visual source">
+            <Select value={source} onChange={(e) => setSource(e.target.value as VisualSourceId)} className="w-auto min-w-40" aria-label="Visual source">
               <option value="ai" disabled={!p.imageProvider.ready}>
                 {p.imageProvider.demo ? "AI image (demo placeholder)" : `AI image${p.imageProvider.ready ? "" : " (not configured)"}`}
               </option>
@@ -409,7 +409,7 @@ function DesignTab(p: { brandId: string; creative: StudioCreative; canEdit: bool
               ))}
             </div>
           ) : null}
-          {source === "ai" && !p.imageProvider.priced ? <p className="text-[11px] text-faint">Image generations are counted in usage; no price is configured (IMAGE_PRICE_USD), so they show as unpriced.</p> : null}
+          {source === "ai" && !p.imageProvider.priced && !p.imageProvider.demo ? <p className="text-[11px] text-faint">Image generations are counted in usage; no price is configured (IMAGE_PRICE_USD), so they show as unpriced.</p> : null}
         </div>
       ) : null}
 

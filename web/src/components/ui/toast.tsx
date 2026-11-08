@@ -22,7 +22,7 @@ export function Toaster() {
     return () => window.removeEventListener("bp:toast", h);
   }, []);
   return (
-    <div className="pointer-events-none fixed left-1/2 top-4 z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
+    <div className="pointer-events-none fixed left-1/2 top-[max(1rem,calc(env(safe-area-inset-top)+0.5rem))] z-[60] flex -translate-x-1/2 flex-col items-center gap-2">
       <AnimatePresence>
         {items.map((t) => (
           <motion.div key={t.id} initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="pointer-events-auto flex max-w-md items-start gap-2 rounded-xl border border-line bg-surface px-3.5 py-2.5 text-[13px] shadow-pop">

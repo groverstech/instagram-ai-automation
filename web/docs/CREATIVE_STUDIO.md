@@ -257,6 +257,9 @@ a few Claude calls), and keep its `report.json`.
   copy haven't been run (no keys were available).
 - **No offline use:** the PWA has a manifest and icons but no service worker, so the app needs a
   connection.
+- **Standalone display mode:** it couldn't be emulated in headless Chromium. The safe-area
+  behaviour of an installed app was tested instead. Check once on a real installed device before
+  launch.
 - **Slow first render:** the first render on a cold server takes several seconds while fonts load.
   The preview shows "Rendering…".
 - **Image dimensions:** OpenAI returns 1024×1024, 1024×1536 or 1536×1024 images. The renderer
@@ -285,6 +288,20 @@ a few Claude calls), and keep its `report.json`.
 | `src/server/creative-routes.test.ts` | image and ZIP routes with real sessions |
 | `src/server/live/real-providers.live.ts` | **live, paid**: real image generation, renders in all formats, real vision review and copy, invalid-key handling. `npm run test:live` only; never in CI. |
 
-Browser E2E (Playwright, desktop 1440 px, Pixel 7, iPad Mini, PWA standalone): screenshots in
-`docs/screenshots/creative-studio/`. All of them were taken in **demo mode**, with synthetic
-product photos.
+Browser E2E (Playwright) on desktop 1440 px, Pixel 7 and iPad Mini, and as an installed PWA:
+
+| Suite | Result (8 Nov 2026) |
+|---|---|
+| Phase 2 strategist regression | all checks pass, no page errors, no mobile overflow |
+| Creative Studio end to end, fresh DB | photo upload and approval; brand-photo batch; 5-slide carousel; ZIP; copy; brand check, then stale and re-run; approve and add to calendar; variation; calendar → linked creatives; isolation (anonymous and other-org 403); mobile with no overflow; no page errors |
+| QA in demo mode | demo AI image and review labelled; PNG download in all 12 formats at exact size; carousel ZIP and slide download; bad slide or format → 400; deleted creative → 404; manifest and icons; PWA layouts |
+
+**PWA.** Headless Chromium can't emulate `display-mode: standalone`. What changes in an installed
+app is the safe-area insets, since the app uses `viewport-fit=cover`. The tests therefore emulate a
+48 px notch and a 34 px home indicator through CDP. That found a real bug, now fixed: dialogs,
+toasts, the assistant button and panel, the calendar post panel and the onboarding header sat
+under the notch or the home indicator. Dialog close buttons were at 32 px, under a 48 px notch,
+and couldn't be tapped. All of them now respect the insets, and the test asserts it.
+
+Screenshots are in `docs/screenshots/creative-studio/`. All of them were taken in **demo mode**,
+with synthetic product photos, so they show the app working, not real AI output.
