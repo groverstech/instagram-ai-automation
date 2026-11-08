@@ -45,6 +45,8 @@ worker. These are the requirements for running it safely with real customers.
 | `OPENAI_IMAGE_MODEL` | Image model (default `gpt-image-1`). |
 | `IMAGE_PRICE_USD`, `IMAGE_PRICE_USD_1024X1024` / `_1024X1536` / `_1536X1024` | Price per generated image for cost reporting. Unset → images are counted but shown as unpriced, never guessed. |
 | `CREATIVE_BRAND_CHECK` | `off` skips the Claude vision review in the brand consistency check (deterministic checks still run; the UI says so). |
+
+**Before enabling AI images in production**, run the live provider suite once with the production keys: `npm run test:live` (real, paid calls: about one image and a few Claude calls; never run in CI). It refuses to run in demo mode, and reports a provider without a key as `not_run`. See `docs/CREATIVE_STUDIO_REAL_AI_TEST_PLAN.md` for the full validation plan, and `docs/CREATIVE_STUDIO.md` for the current verification status.
 | `STORAGE_DIR` | Upload directory (default `./.data/files`). |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_GROWTH`, `STRIPE_PRICE_AGENCY` | Billing. |
 | `META_APP_ID`/`SECRET`, `LINKEDIN_*`, `GOOGLE_*`, `PINTEREST_*`, `TIKTOK_*` | Social platform OAuth apps. |

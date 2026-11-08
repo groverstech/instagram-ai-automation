@@ -205,7 +205,11 @@ function GenerateForm(p: {
       id: "ai",
       title: "AI image",
       icon: <Sparkles className="size-4" />,
-      body: p.imageProvider.ready ? `Generated from the art direction (${p.imageProvider.provider}).${p.imageProvider.priced ? "" : " Image cost is counted but unpriced."}` : "",
+      body: p.imageProvider.demo
+        ? "Demo mode: makes a labelled placeholder. No image API is called."
+        : p.imageProvider.ready
+          ? `Generated from the art direction (${p.imageProvider.provider}).${p.imageProvider.priced ? "" : " Image cost is counted but unpriced."}`
+          : "",
       disabled: p.imageProvider.ready ? undefined : "No image provider is configured on this server (OPENAI_API_KEY).",
     },
     {

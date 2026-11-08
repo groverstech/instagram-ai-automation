@@ -1,4 +1,5 @@
 "use server";
+import { pruneCreativeFiles } from "@/server/creative/visuals";
 import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { parseISO, startOfDay, addDays } from "date-fns";
@@ -129,7 +130,8 @@ export async function deleteCreativeAction(brandId: string, creativeId: string) 
   return safe(async () => {
     await requireBrand(brandId, "editor");
     const db = await getDb();
-    await db.delete(schema.creatives).where(and(eq(schema.creatives.id, creativeId), eq(schema.creatives.brandId, brandId)));
+    const [gone] = await db.delete(schema.creatives).where(and(eq(schema.creatives.id, creativeId), eq(schema.creatives.brandId, brandId))).returning();
+    if (gone) await pruneCreativeFiles(gone, null); // its stored visuals go with it
     revalidatePath("/creative-studio");
   });
 }

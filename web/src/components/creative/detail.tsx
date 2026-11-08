@@ -119,9 +119,9 @@ export function CreativeDetail(p: {
             </Notice>
           ) : null}
           <p className="text-[12px] text-muted">
-            {visualLabel(creative.visualSource)}
+            {creative.visualSource === "ai" && creative.imageProvider === "mock" && creative.hasImage ? "Demo image · no AI provider was called" : visualLabel(creative.visualSource)}
             {creative.visualSource === "ai" && !creative.hasImage && !creative.imageError ? " · not generated yet" : ""}
-            {creative.imageProvider && creative.visualSource === "ai" && creative.hasImage ? ` · ${creative.imageProvider}` : ""}
+            {creative.imageProvider && creative.imageProvider !== "mock" && creative.visualSource === "ai" && creative.hasImage ? ` · ${creative.imageProvider}` : ""}
           </p>
         </div>
 
@@ -382,7 +382,7 @@ function DesignTab(p: { brandId: string; creative: StudioCreative; canEdit: bool
           <div className="flex flex-wrap gap-2">
             <Select value={source} onChange={(e) => setSource(e.target.value as VisualSourceId)} className="w-40" aria-label="Visual source">
               <option value="ai" disabled={!p.imageProvider.ready}>
-                AI image{p.imageProvider.ready ? "" : " (not configured)"}
+                {p.imageProvider.demo ? "AI image (demo placeholder)" : `AI image${p.imageProvider.ready ? "" : " (not configured)"}`}
               </option>
               <option value="brand_photo" disabled={!p.photos.length}>
                 Brand photo{p.photos.length ? "" : " (none approved)"}
@@ -582,7 +582,7 @@ function CheckTab({ brandId, creative, canEdit }: { brandId: string; creative: S
         <div className="text-[12px] text-muted">
           <p>{check.blocking ? "Blocking issues: approval needs an admin override." : "No blocking issues."}</p>
           <p>
-            {check.mode === "full" ? "Automated checks + vision review" : "Automated checks only"} · {format(new Date(check.checkedAt), "d MMM HH:mm")}
+            {check.mode !== "full" ? "Automated checks only" : check.reviewer?.provider === "mock" ? "Automated checks + demo review (mock AI)" : `Automated checks + vision review${check.reviewer ? ` (${check.reviewer.model})` : ""}`} · {format(new Date(check.checkedAt), "d MMM HH:mm")}
           </p>
         </div>
         <div className="ml-auto">{rerun}</div>
@@ -603,7 +603,7 @@ function CheckTab({ brandId, creative, canEdit }: { brandId: string; creative: S
 
       {review ? (
         <div className="space-y-2">
-          <p className="text-[12px] font-medium text-ink-2">Vision review · {review.score}/100</p>
+          <p className="text-[12px] font-medium text-ink-2">{check.reviewer?.provider === "mock" ? "Demo review (mock AI, not a real review)" : "Vision review"} · {review.score}/100</p>
           <p className="text-[13px]">{review.summary}</p>
           {review.issues.length ? (
             <ul className="space-y-1.5">

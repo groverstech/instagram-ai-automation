@@ -10,7 +10,7 @@ import { UserFacingError } from "@/server/jobs/engine";
 import { creativeTaskStatus, produceFromCalendar, startCreativeBatch } from "@/server/creative/jobs";
 import { writeCreativeCopy, editCreativeCopy } from "@/server/creative/copy";
 import { runBrandCheck } from "@/server/creative/brand-check";
-import { assertBrandPhoto, generateVisual } from "@/server/creative/visuals";
+import { assertBrandPhoto, generateVisual, pruneCreativeFiles } from "@/server/creative/visuals";
 import { FORMAT_IDS, OBJECTIVES, STYLE_IDS } from "@/lib/domain";
 
 const Id = z.string().min(1).max(64);
@@ -90,7 +90,12 @@ export async function setVisualSourceAction(brandId: string, creativeId: string,
       .set({ visualSource, sourceAssetId: visualSource === "brand_photo" ? (sourceAssetId ?? null) : null, imagePath: null, imageError: null, brandCheck: cur.brandCheck ? { ...cur.brandCheck, stale: true } : null, updatedAt: new Date() })
       .where(eq(schema.creatives.id, creativeId));
     const updated = await own(brandId, creativeId);
-    await guardedAi(access, "ai_heavy", () => generateVisual({ brandId, userId: access.session.user.id }, access.brand, updated));
+    try {
+      await guardedAi(access, "ai_heavy", () => generateVisual({ brandId, userId: access.session.user.id }, access.brand, updated));
+    } finally {
+      // The previous visual was replaced above (or cleared, if generation failed): drop its files.
+      await pruneCreativeFiles(cur, await own(brandId, creativeId));
+    }
     done();
   });
 }

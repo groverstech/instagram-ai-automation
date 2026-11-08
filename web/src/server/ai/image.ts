@@ -1,4 +1,5 @@
 import "server-only";
+import { mockActive } from "./mode";
 
 /**
  * Image generation providers (modular: add a provider here without touching callers).
@@ -61,16 +62,35 @@ const openaiImages: ImageProvider = {
   },
 };
 
+/**
+ * Demo mode only: a clearly labelled placeholder so the AI-image flow can be demonstrated
+ * without calling (or paying) an image API. It never runs outside AI_PROVIDER=mock.
+ */
+export const MOCK_IMAGE_PROVIDER = "mock";
+const mockImages: ImageProvider = {
+  name: MOCK_IMAGE_PROVIDER,
+  model: "mock",
+  async generate(_prompt, size) {
+    const [w, h] = size.split("x").map(Number);
+    const stripes = Array.from({ length: Math.ceil((w + h) / 60) }, (_, i) => `<path d="M${i * 60 - h} ${h} L${i * 60} 0" stroke="#d9d4cc" stroke-width="18"/>`).join("");
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}"><rect width="100%" height="100%" fill="#ebe7e0"/>${stripes}<rect x="${w / 2 - 330}" y="${h / 2 - 70}" width="660" height="140" rx="18" fill="#1f1d1a"/><text x="50%" y="${h / 2 - 8}" font-family="sans-serif" font-size="44" font-weight="700" fill="#ffffff" text-anchor="middle">DEMO IMAGE</text><text x="50%" y="${h / 2 + 40}" font-family="sans-serif" font-size="26" fill="#d9d4cc" text-anchor="middle">no AI image provider was called</text></svg>`;
+    const { default: sharp } = await import("sharp");
+    return { data: await sharp(Buffer.from(svg)).png().toBuffer(), mime: "image/png", model: "mock", size };
+  },
+};
+
 export function imageProvider(): ImageProvider | null {
   const p = (process.env.IMAGE_PROVIDER ?? "openai").toLowerCase();
   if (p === "none") return null;
+  // Demo mode never calls a paid image API, even when a key is configured.
+  if (mockActive()) return mockImages;
   if (p === "openai") return process.env.OPENAI_API_KEY ? openaiImages : null;
   return null;
 }
 
 export function imageStatus() {
   const p = imageProvider();
-  return { ready: Boolean(p), provider: p?.name ?? "none" };
+  return { ready: Boolean(p), provider: p?.name ?? "none", demo: p?.name === MOCK_IMAGE_PROVIDER };
 }
 
 /**

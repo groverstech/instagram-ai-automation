@@ -39,7 +39,7 @@ export type StudioTask = {
   createdAt?: Date;
 };
 export type StudioPhoto = { id: string; name: string; kind: string };
-export type ImageProviderInfo = { ready: boolean; provider: string; priced: boolean };
+export type ImageProviderInfo = { ready: boolean; provider: string; priced: boolean; demo?: boolean };
 
 export const LOGO_PLACEMENTS: [LogoPlacementId, string][] = [
   ["top_left", "Top left"],

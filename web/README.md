@@ -98,5 +98,6 @@ npm run dev         # development server
 npm run build       # production build (type-checks)
 npm test            # integration tests: agents, brand intelligence, billing on in-memory Postgres + pgvector
 npm run lint        # ESLint (next/core-web-vitals + TypeScript)
+npm run test:live   # LIVE, paid real-provider checks (OpenAI images, Claude); never in CI. See docs/CREATIVE_STUDIO_REAL_AI_TEST_PLAN.md
 npm run typecheck
 ```

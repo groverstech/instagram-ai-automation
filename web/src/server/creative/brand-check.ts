@@ -1,7 +1,8 @@
 import "server-only";
 import { and, eq } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
-import { llm } from "../ai/llm";
+import { aiStatus, llm, mockActive } from "../ai/llm";
+import { MOCK_IMAGE_PROVIDER } from "../ai/image";
 import { runAgent, type RunScope } from "../agents/orchestrator";
 import { buildContext } from "../agents/context";
 import { BrandReview, type CreativeConcept } from "../agents/schemas";
@@ -21,6 +22,8 @@ export type BrandCheck = {
   modeNote?: string;
   checks: DeterministicCheck[];
   review: BrandReview | null;
+  /** Who produced `review`: the real model, or the demo stand-in (never presented as a real review). */
+  reviewer?: { provider: "anthropic" | "mock"; model: string } | null;
   checkedAt: string;
   runId: string | null;
   /** The creative changed after this check. */
@@ -100,6 +103,7 @@ export function deterministicChecks(creative: Creative, brand: Brand, hasLogo: b
   if (creative.visualSource === "typographic") out.push({ id: "visual", label: "Visual", status: "info", detail: "Type-led layout (no photo)." });
   else if (creative.imageError) out.push({ id: "visual", label: "Visual", status: "fail", detail: `The visual failed: ${creative.imageError}` });
   else if (!creative.imagePath) out.push({ id: "visual", label: "Visual", status: "warn", detail: "The visual hasn't been generated yet." });
+  else if (creative.imageProvider === MOCK_IMAGE_PROVIDER) out.push({ id: "visual", label: "Visual", status: "warn", detail: "Demo placeholder (mock mode): no AI image was generated. Configure an image provider to produce the real visual." });
   else out.push({ id: "visual", label: "Visual", status: "pass", detail: creative.visualSource === "brand_photo" ? "Uses an approved brand photo." : "AI-generated image from the art direction." });
 
   if (creative.kind === "carousel") {
@@ -120,6 +124,7 @@ export async function runBrandCheck(scope: RunScope, brand: Brand, creative: Cre
   let review: BrandReview | null = null;
   let runId: string | null = null;
   let mode: BrandCheck["mode"] = "full";
+  let reviewer: BrandCheck["reviewer"] = null;
   let modeNote: string | undefined;
 
   if (process.env.CREATIVE_BRAND_CHECK === "off") {
@@ -163,11 +168,13 @@ Look at the image. Judge palette, typography, logo use, imagery, layout, legibil
       }),
     );
     review = { ...r.data, score: Math.max(0, Math.min(100, Math.round(r.data.score))) };
+    reviewer = mockActive() ? { provider: "mock", model: "mock" } : { provider: "anthropic", model: aiStatus().model };
+    if (mockActive()) modeNote = "Demo mode: the vision review is a mock stand-in, not a real model review. Only the automated checks were evaluated for real.";
     runId = r.runId;
   }
   const blocking = checks.some((x) => x.status === "fail") || Boolean(review?.issues.some((i) => i.severity === "blocking"));
   const score = review ? Math.round((review.score + detScore) / 2) : detScore;
-  const result: BrandCheck = { score, blocking, mode, modeNote, checks, review, checkedAt: new Date().toISOString(), runId, taskId: scope.taskId ?? null };
+  const result: BrandCheck = { score, blocking, mode, modeNote, checks, review, reviewer, checkedAt: new Date().toISOString(), runId, taskId: scope.taskId ?? null };
   const db = await getDb();
   await db.update(schema.creatives).set({ brandCheck: result }).where(and(eq(schema.creatives.id, creative.id), eq(schema.creatives.brandId, brand.id)));
   return result;

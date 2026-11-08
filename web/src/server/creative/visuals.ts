@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
-import { imagePrice, imageProvider, ImageProviderUnavailable, type ImageSize } from "../ai/image";
+import { imagePrice, imageProvider, ImageProviderUnavailable, MOCK_IMAGE_PROVIDER, type ImageSize } from "../ai/image";
 import { storage } from "../storage";
 import { runAgent, type RunScope } from "../agents/orchestrator";
 import type { CreativeConcept } from "../agents/schemas";
@@ -60,6 +60,8 @@ async function aiImage(scope: RunScope, brand: Brand, creative: Creative, prompt
     const img = await provider.generate(prompt, size);
     const key = `brands/${brand.id}/creatives/${creative.id}-${crypto.randomUUID().slice(0, 8)}.png`;
     await storage.put(key, img.data, img.mime);
+    // A demo placeholder costs nothing and isn't an image generation: record no usage.
+    if (provider.name === MOCK_IMAGE_PROVIDER) return { data: { key }, provider: provider.name };
     const price = imagePrice(size);
     return {
       data: { key },
@@ -85,6 +87,33 @@ async function photoCopy(brand: Brand, creative: Creative, assetId: string) {
   return key;
 }
 
+type FileRefs = { id: string; brandId: string; imagePath: string | null; slides: CreativeSlide[] | unknown };
+/** Stored files this creative owns: its cover and slide visuals, under its own storage prefix only. */
+export function ownedFiles(c: FileRefs): string[] {
+  const prefix = `brands/${c.brandId}/creatives/${c.id}`;
+  const slides = Array.isArray(c.slides) ? (c.slides as CreativeSlide[]) : [];
+  return [c.imagePath, ...slides.map((s) => s.imagePath)].filter((k): k is string => Boolean(k && k.startsWith(prefix)));
+}
+
+/**
+ * Remove files the creative referenced `before` and no longer references `after` (a replaced
+ * visual), or all of them when `after` is null (the creative was deleted). Best effort: a failed
+ * delete leaves an orphan file, never a broken creative.
+ */
+export async function pruneCreativeFiles(before: FileRefs, after: FileRefs | null) {
+  const keep = new Set(after ? ownedFiles(after) : []);
+  for (const key of new Set(ownedFiles(before))) {
+    if (keep.has(key)) continue;
+    await storage.remove(key).catch((e) => console.warn(JSON.stringify({ event: "storage.remove_failed", key, error: e instanceof Error ? e.message : String(e) })));
+  }
+}
+
+async function currentRow(id: string) {
+  const db = await getDb();
+  const [row] = await db.select().from(schema.creatives).where(eq(schema.creatives.id, id));
+  return row ?? null;
+}
+
 /**
  * Produce the creative's visual(s) for its visual source. Idempotent per call site: callers in
  * jobs skip creatives that already have a visual.
@@ -93,6 +122,14 @@ async function photoCopy(brand: Brand, creative: Creative, assetId: string) {
  *  - ai: an AI-generated image from the concept's art direction (cover, plus slides when asked)
  */
 export async function generateVisual(scope: RunScope, brand: Brand, creative: Creative, opts: { rotation?: number; slideVisuals?: boolean } = {}) {
+  const before = (await currentRow(creative.id)) ?? creative;
+  await produceVisual(scope, brand, creative, opts);
+  // Only after the new visual is saved: drop the files it replaced.
+  const after = await currentRow(creative.id);
+  if (after) await pruneCreativeFiles(before, after);
+}
+
+async function produceVisual(scope: RunScope, brand: Brand, creative: Creative, opts: { rotation?: number; slideVisuals?: boolean }) {
   const db = await getDb();
   const c = creative.concept as CreativeConcept;
   const slides = (creative.slides ?? []) as CreativeSlide[];

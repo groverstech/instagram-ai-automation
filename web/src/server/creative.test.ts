@@ -20,6 +20,7 @@ const creative = await import("./agents/creative");
 const { renderCreativePng, slideCount } = await import("./creative/render");
 const { deterministicChecks } = await import("./creative/brand-check");
 const { checkOriginality } = await import("./creative/copy");
+const { generateVisual, pruneCreativeFiles } = await import("./creative/visuals");
 const store = await import("./strategist/store");
 const wf = await import("./strategist/workflow");
 const q = await import("@/lib/creative-quality");
@@ -348,5 +349,65 @@ describe("migration 0006 on an existing database", () => {
       { id: "c-type", kind: "single", slides: [], visual_source: "typographic", logo_placement: "top_left", status: "draft", copy: null, brand_check: null, strategy_id: null },
     ]);
     await client.close();
+  });
+});
+
+describe("formats and storage", () => {
+  const exists = (key: string) => storage.get(key).then(() => true, () => false);
+
+  it("renders single creatives and carousel slides at the exact size of every supported format", async () => {
+    const { default: sharp } = await import("sharp");
+    const { FORMATS } = await import("@/lib/domain");
+    const db = await getDb();
+    const t1 = await jobs.startCreativeBatch(await access(ownerId, A), [req({ brief: "Format sweep single", count: 1, visualSource: "brand_photo" })], { inline: true });
+    const t2 = await jobs.startCreativeBatch(await access(ownerId, A), [req({ brief: "Format sweep carousel", kind: "carousel", slideCount: 3, count: 1 })], { inline: true });
+    const [single] = await db.select().from(schema.creatives).where(eq(schema.creatives.taskId, t1));
+    const [carousel] = await db.select().from(schema.creatives).where(eq(schema.creatives.taskId, t2));
+    for (const f of FORMATS) {
+      for (const [c, slide] of [[single, 0], [carousel, 0], [carousel, 2]] as const) {
+        const m = await sharp(await renderCreativePng(c, A, f.id, slide)).metadata();
+        expect([m.format, m.width, m.height], `${f.id} slide ${slide}`).toEqual(["png", f.w, f.h]);
+      }
+    }
+    for (const c of [single, carousel]) {
+      await pruneCreativeFiles(c, null);
+      await db.delete(schema.creatives).where(eq(schema.creatives.id, c.id));
+    }
+  });
+
+  it("removes a replaced visual's file, keeps a re-used one, and removes all files when a creative is deleted", async () => {
+    const db = await getDb();
+    const acc = await access(ownerId, A);
+    const t = await jobs.startCreativeBatch(acc, [req({ brief: "Storage lifecycle", count: 2, visualSource: "brand_photo", sourceAssetIds: [photos[0], photos[1]] })], { inline: true });
+    const [c, other] = await db.select().from(schema.creatives).where(eq(schema.creatives.taskId, t));
+    const first = c.imagePath!;
+    expect(await exists(first)).toBe(true);
+
+    // Same photo again → same key: must not be deleted.
+    await generateVisual({ brandId: A.id, userId: ownerId }, A, c);
+    let [now] = await db.select().from(schema.creatives).where(eq(schema.creatives.id, c.id));
+    expect(now.imagePath).toBe(first);
+    expect(await exists(first)).toBe(true);
+
+    // A different photo replaces it → the old file is removed, the new one exists.
+    await db.update(schema.creatives).set({ sourceAssetId: photos[2] }).where(eq(schema.creatives.id, c.id));
+    [now] = await db.select().from(schema.creatives).where(eq(schema.creatives.id, c.id));
+    await generateVisual({ brandId: A.id, userId: ownerId }, A, now);
+    [now] = await db.select().from(schema.creatives).where(eq(schema.creatives.id, c.id));
+    expect(now.imagePath).not.toBe(first);
+    expect(await exists(now.imagePath!)).toBe(true);
+    expect(await exists(first)).toBe(false);
+
+    // Deleting the creative removes its files and leaves the other creative's alone.
+    await db.delete(schema.creatives).where(eq(schema.creatives.id, c.id));
+    await pruneCreativeFiles(now, null);
+    expect(await exists(now.imagePath!)).toBe(false);
+    expect(await exists(other.imagePath!)).toBe(true);
+    // Never outside the creative's own prefix (e.g. the source brand asset).
+    const [asset] = await db.select().from(schema.brandAssets).where(eq(schema.brandAssets.id, photos[2]));
+    await pruneCreativeFiles({ ...other, imagePath: asset.path }, null);
+    expect(await exists(asset.path)).toBe(true);
+    await pruneCreativeFiles(other, null);
+    await db.delete(schema.creatives).where(eq(schema.creatives.id, other.id));
   });
 });
