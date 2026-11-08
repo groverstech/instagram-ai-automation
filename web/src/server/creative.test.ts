@@ -92,6 +92,31 @@ describe("creative jobs (concepts → visual → copy → brand check)", () => {
     expect(await db.select().from(schema.aiTaskLeases)).toHaveLength(0);
   });
 
+  it("renders JPEG and WebP brand photos into the creative (not just the layout)", async () => {
+    const { default: sharp } = await import("sharp");
+    const db = await getDb();
+    for (const [mime, ext] of [["image/jpeg", "jpg"], ["image/webp", "webp"]] as const) {
+      const red = sharp({ create: { width: 900, height: 900, channels: 3, background: { r: 230, g: 20, b: 20 } } });
+      const buf = await (ext === "jpg" ? red.jpeg() : red.webp()).toBuffer();
+      const key = `brands/${A.id}/assets/red.${ext}`;
+      await storage.put(key, buf, mime);
+      const [asset] = await db.insert(schema.brandAssets).values({ brandId: A.id, kind: "product", name: `red.${ext}`, path: key, mime, size: buf.length, status: "approved" }).returning();
+      const taskId = await jobs.startCreativeBatch(await access(ownerId, A), [req({ brief: `Photo render check (${ext})`, count: 1, visualSource: "brand_photo", sourceAssetIds: [asset.id] })], { inline: true });
+      let [c] = await db.select().from(schema.creatives).where(eq(schema.creatives.taskId, taskId));
+      expect(c.sourceAssetId).toBe(asset.id);
+      expect(c.imagePath).toMatch(ext === "jpg" ? /\.jpg$/ : /\.png$/); // WebP is converted for the renderer
+      await creative.updateConcept(A.id, c.id, { layout: "split" });
+      [c] = await db.select().from(schema.creatives).where(eq(schema.creatives.id, c.id));
+      const { data, info } = await sharp(await renderCreativePng(c, A)).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+      let redPx = 0;
+      for (let i = 0; i < data.length; i += info.channels) if (data[i] > 190 && data[i + 1] < 70 && data[i + 2] < 70) redPx++;
+      expect(redPx / (info.width * info.height)).toBeGreaterThan(0.1);
+      // Leave no trace for later tests (their originality checks read this brand's captions).
+      await db.delete(schema.creatives).where(eq(schema.creatives.id, c.id));
+      await db.delete(schema.brandAssets).where(eq(schema.brandAssets.id, asset.id));
+    }
+  });
+
   it("builds carousels from approved brand photos and renders every slide", async () => {
     const taskId = await jobs.startCreativeBatch(await access(ownerId, A), [req({ kind: "carousel", slideCount: 5, count: 1, visualSource: "brand_photo" })], { inline: true, slideVisuals: true });
     const db = await getDb();
@@ -286,5 +311,42 @@ describe("validation & isolation", () => {
     await expect(creative.setCreativeStatus(B.id, aCreative.id, "approved")).rejects.toThrow(/Creative not found/);
     await expect(jobs.creativeTaskStatus(B.id, aCreative.taskId!)).rejects.toThrow(/Task not found/);
     await expect(requireBrandForUser(sess(otherId), A.id, "viewer")).rejects.toThrow();
+  });
+});
+
+describe("migration 0006 on an existing database", () => {
+  it("keeps existing creatives and labels the ones that had no AI image as type-led", async () => {
+    const { PGlite } = await import("@electric-sql/pglite");
+    const { vector } = await import("@electric-sql/pglite-pgvector");
+    const { drizzle } = await import("drizzle-orm/pglite");
+    const { migrate } = await import("drizzle-orm/pglite/migrator");
+    const src = path.join(process.cwd(), "drizzle");
+    const old = fs.mkdtempSync(path.join(os.tmpdir(), "bp-mig6-"));
+    fs.mkdirSync(path.join(old, "meta"));
+    const journal = JSON.parse(fs.readFileSync(path.join(src, "meta/_journal.json"), "utf8"));
+    const before = journal.entries.filter((e: { idx: number }) => e.idx < 6);
+    for (const e of before) fs.copyFileSync(path.join(src, `${e.tag}.sql`), path.join(old, `${e.tag}.sql`));
+    fs.writeFileSync(path.join(old, "meta/_journal.json"), JSON.stringify({ ...journal, entries: before }));
+    const client = await PGlite.create({ extensions: { vector } });
+    await client.exec("create extension if not exists vector");
+    const db = drizzle(client);
+    await migrate(db, { migrationsFolder: old });
+    await client.exec(`
+      insert into workspaces (id, name) values ('w1', 'Legacy');
+      insert into brands (id, workspace_id, name) values ('b1', 'w1', 'Legacy Co');
+      insert into creatives (id, brand_id, format, style, concept, image_path, image_provider, status) values
+        ('c-ai', 'b1', 'instagram_post', 'premium_editorial', '{"headline":"A"}', 'brands/b1/creatives/c-ai.png', 'openai', 'approved'),
+        ('c-type', 'b1', 'instagram_post', 'premium_editorial', '{"headline":"B"}', null, 'none', 'draft'),
+        ('c-failed', 'b1', 'instagram_post', 'premium_editorial', '{"headline":"C"}', null, 'openai', 'draft');
+    `);
+    await migrate(db, { migrationsFolder: src });
+    const rows = (await client.query<Record<string, unknown>>("select id, kind, slides, visual_source, logo_placement, status, copy, brand_check, strategy_id from creatives order by id")).rows;
+    expect(rows).toEqual([
+      { id: "c-ai", kind: "single", slides: [], visual_source: "ai", logo_placement: "top_left", status: "approved", copy: null, brand_check: null, strategy_id: null },
+      // A failed AI image stays an AI creative (it can be regenerated); a no-provider one was type-led.
+      { id: "c-failed", kind: "single", slides: [], visual_source: "ai", logo_placement: "top_left", status: "draft", copy: null, brand_check: null, strategy_id: null },
+      { id: "c-type", kind: "single", slides: [], visual_source: "typographic", logo_placement: "top_left", status: "draft", copy: null, brand_check: null, strategy_id: null },
+    ]);
+    await client.close();
   });
 });

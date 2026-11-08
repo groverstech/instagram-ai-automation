@@ -28,7 +28,7 @@ Sign up, complete onboarding, and the Brand Intelligence agent builds your profi
 
 - `AI_PROVIDER=mock` runs every agent with deterministic stand-in output, for UI work and
   tests. A banner in the app marks mock mode.
-- Without an image provider, creatives render as typographic brand layouts. Set
+- Without an image provider, creatives use approved brand photos or type-led layouts. Set
   `OPENAI_API_KEY` to generate imagery (`gpt-image-1`).
 
 ## What's in the box
@@ -40,7 +40,8 @@ Sign up, complete onboarding, and the Brand Intelligence agent builds your profi
 | Orchestrator + activity log, brand knowledge base, pgvector memory | `src/server/agents/orchestrator.ts`, `context.ts`, `src/server/memory` |
 | AI Marketing Strategist: research, personas, strategy, pillars, campaigns, 30-day calendar, advisor, versions (see `docs/STRATEGIST.md`) | `src/server/strategist`, `src/components/strategist` |
 | Assistant that runs workflows via Claude tool use | `src/server/agents/assistant.ts` |
-| Brand-locked creative renderer (preview/resize/download/publish) | `src/server/creative/render.tsx` |
+| AI Creative Studio: background creative jobs, AI / brand-photo / type-led visuals, carousels, copy packs with an originality guard, brand consistency check, strategy calendar → creatives (see `docs/CREATIVE_STUDIO.md`) | `src/server/creative`, `src/components/creative` |
+| Brand-locked creative renderer (preview/resize/download PNG and ZIP/publish) | `src/server/creative/render.tsx` |
 | Social providers with capability matrices + OAuth + publishers + insights | `src/server/social` |
 | Job queue, scheduler, worker | `src/server/jobs`, `src/instrumentation.ts` |
 | UI (Next.js App Router, Tailwind 4, Motion) | `src/app`, `src/components` |

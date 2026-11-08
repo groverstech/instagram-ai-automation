@@ -73,10 +73,15 @@ async function aiImage(scope: RunScope, brand: Brand, creative: Creative, prompt
 /** Copy an approved brand photo into the creative's storage (survives asset deletion). */
 async function photoCopy(brand: Brand, creative: Creative, assetId: string) {
   const photo = await assertBrandPhoto(brand.id, assetId);
-  const buf = await storage.get(photo.path);
-  const ext = photo.mime === "image/jpeg" ? "jpg" : photo.mime === "image/webp" ? "webp" : "png";
-  const key = `brands/${brand.id}/creatives/${creative.id}-photo-${assetId.slice(0, 8)}.${ext}`;
-  await storage.put(key, buf, photo.mime);
+  const src = await storage.get(photo.path);
+  // Normalise for the renderer: respect EXIF orientation, cap the size, and store JPEG or PNG
+  // (it can't decode WebP).
+  const { default: sharp } = await import("sharp");
+  const img = sharp(src).rotate().resize({ width: 2048, height: 2048, fit: "inside", withoutEnlargement: true });
+  const jpeg = photo.mime === "image/jpeg";
+  const buf = jpeg ? await img.jpeg({ quality: 88 }).toBuffer() : await img.png().toBuffer();
+  const key = `brands/${brand.id}/creatives/${creative.id}-photo-${assetId.slice(0, 8)}.${jpeg ? "jpg" : "png"}`;
+  await storage.put(key, buf, jpeg ? "image/jpeg" : "image/png");
   return key;
 }
 

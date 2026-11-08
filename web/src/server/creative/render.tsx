@@ -52,10 +52,26 @@ async function loadFonts(brand: Brand, style: string): Promise<{ fonts: Font[]; 
   return { fonts, heading: h ? "Heading" : "sans-serif", body: b ? "Body" : "sans-serif" };
 }
 
-async function dataUri(path: string | null | undefined, mime = "image/png") {
+/** The real image type from the file's bytes (stored visuals can be PNG, JPEG or WebP). */
+export function sniffImage(buf: Buffer): "image/png" | "image/jpeg" | "image/webp" | "image/svg+xml" | null {
+  if (buf.length >= 8 && buf.readUInt32BE(0) === 0x89504e47) return "image/png";
+  if (buf.length >= 3 && buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return "image/jpeg";
+  if (buf.length >= 12 && buf.toString("ascii", 0, 4) === "RIFF" && buf.toString("ascii", 8, 12) === "WEBP") return "image/webp";
+  if (/^\s*(<\?xml|<svg)/i.test(buf.subarray(0, 256).toString("utf8"))) return "image/svg+xml";
+  return null;
+}
+
+async function dataUri(path: string | null | undefined, declared?: string) {
   if (!path) return null;
   try {
-    const buf = await storage.get(path);
+    let buf = await storage.get(path);
+    let mime = sniffImage(buf) ?? declared ?? "image/png";
+    // The renderer can't decode WebP: convert it.
+    if (mime === "image/webp") {
+      const { default: sharp } = await import("sharp");
+      buf = await sharp(buf).png().toBuffer();
+      mime = "image/png";
+    }
     return `data:${mime};base64,${buf.toString("base64")}`;
   } catch {
     return null;

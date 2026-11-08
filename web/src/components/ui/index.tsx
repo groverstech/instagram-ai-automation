@@ -168,7 +168,7 @@ export function Modal({ open, onClose, title, children, wide }: { open: boolean;
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-ink/30 p-4 backdrop-blur-[2px] md:p-10" onMouseDown={onClose}>
-      <div className={cn("w-full rounded-2xl bg-surface shadow-pop", wide ? "max-w-5xl" : "max-w-lg")} onMouseDown={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-label={typeof title === "string" ? title : undefined} className={cn("w-full rounded-2xl bg-surface shadow-pop", wide ? "max-w-5xl" : "max-w-lg")} onMouseDown={(e) => e.stopPropagation()}>
         {title ? (
           <div className="flex items-center justify-between border-b border-line px-5 py-4">
             <h3 className="font-semibold">{title}</h3>
