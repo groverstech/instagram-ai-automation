@@ -76,7 +76,7 @@ export function OnboardingWizard({ userName, workspaces, defaultWorkspaceId }: {
           <Analyzing phase={phase} />
         </div>
       ) : null}
-      <header className="flex items-center justify-between px-6 py-5 md:px-10">
+      <header className="flex items-center justify-between px-6 pb-5 pt-[max(1.25rem,calc(env(safe-area-inset-top)+0.5rem))] md:px-10">
         <div className="flex items-center gap-2 text-[15px] font-semibold">
           <span className="grid size-8 place-items-center rounded-lg bg-ink text-white">
             <Sparkles className="size-4" />

@@ -2,6 +2,10 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import type { z } from "zod";
+import { ImageProviderError, ImageProviderUnavailable, ImageRefusedError } from "./image";
+import { mockActive } from "./mode";
+
+export { mockActive };
 
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -36,6 +40,13 @@ export type Usage = {
    * but no response reached the app (connection dropped, timeout, worker died). Not priced.
    */
   unknownUsageAttempts?: number;
+  /** Generated images (image providers). */
+  images?: number;
+  /** Estimated image cost in USD (from configured per-image prices); absent when unpriced. */
+  imageCostUsd?: number;
+  /** Images generated without a configured price: counted, not priced. */
+  unpricedImages?: number;
+  imageModel?: string;
 };
 
 /** A search result the model actually received from the web search tool. */
@@ -203,6 +214,7 @@ function usageOf(res: Anthropic.Beta.BetaMessage): Usage {
 /** True for failures worth retrying: unusable output, network errors, overload and 5xx. Never auth/config/refusal/4xx. */
 export function isRetryable(e: unknown): boolean {
   if (e instanceof AIOutputError) return true;
+  if (e instanceof ImageProviderError) return e.status === undefined || e.status === 429 || e.status >= 500;
   if (e instanceof Anthropic.APIConnectionError) return true;
   if (e instanceof Anthropic.APIError) return e.status === 408 || e.status === 409 || e.status === 429 || (e.status !== undefined && e.status >= 500);
   return false;
@@ -238,24 +250,6 @@ const mockProvider: LLMProvider = {
   },
 };
 
-/**
- * The mock provider is for tests and local UI work. In production it is only honoured with an
- * explicit AI_ALLOW_MOCK_IN_PRODUCTION=true, so a stray AI_PROVIDER=mock can't silently
- * replace Claude for real users.
- */
-export function mockActive(): boolean {
-  if (process.env.AI_PROVIDER !== "mock") return false;
-  if (process.env.NODE_ENV === "production" && process.env.AI_ALLOW_MOCK_IN_PRODUCTION !== "true") {
-    if (!mockWarned) {
-      console.error("[ai] AI_PROVIDER=mock is ignored in production. Set AI_ALLOW_MOCK_IN_PRODUCTION=true only for demos/E2E.");
-      mockWarned = true;
-    }
-    return false;
-  }
-  return true;
-}
-let mockWarned = false;
-
 export function llm(): LLMProvider {
   return mockActive() ? mockProvider : anthropicProvider;
 }
@@ -263,6 +257,7 @@ export function llm(): LLMProvider {
 /** Errors that mean "the AI service is unavailable", not "this input is bad". Retrying later may work. */
 export function isServiceError(e: unknown): boolean {
   if (e instanceof AIConfigError) return true;
+  if (e instanceof ImageProviderError) return e.status === undefined || e.status === 408 || e.status === 409 || e.status === 429 || e.status >= 500;
   if (e instanceof Anthropic.APIConnectionError) return true;
   if (e instanceof Anthropic.APIError) return e.status === undefined || e.status === 401 || e.status === 403 || e.status === 408 || e.status === 409 || e.status === 429 || e.status >= 500;
   return false;
@@ -271,6 +266,14 @@ export function isServiceError(e: unknown): boolean {
 /** User-facing message for AI failures; never exposes raw API payloads. */
 export function friendlyAIError(e: unknown): string | null {
   if (e instanceof AIConfigError || e instanceof AIRefusalError || e instanceof AIOutputError) return e.message;
+  if (e instanceof ImageRefusedError) return e.message;
+  if (e instanceof ImageProviderUnavailable) return "No image provider is configured. Choose brand photos or a typographic layout, or set OPENAI_API_KEY on the server.";
+  if (e instanceof ImageProviderError) {
+    if (e.status === 401 || e.status === 403) return "The image service rejected the API key. Check OPENAI_API_KEY on the server.";
+    if (e.status === 429) return "The image service is rate-limiting requests. Please try again in a minute.";
+    if (e.status === undefined || e.status >= 500) return "The image service is temporarily unavailable. Please try again shortly.";
+    return "The image service couldn't process this request.";
+  }
   if (e instanceof Anthropic.APIConnectionError) return "Couldn't reach the AI service. Check the server's network connection and try again.";
   if (e instanceof Anthropic.APIError) {
     if (e.status === 401 || e.status === 403) return "The AI service rejected the API key. Check ANTHROPIC_API_KEY on the server.";

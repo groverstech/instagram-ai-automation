@@ -160,7 +160,10 @@ The assistant and agents can only create `draft` posts.
                       regeneration, versioned + approved (docs/STRATEGIST.md)
    • campaign:        CampaignManager(concept+timeline) → CreativeDirector(concepts)
                       → Copywriter(captions) → Designer(images) → draft posts
-   • creatives:       CreativeDirector → Designer (+ Copywriter)
+   • creatives:       creative_batch job: CreativeDirector(concepts/carousels) → visual
+                      (AI image | brand photo | type-led) → Copywriter(copy pack +
+                      originality guard) → brand check (WCAG/palette/logo + vision review);
+                      from a brief or strategy calendar entries (docs/CREATIVE_STUDIO.md)
    • analyze:         Analytics(real metrics only) → memory(insights)
    • competitor:      CompetitorResearch(web search + site fetch) → memory
 ```
@@ -247,7 +250,7 @@ web/
 | 1 Foundation | Auth, workspaces, RBAC, onboarding, brand profile, dashboard shell | ✅ |
 | 2 Brand intelligence | Vision + document analysis of assets, sectioned profile with provenance, per-section review, Brand Q&A, completeness score, pgvector memory (see `docs/BRAND_INTELLIGENCE.md`) | ✅ |
 | 3 Strategy + content | AI Marketing Strategist: research with verified sources, personas, objectives, 13-part strategy, 4–8 pillars, campaigns, 30-day calendar, advisor, versions & approvals (see `docs/STRATEGIST.md`); Content Studio | ✅ |
-| 4 Creative Studio | Formats, styles, concepts, image generation, brand renderer, variations, resize, download | ✅ |
+| 4 Creative Studio | Formats, styles, concepts, image generation, brand renderer, variations, resize, download; background jobs on the shared engine, brand photos, carousels, copy packs, brand consistency check, strategy → creatives (see `docs/CREATIVE_STUDIO.md`) | ✅ |
 | 5 Campaigns + calendar | Campaign pipeline, calendar autopopulate, drag/drop, approvals | ✅ |
 | 6 Integrations | OAuth, token vault, publishers, scheduler/worker, status tracking | ✅ IG/FB/LinkedIn/Pinterest · YT/TikTok declared |
 | 7 Analytics + competitors | Insights sync, AI analysis, competitor research | ✅ IG/FB metrics |

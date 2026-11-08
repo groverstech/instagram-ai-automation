@@ -272,7 +272,7 @@ function PostPanel({ post, brandId, role, accounts, creatives, campaignName, onC
     );
 
   return (
-    <aside className="fixed inset-0 z-50 overflow-y-auto bg-surface scrollbar-thin md:sticky md:inset-auto md:top-6 md:z-auto md:h-fit md:max-h-[calc(100vh-3rem)] md:w-[380px] md:shrink-0 md:rounded-2xl md:border md:border-line md:shadow-pop">
+    <aside className="fixed inset-0 z-50 overflow-y-auto bg-surface pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] scrollbar-thin md:sticky md:pb-0 md:pt-0 md:inset-auto md:top-6 md:z-auto md:h-fit md:max-h-[calc(100vh-3rem)] md:w-[380px] md:shrink-0 md:rounded-2xl md:border md:border-line md:shadow-pop">
       <div className="flex items-center justify-between border-b border-line px-4 py-3">
         <div className="flex items-center gap-2">
           <PlatformTag platform={post.platform} />

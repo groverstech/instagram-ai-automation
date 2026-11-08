@@ -4,6 +4,7 @@ import { getDb, schema } from "../db/client";
 import { AGENTS, type AgentId } from "./registry";
 import Anthropic from "@anthropic-ai/sdk";
 import { usageFromError, withRetry, type Usage } from "../ai/llm";
+import { ImageProviderError } from "../ai/image";
 import { addUsage, estimateCost } from "../ai/pricing";
 
 export type RunScope = { brandId: string; userId: string; parentId?: string; taskId?: string };
@@ -42,7 +43,7 @@ export async function runAgent<T>(
           if (u) {
             billed = addUsage(billed, u);
             billedAny = true;
-          } else if (e instanceof Anthropic.APIConnectionError) {
+          } else if (e instanceof Anthropic.APIConnectionError || (e instanceof ImageProviderError && e.status === undefined)) {
             // Sent, but no response (connection dropped / timeout): the provider may have billed it.
             billed = addUsage(billed, { unknownUsageAttempts: 1 });
             billedAny = true;

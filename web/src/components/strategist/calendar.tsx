@@ -1,18 +1,144 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { addDays, format, parseISO } from "date-fns";
-import { CalendarCheck, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { CalendarCheck, Image as ImageIcon, Palette, Plus, RefreshCw, Sparkles, Trash2 } from "lucide-react";
 import { applyCalendarAction, deleteEntryAction, regenerateEntryAction, upsertEntryAction } from "@/app/actions/strategist";
+import { produceFromCalendarAction } from "@/app/actions/creative";
 import { Badge, Button, Card, CardBody, CardHeader, Input, Modal, Notice, Segmented, Select, Textarea } from "@/components/ui";
 import { PlatformTag } from "@/components/bits";
 import { useRun } from "@/components/hooks";
-import { FORMATS, OBJECTIVES, formatById, objectiveLabel, platformColor, platformLabel } from "@/lib/domain";
+import { FORMATS, OBJECTIVES, STYLES, formatById, objectiveLabel, platformColor, platformLabel } from "@/lib/domain";
 import type { CalendarEntry, CalendarSection, Envelope, StrategyDoc } from "@/lib/strategy";
 import { cn } from "@/lib/utils";
 import { SectionFrame, useCtx } from "./kit";
 import { PlatformMix, WeeklyCadence } from "./charts";
 
 type Draft = Omit<CalendarEntry, "id">;
+
+/** Creatives produced from this strategy's calendar, and the defaults for producing more. */
+export type Production = {
+  creatives: { id: string; entryId: string; status: string; format: string; v: number }[];
+  style: string;
+  visualSource: "ai" | "brand_photo" | "typographic";
+  imageReady: boolean;
+  photos: number;
+};
+type ProduceCtx = { production?: Production; canProduce: boolean; linked: (entryId: string) => Production["creatives"] };
+const ProduceContext = createContext<ProduceCtx>({ canProduce: false, linked: () => [] });
+
+/** Style and visual source pickers shared by single and batch production. */
+function ProduceOptions({ style, setStyle, visual, setVisual, production }: { style: string; setStyle: (s: string) => void; visual: string; setVisual: (v: Production["visualSource"]) => void; production: Production }) {
+  return (
+    <div className="grid gap-2 sm:grid-cols-2">
+      <Select value={style} onChange={(e) => setStyle(e.target.value)} aria-label="Creative style">
+        {STYLES.map((x) => <option key={x.id} value={x.id}>Style: {x.label}</option>)}
+      </Select>
+      <Select value={visual} onChange={(e) => setVisual(e.target.value as Production["visualSource"])} aria-label="Visual source">
+        <option value="ai" disabled={!production.imageReady}>AI image{production.imageReady ? "" : " (not configured)"}</option>
+        <option value="brand_photo" disabled={!production.photos}>Brand photos{production.photos ? ` (${production.photos})` : " (none approved)"}</option>
+        <option value="typographic">Type-led (no photo)</option>
+      </Select>
+    </div>
+  );
+}
+
+function ProduceWeek({ cal, onClose }: { cal: CalendarSection; onClose: () => void }) {
+  const ctx = useCtx();
+  const pc = useContext(ProduceContext);
+  const router = useRouter();
+  const production = pc.production!;
+  const today = format(new Date(), "yyyy-MM-dd");
+  const upcoming = cal.entries.filter((e) => e.date >= today && !pc.linked(e.id).length);
+  const pool = (upcoming.length ? upcoming : cal.entries.filter((e) => !pc.linked(e.id).length)).slice(0, 12);
+  const [picked, setPicked] = useState<string[]>(pool.slice(0, 7).map((e) => e.id));
+  const [style, setStyle] = useState(production.style);
+  const [visual, setVisual] = useState(production.visualSource);
+  const { run, busy } = useRun();
+  return (
+    <Modal open onClose={onClose} title="Produce creatives from the calendar">
+      <div className="space-y-3 p-5">
+        <p className="text-[13px] text-muted">Each entry becomes a brief (hook, concept, caption direction, pillar, objective and format). The creative team produces the visual, platform copy and a brand check for each. Up to 7 at a time.</p>
+        {pool.length ? (
+          <div className="max-h-72 space-y-1.5 overflow-y-auto">
+            {pool.map((e) => {
+              const on = picked.includes(e.id);
+              return (
+                <label key={e.id} className={cn("flex cursor-pointer items-start gap-2 rounded-lg border p-2 text-[12px]", on ? "border-accent bg-accent-soft/40" : "border-line")}>
+                  <input type="checkbox" checked={on} disabled={!on && picked.length >= 7} onChange={() => setPicked(on ? picked.filter((x) => x !== e.id) : [...picked, e.id])} className="mt-0.5" />
+                  <span>
+                    <span className="text-faint">{format(parseISO(e.date), "EEE d MMM")} · {platformLabel(e.platform)} · {formatById(e.format).label}</span>
+                    <span className="block font-medium">{e.hook}</span>
+                  </span>
+                </label>
+              );
+            })}
+          </div>
+        ) : (
+          <Notice tone="success">Every calendar entry already has a creative.</Notice>
+        )}
+        <ProduceOptions style={style} setStyle={setStyle} visual={visual} setVisual={setVisual} production={production} />
+      </div>
+      <div className="flex justify-end gap-2 border-t border-line px-5 py-4">
+        <Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button
+          variant="accent"
+          disabled={!picked.length}
+          loading={busy("produce")}
+          onClick={() => run(() => produceFromCalendarAction(ctx.brandId, ctx.strategyId, picked, { style, visualSource: visual }), { key: "produce", success: `Producing ${picked.length} creative${picked.length > 1 ? "s" : ""}`, refresh: false, onOk: () => router.push("/creative-studio") })}
+        >
+          <Sparkles /> Produce {picked.length}
+        </Button>
+      </div>
+    </Modal>
+  );
+}
+
+function EntryCreatives({ entry }: { entry: CalendarEntry }) {
+  const ctx = useCtx();
+  const pc = useContext(ProduceContext);
+  const router = useRouter();
+  const linked = pc.linked(entry.id);
+  const [style, setStyle] = useState(pc.production?.style ?? "premium_editorial");
+  const [visual, setVisual] = useState(pc.production?.visualSource ?? "typographic");
+  const { run, busy } = useRun();
+  if (!pc.production || (!linked.length && !pc.canProduce)) return null;
+  return (
+    <div className="space-y-2 border-t border-line px-5 py-4">
+      <p className="flex items-center gap-1.5 text-[12px] font-medium text-ink-2"><Palette className="size-4" /> Creatives</p>
+      {linked.length ? (
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {linked.map((c) => (
+            <Link key={c.id} href={`/creative-studio?c=${c.id}`} className="relative w-20 shrink-0 overflow-hidden rounded-lg border border-line" aria-label="Open linked creative">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={`/api/creatives/${c.id}/image?format=instagram_square&v=${c.v}`} alt="Linked creative" className="aspect-square w-full object-cover" loading="lazy" />
+              <span className="block px-1 py-0.5 text-[10px] capitalize text-muted">{c.status}</span>
+            </Link>
+          ))}
+        </div>
+      ) : null}
+      {pc.canProduce ? (
+        <div className="space-y-2">
+          <ProduceOptions style={style} setStyle={setStyle} visual={visual} setVisual={setVisual} production={pc.production} />
+          <Button variant="ai" loading={busy("one")} onClick={() => run(() => produceFromCalendarAction(ctx.brandId, ctx.strategyId, [entry.id], { style, visualSource: visual }), { key: "one", success: "Creating the creative", refresh: false, onOk: () => router.push("/creative-studio") })}>
+            <Sparkles /> {linked.length ? "Create another creative" : "Create creative"}
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function LinkedMark({ id }: { id: string }) {
+  const n = useContext(ProduceContext).linked(id).length;
+  return n ? (
+    <span className="ml-auto inline-flex items-center gap-0.5 text-accent-ink" title={`${n} linked creative${n > 1 ? "s" : ""}`}>
+      <ImageIcon className="size-3" />
+      {n > 1 ? n : null}
+    </span>
+  ) : null;
+}
 const toDraft = (e: CalendarEntry): Draft => {
   const { id: _id, ...d } = e;
   void _id;
@@ -42,8 +168,10 @@ export function CalendarStats({ cal }: { cal: CalendarSection }) {
   );
 }
 
-export function CalendarView({ env, doc, status }: { env?: Envelope<CalendarSection>; doc: StrategyDoc; status: string }) {
+export function CalendarView({ env, doc, status, production, canProduce = false }: { env?: Envelope<CalendarSection>; doc: StrategyDoc; status: string; production?: Production; canProduce?: boolean }) {
   const ctx = useCtx();
+  const [produce, setProduce] = useState(false);
+  const pc = useMemo<ProduceCtx>(() => ({ production, canProduce: canProduce && Boolean(production), linked: (id) => production?.creatives.filter((c) => c.entryId === id) ?? [] }), [production, canProduce]);
   const cal = env?.data;
   const [view, setView] = useState<"grid" | "list">("grid");
   const [platform, setPlatform] = useState("all");
@@ -57,6 +185,7 @@ export function CalendarView({ env, doc, status }: { env?: Envelope<CalendarSect
   const campaigns = doc.sections.campaigns?.data.campaigns.map((c) => c.name) ?? [];
 
   return (
+    <ProduceContext.Provider value={pc}>
     <div className="space-y-6">
       <SectionFrame
         section="calendar"
@@ -69,6 +198,11 @@ export function CalendarView({ env, doc, status }: { env?: Envelope<CalendarSect
               {ctx.canEdit ? (
                 <Button size="sm" variant="secondary" onClick={() => setOpen("new")}>
                   <Plus /> Add entry
+                </Button>
+              ) : null}
+              {pc.canProduce ? (
+                <Button size="sm" variant="ai" onClick={() => setProduce(true)}>
+                  <Sparkles /> Produce creatives
                 </Button>
               ) : null}
               {status === "approved" ? (
@@ -108,7 +242,9 @@ export function CalendarView({ env, doc, status }: { env?: Envelope<CalendarSect
         </Card>
       ) : null}
       {cal && open ? <EntryModal key={open === "new" ? "new" : open.id} entry={open === "new" ? null : open} cal={cal} pillars={pillars} campaigns={campaigns} onClose={() => setOpen(null)} /> : null}
+      {cal && produce ? <ProduceWeek cal={cal} onClose={() => setProduce(false)} /> : null}
     </div>
+    </ProduceContext.Provider>
   );
 }
 
@@ -137,6 +273,7 @@ function MonthGrid({ cal, entries, onOpen }: { cal: CalendarSection; entries: Ca
                     <span className="flex items-center gap-1 text-faint">
                       <span className="size-1.5 shrink-0 rounded-full" style={{ background: platformColor(e.platform) }} />
                       {e.time} · {platformLabel(e.platform)}
+                      <LinkedMark id={e.id} />
                     </span>
                     <span className="line-clamp-2 text-ink">{e.hook}</span>
                   </button>
@@ -166,6 +303,7 @@ function EntryList({ entries, onOpen }: { entries: CalendarEntry[]; onOpen: (e: 
                   <Badge>{e.pillar}</Badge>
                   <span className="text-faint">{formatById(e.format).label}</span>
                   {e.campaign ? <Badge tone="accent">{e.campaign}</Badge> : null}
+                  <LinkedMark id={e.id} />
                 </div>
                 <p className="mt-1.5 text-[13px] font-medium">{e.hook}</p>
                 <p className="mt-0.5 line-clamp-2 text-[12px] text-muted">{e.creativeConcept}</p>
@@ -255,6 +393,7 @@ function EntryModal({ entry, cal, pillars, campaigns, onClose }: { entry: Calend
           <Input value={tags} disabled={!editable} onChange={(e) => setTags(e.target.value)} placeholder="slowmade designdetails" />
         </label>
       </div>
+      {entry ? <EntryCreatives entry={entry} /> : null}
       {editable ? (
         <div className="flex flex-col gap-3 border-t border-line px-5 py-4">
           {entry && ctx.canGenerate ? (

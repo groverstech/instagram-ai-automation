@@ -33,7 +33,9 @@ export function priceFor(model?: string) {
 export function estimateCost(u: Usage | undefined | null): number {
   if (!u) return 0;
   const p = priceFor(u.model);
+  if (!u.model && (u.images || u.imageCostUsd)) return Math.round((u.imageCostUsd ?? 0) * 1e6) / 1e6;
   const cost =
+    (u.imageCostUsd ?? 0) +
     ((u.inputTokens ?? 0) * p.input + (u.outputTokens ?? 0) * p.output + (u.cacheReadTokens ?? 0) * p.cacheRead + (u.cacheWriteTokens ?? 0) * p.cacheWrite) / 1_000_000 +
     ((u.webSearches ?? 0) * p.webSearchPer1k) / 1000;
   return Math.round(cost * 1e6) / 1e6;
@@ -48,6 +50,10 @@ export function addUsage(a: Usage, b: Usage | undefined): Usage {
     cacheWriteTokens: (a.cacheWriteTokens ?? 0) + (b.cacheWriteTokens ?? 0),
     webSearches: (a.webSearches ?? 0) + (b.webSearches ?? 0),
     unknownUsageAttempts: (a.unknownUsageAttempts ?? 0) + (b.unknownUsageAttempts ?? 0) || undefined,
+    images: (a.images ?? 0) + (b.images ?? 0) || undefined,
+    imageCostUsd: (a.imageCostUsd ?? 0) + (b.imageCostUsd ?? 0) || undefined,
+    unpricedImages: (a.unpricedImages ?? 0) + (b.unpricedImages ?? 0) || undefined,
     model: b.model ?? a.model,
+    imageModel: b.imageModel ?? a.imageModel,
   };
 }
