@@ -26,7 +26,7 @@ export type LimitKind = "ai" | "ai_heavy" | "upload" | "render" | "login" | "cro
 type Scope = "user" | "org" | "key";
 type Rule = { scope: Scope; limit: number; windowSec: number };
 
-/** Requests per window. "ai_heavy" = brand analysis, campaigns, strategy, asset analysis. */
+/** Requests per window. "ai_heavy" = brand analysis, campaigns, strategy, asset analysis, creative batches and visuals. */
 export const RULES: Record<LimitKind, Rule[]> = {
   ai: [
     { scope: "user", limit: 30, windowSec: 60 },
@@ -58,7 +58,7 @@ export type Subject = { userId?: string; workspaceId?: string; key?: string };
 
 const MESSAGES: Record<LimitKind, string> = {
   ai: "You're sending AI requests too quickly.",
-  ai_heavy: "Too many brand analyses or campaign generations in a short time.",
+  ai_heavy: "Too many large AI jobs (brand analyses, strategies, campaigns or creative batches) in a short time.",
   upload: "Too many uploads in a short time.",
   render: "Too many image renders in a short time.",
   login: "Too many sign-in attempts.",

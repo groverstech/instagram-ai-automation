@@ -12,7 +12,7 @@ import { SECTION_KEYS, SECTION_META, STATUS_META, STRATEGY_PARTS, accountTypeLab
 import { cn } from "@/lib/utils";
 import { StrategyCtx, type Ctx } from "./kit";
 import { AudienceView, CampaignsView, CompetitorsView, KpisView, ObjectivesView, PillarsView, ResearchMode, ResearchView, StrategyView } from "./sections";
-import { CalendarStats, CalendarView } from "./calendar";
+import { CalendarStats, CalendarView, type Production } from "./calendar";
 import { Advisor, type AdvisorMsg } from "./advisor";
 import { HistoryView, type Revision, type VersionRow } from "./history";
 import { NewStrategyWizard, type PreflightProps } from "./wizard";
@@ -51,6 +51,7 @@ type Props = {
   chat: AdvisorMsg[];
   startNew: boolean;
   initialTab?: string;
+  production?: Production;
 };
 
 const TABS = [
@@ -277,7 +278,7 @@ export function StrategistWorkspace(p: Props) {
         <CampaignsView env={doc.sections.campaigns} platforms={doc.inputs.platforms} />
       </Panel>
       <Panel on={tab === "calendar"}>
-        <CalendarView env={doc.sections.calendar} doc={doc} status={s.status} />
+        <CalendarView env={doc.sections.calendar} doc={doc} status={s.status} production={p.production} canProduce={canEdit && p.ai.ready && s.status === "approved"} />
       </Panel>
       <Panel on={tab === "kpis"}>
         <KpisView env={doc.sections.strategy} />

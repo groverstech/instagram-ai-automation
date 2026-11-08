@@ -54,7 +54,7 @@ export function Assistant({ brandId, brandName, initial, canRun }: { brandId: st
     <>
       <button
         onClick={() => setOpen(true)}
-        className={cn("fixed bottom-6 right-6 z-40 flex items-center gap-2 rounded-full bg-ink py-2.5 pl-3 pr-4 text-[13px] font-medium text-white shadow-pop transition hover:-translate-y-0.5", open && "pointer-events-none opacity-0")}
+        className={cn("fixed bottom-[max(1.5rem,calc(env(safe-area-inset-bottom)+0.75rem))] right-6 z-40 flex items-center gap-2 rounded-full bg-ink py-2.5 pl-3 pr-4 text-[13px] font-medium text-white shadow-pop transition hover:-translate-y-0.5", open && "pointer-events-none opacity-0")}
       >
         <span className="relative grid size-6 place-items-center">
           <span className="absolute inset-0 animate-spin rounded-full ai-ring [animation-duration:4s]" />
@@ -72,7 +72,7 @@ export function Assistant({ brandId, brandName, initial, canRun }: { brandId: st
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: 40, opacity: 0 }}
             transition={{ type: "spring", stiffness: 380, damping: 34 }}
-            className="fixed bottom-4 right-4 top-4 z-50 flex w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-pop"
+            className="fixed bottom-[max(1rem,calc(env(safe-area-inset-bottom)+0.5rem))] right-4 top-[max(1rem,calc(env(safe-area-inset-top)+0.5rem))] z-50 flex w-[min(420px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-pop"
           >
             <div className="flex items-center justify-between border-b border-line px-4 py-3 ai-gradient">
               <div>
