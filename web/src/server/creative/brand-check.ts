@@ -48,7 +48,7 @@ export function deterministicChecks(creative: Creative, brand: Brand, hasLogo: b
     // Headline and the bold CTA are large text (3:1 minimum, 4.5:1 recommended); the subline is body text (4.5:1).
     const min = p.role === "subline" ? 4.5 : 3;
     const recommended = 4.5;
-    const approx = p.overImage ? " (text over imagery; estimated against the scrim)" : "";
+    const approx = !p.overImage ? "" : creative.imagePath ? " (text over imagery; estimated against the scrim)" : " (on the gradient scrim)";
     const label = p.role === "cta" ? "CTA contrast" : `${p.role[0].toUpperCase()}${p.role.slice(1)} contrast`;
     const status: CheckStatus = ratio < min ? (p.overImage ? "warn" : "fail") : ratio < recommended ? "warn" : "pass";
     out.push({ id: `contrast_${p.role}`, label, status, detail: `${ratio}:1 (minimum ${min}:1${min < recommended ? `, recommended ${recommended}:1` : ""})${approx}` });

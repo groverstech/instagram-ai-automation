@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { format } from "date-fns";
-import { AlertTriangle, CalendarPlus, Check, ChevronLeft, ChevronRight, ClipboardCopy, Download, FileArchive, Info, PenLine, RefreshCw, ShieldAlert, ShieldCheck, Sparkles, Trash2, Wand2, X, XCircle } from "lucide-react";
+import { AlertTriangle, CalendarPlus, Loader2, Check, ChevronLeft, ChevronRight, ClipboardCopy, Download, FileArchive, Info, PenLine, RefreshCw, ShieldAlert, ShieldCheck, Sparkles, Trash2, Wand2, X, XCircle } from "lucide-react";
 import { createDraftPost, deleteCreativeAction, regenerateImageAction, setCreativeStatusAction, updateCreativeAction, variationAction } from "@/app/actions/ai";
 import { brandCheckAction, editCopyAction, setVisualSourceAction, writeCopyAction } from "@/app/actions/creative";
 import { Badge, Button, Field, Input, Modal, Notice, Segmented, Select, Textarea } from "@/components/ui";
@@ -48,6 +48,7 @@ export function CreativeDetail(p: {
   const [tab, setTab] = useState<Tab>("design");
   const [slide, setSlide] = useState(0);
   const [preview, setPreview] = useState(creative.format);
+  const [loaded, setLoaded] = useState<string | null>(null);
   const { run, busy } = useRun();
   const v = new Date(creative.updatedAt).getTime();
   const f = formatById(preview);
@@ -64,7 +65,18 @@ export function CreativeDetail(p: {
         <div className="flex flex-col items-center gap-3 bg-sunken/60 p-4 sm:p-6">
           <div className="relative w-full max-w-[480px] overflow-hidden rounded-xl bg-surface shadow-pop" style={{ aspectRatio: `${f.w}/${f.h}`, maxHeight: "58vh" }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={src} alt={creative.concept.headline} className="size-full object-contain" data-testid="creative-preview" />
+            <img key={src} src={src} alt={creative.concept.headline} className="size-full object-contain" data-testid="creative-preview" onLoad={() => setLoaded(src)} onError={() => setLoaded(`error:${src}`)} />
+            {loaded !== src ? (
+              <div className="absolute inset-0 grid place-items-center bg-surface/70 text-[12px] text-muted" aria-live="polite">
+                {loaded === `error:${src}` ? (
+                  <span className="px-6 text-center">{"The preview couldn't be rendered. Try again in a moment."}</span>
+                ) : (
+                  <span className="flex items-center gap-2">
+                    <Loader2 className="size-4 animate-spin" /> Rendering…
+                  </span>
+                )}
+              </div>
+            ) : null}
           </div>
           {carousel ? (
             <div className="flex items-center gap-2" aria-label="Slides">

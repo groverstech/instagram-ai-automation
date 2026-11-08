@@ -143,7 +143,7 @@ export function layoutFacts(creative: Creative, brand: Brand, hasLogo: boolean, 
     textPairs: [
       { role: "headline", color: textColor, background: textBg, overImage },
       { role: "subline", color: textColor, background: textBg, overImage },
-      ...(c.cta ? [{ role: "cta" as const, color: overImage ? contrastOn(accent) : contrastOn(accent), background: accent, overImage: false }] : []),
+      ...(c.cta ? [{ role: "cta" as const, color: contrastOn(accent), background: accent, overImage: false }] : []),
     ],
     logo: { placement, box, usesBrandLogo: hasLogo },
     safeArea: SAFE_AREA,
