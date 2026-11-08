@@ -38,12 +38,14 @@ worker. These are the requirements for running it safely with real customers.
 | Variable | Purpose |
 |---|---|
 | `ANTHROPIC_MODEL` | Override the default `claude-opus-5-5`. |
+| `STRATEGIST_WEB_SEARCH` | `off` disables web research in the Marketing Strategist (findings are then labelled hypotheses). |
+| `AI_PRICE_INPUT_PER_MTOK`, `AI_PRICE_OUTPUT_PER_MTOK`, `AI_PRICE_WEB_SEARCH_PER_1K` | Override the AI cost estimates shown in the app. |
 | `VOYAGE_API_KEY` | Semantic embeddings for brand memory (local hashing otherwise). |
 | `IMAGE_PROVIDER`, `OPENAI_API_KEY` | AI imagery for creatives (`IMAGE_PROVIDER=none` for typographic layouts only). |
 | `STORAGE_DIR` | Upload directory (default `./.data/files`). |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_GROWTH`, `STRIPE_PRICE_AGENCY` | Billing. |
 | `META_APP_ID`/`SECRET`, `LINKEDIN_*`, `GOOGLE_*`, `PINTEREST_*`, `TIKTOK_*` | Social platform OAuth apps. |
-| `CRON_SECRET` | Protects `GET /api/cron/tick` for an external scheduler. |
+| `CRON_SECRET` | Protects `GET /api/cron/tick` for an external scheduler. At least 32 characters (e.g. `openssl rand -hex 32`); with a missing or shorter secret the endpoint refuses every call (503). Send it as `Authorization: Bearer <secret>`. Failed attempts are rate-limited per IP (10 per 15 min). |
 | `RUN_JOBS_IN_PROCESS` | Set `false` when running `npm run worker` separately (Postgres only). |
 | `ANDROID_PACKAGE_NAME`, `ANDROID_CERT_SHA256` | Android TWA asset links (see `ANDROID.md`). |
 
@@ -85,7 +87,7 @@ All limits are defined in `src/server/ratelimit.ts` (per user and per organisati
 |---|---|
 | AI actions (copy, ideas, Q&A, assistant) | 30/min and 300/hour per user; 90/min per organisation |
 | Heavy AI (brand analysis, asset analysis, strategy, campaigns, creatives, competitor research) | 6 per 10 min per user; 20 per 10 min per organisation |
-| Concurrent AI tasks | 2 per user; per organisation 2 (Starter), 4 (Growth), 10 (Agency) |
+| Concurrent AI tasks | 2 per user; per organisation 2 (Starter), 4 (Growth), 10 (Agency). A strategist run holds one lease for its whole run (15 min, renewed while it works). |
 | Uploads | 20 requests per 10 min per user, 60 per organisation; at most 20 files and 50 MB per request, 15 MB per file |
 | Image rendering | 600/min per user |
 | Sign-in / sign-up | 10 per 15 min per email and per IP (hashed keys) |
@@ -102,10 +104,12 @@ For large deployments, also put a WAF or CDN rate limit in front.
 - **Single instance, PGlite or Postgres:** jobs run in-process every 30 seconds.
 - **Several instances:** set `RUN_JOBS_IN_PROCESS=false`, then either run one `npm run worker` process, or call `GET /api/cron/tick` with `Authorization: Bearer $CRON_SECRET` every minute.
 
+- **Strategist jobs** are persistent (`ai_tasks`). After a restart or crash they are recovered automatically within about 2–3 minutes by whichever runner is active (in-process tick, `npm run worker`, or the cron route), without re-running finished sections or re-charging rate limits. On serverless hosting, schedule `GET /api/cron/tick` every minute so recovery doesn't depend on a user having the page open.
+
 ## 8. Third-party configuration
 - **Stripe:** register a webhook at `{APP_URL}/api/billing/webhook` (see README).
 - **OAuth apps:** register `{APP_URL}/api/oauth/{platform}/callback` with each platform.
-- **Anthropic:** set spend limits on the API key's workspace in the Anthropic Console as a cost backstop.
+- **Anthropic:** make sure the web search tool is available to the API key's organisation (the strategist's market research uses it; without it, research is labelled hypotheses-only). Set spend limits on the API key's workspace in the Anthropic Console as a cost backstop.
 
 ## 9. Go-live checklist
 - [ ] `APP_URL` (https), `APP_SECRET`, `DATABASE_URL` and `ANTHROPIC_API_KEY` set. `AI_PROVIDER` unset.
@@ -114,5 +118,6 @@ For large deployments, also put a WAF or CDN rate limit in front.
 - [ ] Egress firewall blocks private ranges and metadata endpoints.
 - [ ] Proxy sets `X-Forwarded-For` correctly.
 - [ ] One live brand analysed end to end with the real API key (onboarding → profile → Q&A).
+- [ ] One live strategy generated end to end with the real API key: research shows verified findings with working source links; every section passes review; the cost estimate matches the Anthropic Console roughly.
 - [ ] Logs shipped to your log platform; alerts on `"level":"error"` and `ratelimit.*` spikes.
 - [ ] Anthropic and Stripe spend alerts configured.

@@ -11,7 +11,7 @@ import { performanceDataset, summarize } from "@/server/agents/analytics";
 import { Badge, Card, CardBody, CardHeader, Empty } from "@/components/ui";
 import { CreativeThumb, PlatformTag, SourceTag, StatusBadge } from "@/components/bits";
 import { AskButton } from "@/components/dashboard/ask";
-import type { Strategy } from "@/server/agents/schemas";
+import { summarizeStrategy } from "@/lib/strategy";
 import { compact, pct } from "@/lib/utils";
 
 export default async function Dashboard() {
@@ -30,7 +30,7 @@ export default async function Dashboard() {
     performanceDataset(brand.id, 30),
   ]);
   const profile = profileOf(approved ?? latest);
-  const strat = strategy?.data as Strategy | undefined;
+  const strat = strategy ? summarizeStrategy(strategy.data, strategy.schemaVersion) : undefined;
   const summary = summarize(perf);
   const totalReach = perf.reduce((s, p) => s + (p.reach ?? 0), 0);
   const ers = perf.filter((p) => p.engagementRate != null);
@@ -39,7 +39,7 @@ export default async function Dashboard() {
   const steps = [
     { done: Boolean(latest), label: "Generate brand intelligence", href: "/brand" },
     { done: Boolean(approved), label: "Approve your brand profile", href: "/brand" },
-    { done: Boolean(strategy), label: "Create this month's strategy", href: "/strategist" },
+    { done: Boolean(strategy), label: "Create your marketing strategy", href: "/strategist" },
     { done: accounts.length > 0, label: "Connect a social account", href: "/accounts" },
     { done: upcoming.length > 0, label: "Plan your content calendar", href: "/calendar" },
   ];
@@ -120,7 +120,7 @@ export default async function Dashboard() {
                 </div>
                 {strat ? (
                   <div className="md:col-span-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-faint">Content pillars · {strategy?.month}</p>
+                    <p className="text-[11px] font-semibold uppercase tracking-wider text-faint">Content pillars · strategy v{strategy?.version}{strategy?.status === "approved" ? "" : " (draft)"}</p>
                     <div className="mt-2 flex h-2 overflow-hidden rounded-full">
                       {strat.pillars.map((p, i) => (
                         <div key={p.name} style={{ width: `${p.sharePercent}%`, background: ["#1b1a17", "#5b4fd1", "#b08d57", "#7cc5a8", "#f0a37c"][i % 5] }} />

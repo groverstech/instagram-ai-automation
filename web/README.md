@@ -38,6 +38,7 @@ Sign up, complete onboarding, and the Brand Intelligence agent builds your profi
 | Multi-tenant auth, workspaces, roles (owner/admin/editor/viewer) | `src/server/auth`, `src/app/actions/settings.ts` |
 | Agents (Brand Intelligence, Strategist, Content Strategist, Creative Director, Design Generation, Copywriter, Campaign Manager, Analytics, Competitor Research) | `src/server/agents` |
 | Orchestrator + activity log, brand knowledge base, pgvector memory | `src/server/agents/orchestrator.ts`, `context.ts`, `src/server/memory` |
+| AI Marketing Strategist: research, personas, strategy, pillars, campaigns, 30-day calendar, advisor, versions (see `docs/STRATEGIST.md`) | `src/server/strategist`, `src/components/strategist` |
 | Assistant that runs workflows via Claude tool use | `src/server/agents/assistant.ts` |
 | Brand-locked creative renderer (preview/resize/download/publish) | `src/server/creative/render.tsx` |
 | Social providers with capability matrices + OAuth + publishers + insights | `src/server/social` |

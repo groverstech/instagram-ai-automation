@@ -1,70 +1,40 @@
 import "server-only";
-import { and, desc, eq } from "drizzle-orm";
 import { addDays, format as fmt, parseISO } from "date-fns";
 import { getDb, schema } from "../db/client";
 import { llm } from "../ai/llm";
 import { AGENTS } from "./registry";
 import { runAgent, type RunScope } from "./orchestrator";
 import { buildContext, recentPerformanceSummary, renderContext } from "./context";
-import { CalendarPlan, ContentIdeas, Copy, Strategy, type PlannedPost } from "./schemas";
+import { CalendarPlan, ContentIdeas, Copy, type PlannedPost } from "./schemas";
+import { currentStrategy } from "../strategist/store";
+import { isDocV2 } from "@/lib/strategy";
 import type { Brand } from "../db/schema";
 import { FORMAT_IDS, PLATFORM_IDS, objectiveLabel, platformLabel } from "@/lib/domain";
-import { remember } from "../memory";
 
 function brandPlatforms(brand: Brand) {
   const ps = brand.platforms.filter((p) => (PLATFORM_IDS as readonly string[]).includes(p));
   return ps.length ? ps : ["instagram"];
 }
 
+/** The strategy agents build on: approved first, else the latest non-archived version. */
 export async function latestStrategy(brandId: string) {
-  const db = await getDb();
-  const [row] = await db
-    .select()
-    .from(schema.strategies)
-    .where(eq(schema.strategies.brandId, brandId))
-    .orderBy(desc(schema.strategies.createdAt))
-    .limit(1);
-  return row ?? null;
+  return currentStrategy(brandId);
 }
 
-export async function generateStrategy(scope: RunScope, brand: Brand, month: string, focus?: string) {
-  const ctx = await buildContext(brand, `monthly social strategy ${month} ${focus ?? ""}`);
-  const perf = await recentPerformanceSummary(brand.id);
-  const prompt = `${renderContext(ctx)}
-
-${perf.length ? `<recent_platform_metrics>\n${JSON.stringify(perf.slice(0, 30))}\n</recent_platform_metrics>` : "(No connected-account metrics yet; base the strategy on brand, audience and category.)"}
-
-Create the social media strategy for ${month}${focus ? ` with this focus from the user: "${focus}"` : ""}.
-Platforms in scope: ${brandPlatforms(brand).join(", ")}.
-- pillars: 4-5, sharePercent summing to 100.
-- cadence: one entry per in-scope platform; bestTimes as "Tue 19:00" style local times; approach = how this brand should show up there.
-- trends: 3-5 current, relevant social trends/formats and how this brand would use them tastefully.
-- moments: seasonal, cultural and festival dates in ${brand.geography ?? "the brand's market"} during ${month} that genuinely fit (dates YYYY-MM-DD).
-- campaignIdeas: 3. collaborations: 2-3 influencer/creator/brand partnership ideas with the kind of profile to look for.
-- kpis: measurable targets appropriate to objectives.`;
-
-  const { runId, data } = await runAgent(scope, "marketing_strategist", `Monthly strategy ${month}`, { month, focus }, () =>
-    llm().structured({ system: AGENTS.marketing_strategist.system, prompt, schema: Strategy, effort: AGENTS.marketing_strategist.effort, mock: () => mockStrategy(brand, month) }),
-  );
-  const db = await getDb();
-  const [row] = await db.insert(schema.strategies).values({ brandId: brand.id, month, data, runId }).returning();
-  return row;
-}
-
-export async function approveStrategy(brandId: string, strategyId: string) {
-  const db = await getDb();
-  const [s] = await db
-    .update(schema.strategies)
-    .set({ status: "approved" })
-    .where(and(eq(schema.strategies.id, strategyId), eq(schema.strategies.brandId, brandId)))
-    .returning();
-  if (s) {
-    const d = Strategy.parse(s.data);
-    await remember(brandId, [
-      { kind: "approval", content: `Approved content pillars for ${s.month}: ${d.pillars.map((p) => `${p.name} (${p.sharePercent}%)`).join(", ")}`, source: "strategy:approved", weight: 1.3 },
-    ]);
-  }
-  return s;
+/** Compact, prompt-ready view of a strategy (v1 or v2) for other agents. */
+export function strategyPromptBlock(row: { version: number; status: string; month: string; data: unknown; schemaVersion: number }) {
+  if (!isDocV2(row.data, row.schemaVersion)) return `<strategy month="${row.month}" status="${row.status}">\n${JSON.stringify(row.data)}\n</strategy>`;
+  const d = row.data;
+  const s = d.sections;
+  const body = {
+    positioning: s.strategy?.data.positioning,
+    channels: s.strategy?.data.channels,
+    contentStrategy: s.strategy?.data.contentStrategy,
+    pillars: s.pillars?.data.pillars.map((p) => ({ name: p.name, sharePercent: p.sharePercent, objective: p.objective, topics: p.topics, formats: p.formats })),
+    personas: s.audience?.data.personas.map((p) => ({ name: p.name, summary: p.summary, painPoints: p.painPoints })),
+    campaigns: s.campaigns?.data.campaigns.map((c) => ({ name: c.name, kind: c.kind, startDate: c.startDate, durationDays: c.durationDays, keyMessage: c.keyMessage })),
+  };
+  return `<strategy version="${row.version}" status="${row.status}">\n${JSON.stringify(body)}\n</strategy>`;
 }
 
 /** Content Strategist: turn the strategy into dated draft posts on the calendar. */
@@ -79,7 +49,7 @@ export async function planCalendar(
   const end = addDays(opts.start, opts.days - 1);
   const prompt = `${renderContext(ctx)}
 
-${strategy ? `<approved_strategy month="${strategy.month}" status="${strategy.status}">\n${JSON.stringify(strategy.data)}\n</approved_strategy>` : "(No strategy yet: infer sensible pillars from the brand profile.)"}
+${strategy ? strategyPromptBlock(strategy) : "(No strategy yet: infer sensible pillars from the brand profile.)"}
 
 Plan the content calendar from ${fmt(opts.start, "yyyy-MM-dd")} to ${fmt(end, "yyyy-MM-dd")} for: ${platforms.join(", ")}.
 ${opts.postsPerWeek ? `Target about ${opts.postsPerWeek} posts per week in total.` : "Follow the strategy's cadence."}
@@ -164,29 +134,6 @@ Suggest 8 specific content ideas. Goal: ${goal || "improve engagement"}. Platfor
 }
 
 // ---------- mocks (AI_PROVIDER=mock only) ----------
-
-function mockStrategy(brand: Brand, month: string): Strategy {
-  const ps = brandPlatforms(brand) as Strategy["cadence"][number]["platform"][];
-  return {
-    summary: `Build familiarity and trust for ${brand.name} with a steady rhythm of craft, education and community content.`,
-    monthlyFocus: "Show the making, teach the use, celebrate the customer.",
-    pillars: [
-      { name: "Craft & Making", description: "Process, materials, people", sharePercent: 30, exampleIdeas: ["Studio morning", "Material macro"] },
-      { name: "Education", description: "How-tos and care", sharePercent: 25, exampleIdeas: ["3 ways to style", "Care guide"] },
-      { name: "Product Spotlight", description: "Hero products in context", sharePercent: 25, exampleIdeas: ["Hero shot + detail carousel"] },
-      { name: "Community", description: "Customers and UGC", sharePercent: 20, exampleIdeas: ["Customer story"] },
-    ],
-    cadence: ps.map((platform) => ({ platform, postsPerWeek: 3, bestTimes: ["Tue 19:00", "Thu 12:30", "Sun 10:00"], formats: ["carousel", "reel", "single image"], approach: "Visual-first, calm pacing" })),
-    trends: [{ trend: "Slow-living micro vlogs", relevance: "Matches the brand's calm tone", howToUse: "15s routine clips" }],
-    moments: [{ date: `${month}-14`, name: "Mid-month edit", idea: "Curated product edit" }],
-    campaignIdeas: [{ name: "Made to Last", objective: "awareness", concept: "A month of longevity stories" }],
-    promotions: ["Bundle for first-time buyers"],
-    engagementTactics: ["Reply to every comment within 2h", "Weekly question sticker"],
-    collaborations: [{ type: "Micro-creator", profile: "Home & lifestyle creators, 10-50k", idea: "Day-in-the-life integration" }],
-    kpis: ["Engagement rate ≥ 4%", "+5% followers"],
-    rationale: "Mock provider: generic structure derived from onboarding answers.",
-  };
-}
 
 function mockCalendar(start: Date, days: number, platforms: string[]): CalendarPlan {
   const pillars = ["Craft & Making", "Education", "Product Spotlight", "Community"];

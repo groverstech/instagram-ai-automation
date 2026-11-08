@@ -9,7 +9,8 @@ import { buildContext, renderContext } from "./context";
 import { createCampaign } from "./campaign";
 import { generateCreatives } from "./creative";
 import { analyzePerformance } from "./analytics";
-import { generateStrategy, planCalendar, suggestIdeas, writeCopy } from "./strategy";
+import { planCalendar, suggestIdeas, writeCopy } from "./strategy";
+import { currentStrategy } from "../strategist/store";
 import { analyzeCompetitor } from "./competitor";
 import { runAgent, type RunScope } from "./orchestrator";
 import type { Brand } from "../db/schema";
@@ -87,7 +88,7 @@ const TOOLS: Anthropic.Beta.BetaTool[] = [
   },
   {
     name: "generate_strategy",
-    description: "Generate a monthly social media strategy.",
+    description: "Start the AI Marketing Strategist (market research, personas, objectives, full strategy, 4-8 content pillars, campaigns and a 30-day calendar). The user confirms objectives and missing information in the Strategist, so this returns a link and the current strategy's status.",
     input_schema: { type: "object", properties: { month: { type: "string", description: "YYYY-MM" }, focus: str }, required: ["month", "focus"], additionalProperties: false },
     strict: true,
   },
@@ -157,8 +158,11 @@ async function runTool(scope: RunScope, brand: Brand, name: ToolName, raw: unkno
     }
     case "generate_strategy": {
       const i = Inputs.generate_strategy.parse(raw);
-      const s = await generateStrategy(scope, brand, /^\d{4}-\d{2}$/.test(i.month) ? i.month : fmt(new Date(), "yyyy-MM"), i.focus);
-      return { summary: { strategyId: s.id, month: s.month }, actions: [{ label: "Review strategy", href: "/strategist" }] };
+      const cur = await currentStrategy(brand.id);
+      return {
+        summary: { status: "needs_user_confirmation", note: "The strategist runs once the user confirms objectives and answers missing questions in the Strategist.", focus: i.focus, currentStrategy: cur ? { version: cur.version, status: cur.status } : null },
+        actions: [{ label: cur ? "Open the strategist" : "Start a strategy", href: cur ? "/strategist" : "/strategist?new=1" }],
+      };
     }
     case "write_caption": {
       const i = Inputs.write_caption.parse(raw);

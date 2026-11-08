@@ -25,12 +25,17 @@ export async function listAccessibleBrands(userId: string) {
     .from(schema.workspaceMembers)
     .where(and(eq(schema.workspaceMembers.userId, userId), eq(schema.workspaceMembers.status, "active")));
   if (!memberships.length) return [];
-  const roleByWs = new Map(memberships.map((m) => [m.workspaceId, m.role]));
+  const byWs = new Map(memberships.map((m) => [m.workspaceId, m]));
   const brands = await db
     .select()
     .from(schema.brands)
-    .where(inArray(schema.brands.workspaceId, [...roleByWs.keys()]));
-  return brands.map((b) => ({ brand: b, role: roleByWs.get(b.workspaceId)! }));
+    .where(inArray(schema.brands.workspaceId, [...byWs.keys()]));
+  return brands.filter((b) => inBrandScope(byWs.get(b.workspaceId)!.brandIds, b.id)).map((b) => ({ brand: b, role: byWs.get(b.workspaceId)!.role }));
+}
+
+/** Client users can be limited to specific brands; null/undefined scope = all workspace brands. */
+export function inBrandScope(brandIds: string[] | null | undefined, brandId: string) {
+  return !Array.isArray(brandIds) || brandIds.includes(brandId);
 }
 
 export type BrandAccess = {
@@ -49,7 +54,7 @@ export async function requireBrand(brandId: string, min: Role = "viewer"): Promi
 export async function requireBrandForUser(session: SessionUser, brandId: string, min: Role): Promise<BrandAccess> {
   const db = await getDb();
   const rows = await db
-    .select({ brand: schema.brands, role: schema.workspaceMembers.role })
+    .select({ brand: schema.brands, role: schema.workspaceMembers.role, brandIds: schema.workspaceMembers.brandIds })
     .from(schema.brands)
     .innerJoin(
       schema.workspaceMembers,
@@ -62,7 +67,7 @@ export async function requireBrandForUser(session: SessionUser, brandId: string,
     .where(eq(schema.brands.id, brandId))
     .limit(1);
   const r = rows[0];
-  if (!r) throw new AccessError();
+  if (!r || !inBrandScope(r.brandIds, r.brand.id)) throw new AccessError();
   if (!roleAtLeast(r.role, min)) throw new AccessError(`This action needs the ${min} role or higher.`);
   return { session, brand: r.brand, role: r.role };
 }
@@ -79,6 +84,10 @@ export async function requireActiveBrand(): Promise<BrandAccess> {
 export async function requireWorkspaceRole(workspaceId: string, min: Role) {
   const session = await getSession();
   if (!session) throw new AccessError("Not signed in.");
+  return requireWorkspaceRoleForUser(session, workspaceId, min);
+}
+
+export async function requireWorkspaceRoleForUser(session: SessionUser, workspaceId: string, min: Role) {
   const db = await getDb();
   const [m] = await db
     .select()
@@ -92,5 +101,7 @@ export async function requireWorkspaceRole(workspaceId: string, min: Role) {
     )
     .limit(1);
   if (!m || !roleAtLeast(m.role, min)) throw new AccessError();
-  return { session, role: m.role };
+  // Brand-scoped (client) members can't administer the workspace as a whole.
+  if (Array.isArray(m.brandIds) && roleAtLeast(min, "admin")) throw new AccessError("Your access is limited to specific brands.");
+  return { session, role: m.role, brandIds: m.brandIds };
 }

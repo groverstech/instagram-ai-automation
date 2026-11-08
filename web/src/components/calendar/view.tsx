@@ -17,7 +17,7 @@ import {
 import { producePostAction, writeCopyAction } from "@/app/actions/ai";
 import { Badge, Button, Field, Input, Notice, PageHeader, Segmented, Select, Textarea } from "@/components/ui";
 import { CreativeThumb, PlatformTag, Rationale, StatusBadge } from "@/components/bits";
-import { PlanCalendarModal } from "@/components/strategy/view";
+import { PlanCalendarModal } from "@/components/calendar/plan-modal";
 import { useRun } from "@/components/hooks";
 import { FORMATS, OBJECTIVES, PLATFORMS, STYLES, objectiveLabel, platformColor } from "@/lib/domain";
 import { roleAtLeast, type Role } from "@/lib/roles";
