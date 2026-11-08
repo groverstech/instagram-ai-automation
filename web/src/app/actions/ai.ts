@@ -12,7 +12,6 @@ import { createCampaign, producePost } from "@/server/agents/campaign";
 import { analyzePerformance } from "@/server/agents/analytics";
 import { analyzeCompetitor } from "@/server/agents/competitor";
 import { chat } from "@/server/agents/assistant";
-import type { CreativeConcept } from "@/server/agents/schemas";
 
 /** Editor access + plan quota + rate limits + concurrency lease around an AI action. */
 function aiAction<T>(brandId: string, kind: "ai" | "ai_heavy", fn: (a: BrandAccess & { scope: { brandId: string; userId: string } }) => Promise<T>) {
@@ -109,7 +108,7 @@ export async function regenerateImageAction(brandId: string, creativeId: string)
   });
 }
 
-export async function updateCreativeAction(brandId: string, creativeId: string, patch: Partial<CreativeConcept> & { style?: string; format?: string }) {
+export async function updateCreativeAction(brandId: string, creativeId: string, patch: unknown) {
   return safe(async () => {
     await requireBrand(brandId, "editor");
     await updateConcept(brandId, creativeId, patch);
@@ -117,10 +116,11 @@ export async function updateCreativeAction(brandId: string, creativeId: string, 
   });
 }
 
-export async function setCreativeStatusAction(brandId: string, creativeId: string, status: "approved" | "rejected" | "draft") {
+export async function setCreativeStatusAction(brandId: string, creativeId: string, status: "approved" | "rejected" | "draft", force = false) {
   return safe(async () => {
-    await requireBrand(brandId, "editor");
-    await setCreativeStatus(brandId, creativeId, status);
+    // Approving past blocking brand-check issues is an admin decision.
+    await requireBrand(brandId, force ? "admin" : "editor");
+    await setCreativeStatus(brandId, creativeId, status, { force });
     revalidatePath("/creative-studio");
   });
 }

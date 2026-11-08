@@ -27,17 +27,15 @@ import {
   type StrategyInputs,
 } from "@/lib/strategy";
 import { normalizeShares } from "./agents";
+import { LostClaimError, STALE_TASK_MS, UserFacingError, assertClaim, isLiveTask } from "../jobs/engine";
 
-export class StrategyError extends Error {}
-/** The background task writing this section no longer owns its job (another worker took over). */
-export class LostClaimError extends Error {}
+export class StrategyError extends UserFacingError {}
+export { LostClaimError, STALE_TASK_MS, isLiveTask };
 
 export type Actor = { userId: string; role: Role };
 type Source = "ai" | "user" | "restore" | "status";
 
 const uid = () => crypto.randomUUID().slice(0, 12);
-/** A running task heartbeats every 20s; no heartbeat for this long means its worker is gone. */
-export const STALE_TASK_MS = 2 * 60 * 1000;
 
 export function docOf(row: StrategyRow): StrategyDoc {
   if (!isDocV2(row.data, row.schemaVersion)) throw new StrategyError("This is a legacy monthly strategy. Create a new strategy to use the Marketing Strategist.");
@@ -88,16 +86,6 @@ export async function activeTask(brandId: string, strategyId: string) {
   return t && isLiveTask(t) ? t : null;
 }
 
-/**
- * A task that is running with a live worker, or that a worker will pick up (queued, or running
- * with a dead worker but attempts left). Such a task blocks edits and new runs on its strategy.
- */
-export function isLiveTask(t: { status: string; heartbeatAt: Date | null; createdAt: Date; attempts: number; maxAttempts: number }) {
-  if (t.status === "queued") return t.attempts < t.maxAttempts;
-  if (t.status !== "running") return false;
-  const fresh = Date.now() - (t.heartbeatAt ?? t.createdAt).getTime() <= STALE_TASK_MS;
-  return fresh || t.attempts < t.maxAttempts;
-}
 
 export async function createStrategy(brandId: string, actorId: string, inputs: StrategyInputs, assumptions: string[], profileRef: StrategyDoc["profileRef"]) {
   const db = await getDb();
@@ -167,8 +155,7 @@ export async function writeAiSection<K extends SectionKey>(brandId: string, id: 
   // is locked, so a worker that lost its claim can never write, even in a race with the new owner.
   const precondition = meta.taskId && meta.claimToken
     ? async (tx: Tx) => {
-        const [t] = await tx.select({ token: schema.aiTasks.claimToken }).from(schema.aiTasks).where(eq(schema.aiTasks.id, meta.taskId!)).for("update");
-        if (t?.token !== meta.claimToken) throw new LostClaimError("This task is now owned by another worker.");
+        await assertClaim(tx, meta.taskId!, meta.claimToken!);
       }
     : undefined;
   return mutate(brandId, id, meta.actorId, { source: "ai", action: `Generated ${SECTION_META[key].label.toLowerCase()}`, sections: [key], precondition }, (doc) => {
@@ -455,6 +442,13 @@ export async function applyCalendar(brandId: string, id: string, actor: Actor) {
     const campaigns = await tx.select({ id: schema.campaigns.id, name: schema.campaigns.name }).from(schema.campaigns).where(eq(schema.campaigns.brandId, brandId));
     const campaignId = (name: string) => (name ? (campaigns.find((c) => c.name.toLowerCase() === name.toLowerCase())?.id ?? null) : null);
     const toInsert = cal.entries.filter((e) => !keptEntryIds.has(e.id));
+    // Creatives produced from these entries: prefer approved, then the newest draft (never rejected).
+    const made = await tx
+      .select({ id: schema.creatives.id, entryId: schema.creatives.calendarEntryId, status: schema.creatives.status, copy: schema.creatives.copy, updatedAt: schema.creatives.updatedAt })
+      .from(schema.creatives)
+      .where(and(eq(schema.creatives.brandId, brandId), eq(schema.creatives.strategyId, id), ne(schema.creatives.status, "rejected")));
+    const creativeFor = (entryId: string) =>
+      made.filter((c) => c.entryId === entryId).sort((a, b) => (a.status === "approved" ? -1 : 0) - (b.status === "approved" ? -1 : 0) || b.updatedAt.getTime() - a.updatedAt.getTime())[0];
     if (toInsert.length) {
       await tx.insert(schema.posts).values(
         toInsert.map((e) => ({
@@ -467,7 +461,9 @@ export async function applyCalendar(brandId: string, id: string, actor: Actor) {
           title: e.hook.slice(0, 140),
           scheduledAt: parseISO(`${e.date}T${e.time}:00`),
           status: "draft" as const,
-          hashtags: e.hashtags,
+          hashtags: ((creativeFor(e.id)?.copy as { hashtags?: string[] } | null)?.hashtags ?? e.hashtags),
+          creativeId: creativeFor(e.id)?.id ?? null,
+          caption: ((creativeFor(e.id)?.copy as { primary?: string } | null)?.primary ?? null),
           copy: { brief: `${e.creativeConcept}\n\nCaption direction: ${e.captionDirection}\nCTA: ${e.cta}${e.campaign ? `\nCampaign: ${e.campaign}` : ""}`, strategyId: id, entryId: e.id },
           rationale: `From marketing strategy v${row.version}`,
         })),

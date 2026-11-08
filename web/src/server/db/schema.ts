@@ -293,6 +293,10 @@ export const campaigns = pgTable("campaigns", {
   createdAt: createdAt(),
 });
 
+export type CreativeSlide = { headline: string; body: string; imagePrompt?: string; imagePath?: string | null; imageError?: string | null };
+export type VisualSource = "ai" | "brand_photo" | "typographic";
+export type LogoPlacement = "top_left" | "top_right" | "bottom_left" | "bottom_right" | "none";
+
 export const creatives = pgTable(
   "creatives",
   {
@@ -310,9 +314,26 @@ export const creatives = pgTable(
     imageError: text("image_error"),
     status: text("status").$type<"draft" | "approved" | "rejected">().notNull().default("draft"),
     runId: text("run_id"),
+    /** single | carousel. Carousel slides after the cover live in `slides`. */
+    kind: text("kind").$type<"single" | "carousel">().notNull().default("single"),
+    slides: jsonb("slides").$type<CreativeSlide[]>().notNull().default([]),
+    /** Copy pack (captions, hooks, CTA, hashtags…) written for this creative. */
+    copy: jsonb("copy").$type<Record<string, unknown> | null>(),
+    /** Brand consistency check: deterministic checks + vision review. */
+    brandCheck: jsonb("brand_check").$type<Record<string, unknown> | null>(),
+    visualSource: text("visual_source").$type<VisualSource>().notNull().default("ai"),
+    /** Approved brand asset used as the visual when visualSource = brand_photo. */
+    sourceAssetId: text("source_asset_id"),
+    logoPlacement: text("logo_placement").$type<LogoPlacement>().notNull().default("top_left"),
+    /** Produced from an approved strategy (calendar entry or campaign concept). */
+    strategyId: text("strategy_id"),
+    calendarEntryId: text("calendar_entry_id"),
+    /** The creative_batch job that created it (idempotent recovery). */
+    taskId: text("task_id"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
     createdAt: createdAt(),
   },
-  (t) => [index("creatives_brand_idx").on(t.brandId)],
+  (t) => [index("creatives_brand_idx").on(t.brandId), index("creatives_task_idx").on(t.taskId), index("creatives_strategy_idx").on(t.strategyId, t.calendarEntryId)],
 );
 
 export type PostStatus =

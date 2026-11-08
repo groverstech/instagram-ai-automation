@@ -10,9 +10,9 @@ export async function register() {
     if (g.__bpTicker) return;
     // Recover strategist jobs interrupted by the previous process shortly after start.
     setTimeout(() => {
-      import("./server/strategist/workflow")
+      import("./server/jobs/all")
         .then((m) => m.recoverDueTasks())
-        .catch((e) => log.error("strategist.boot_recovery_failed", { error: e instanceof Error ? e.message : String(e) }));
+        .catch((e) => log.error("jobs.boot_recovery_failed", { error: e instanceof Error ? e.message : String(e) }));
     }, 5_000);
     g.__bpTicker = setInterval(() => {
       tick().catch((e) => log.error("jobs.tick_failed", { error: e instanceof Error ? e.message : String(e) }));

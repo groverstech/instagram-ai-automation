@@ -98,6 +98,35 @@ export const CreativeConcept = z.object({
 export type CreativeConcept = z.infer<typeof CreativeConcept>;
 export const CreativeConcepts = z.object({ concepts: z.array(CreativeConcept) });
 
+/** Carousel: the concept is the cover; `slides` are the slides after it (2–7). */
+export const CarouselConcept = CreativeConcept.extend({
+  slides: z.array(
+    z.object({
+      headline: z.string().describe("Short slide headline, max ~8 words"),
+      body: z.string().describe("1–2 sentences that move the story forward"),
+      imagePrompt: z.string().describe("Art direction for this slide's photo, or empty string for a type-only slide"),
+    }),
+  ),
+});
+export type CarouselConcept = z.infer<typeof CarouselConcept>;
+export const CarouselConcepts = z.object({ concepts: z.array(CarouselConcept) });
+
+/** Claude vision review of a rendered creative against the approved brand profile. */
+export const BrandReview = z.object({
+  score: z.number().describe("0-100: how well this creative matches the brand"),
+  summary: z.string(),
+  issues: z.array(
+    z.object({
+      severity: z.enum(["blocking", "warning", "info"]),
+      area: z.enum(["palette", "typography", "logo", "imagery", "copy", "layout", "legibility", "tone"]),
+      issue: z.string(),
+      fix: z.string(),
+    }),
+  ),
+  strengths: z.array(z.string()),
+});
+export type BrandReview = z.infer<typeof BrandReview>;
+
 export const CampaignPlan = z.object({
   name: z.string(),
   theme: z.string(),

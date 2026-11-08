@@ -2,8 +2,8 @@ import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/server/db/client";
 import { requireBrand } from "@/server/auth/guard";
 import { enforce, RateLimitError } from "@/server/ratelimit";
-import { renderCreativePng } from "@/server/creative/render";
-import { formatById } from "@/lib/domain";
+import { renderCreativePng, slideCount } from "@/server/creative/render";
+import { FORMAT_IDS, formatById } from "@/lib/domain";
 
 export const runtime = "nodejs";
 
@@ -24,11 +24,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ id: stri
     return new Response("Forbidden", { status: 403 });
   }
   const format = url.searchParams.get("format") ?? undefined;
-  const png = await renderCreativePng(c, brand, format);
+  if (format && !(FORMAT_IDS as readonly string[]).includes(format)) return new Response("Unknown format", { status: 400 });
+  const slide = Number(url.searchParams.get("slide") ?? 0);
+  if (!Number.isInteger(slide) || slide < 0 || slide >= slideCount(c)) return new Response("Unknown slide", { status: 400 });
+  const png = await renderCreativePng(c, brand, format, slide);
   const f = formatById(format ?? c.format);
   const headers: Record<string, string> = { "content-type": "image/png", "cache-control": "private, max-age=60" };
   if (url.searchParams.get("download")) {
-    const slug = `${brand.name}-${(c.concept as { title?: string }).title ?? "creative"}-${f.w}x${f.h}`.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    const slug = `${brand.name}-${(c.concept as { title?: string }).title ?? "creative"}${slideCount(c) > 1 ? `-slide-${slide + 1}` : ""}-${f.w}x${f.h}`.toLowerCase().replace(/[^a-z0-9]+/g, "-");
     headers["content-disposition"] = `attachment; filename="${slug}.png"`;
   }
   return new Response(new Uint8Array(png), { headers });
