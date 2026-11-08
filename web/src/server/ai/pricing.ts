@@ -54,5 +54,6 @@ export function addUsage(a: Usage, b: Usage | undefined): Usage {
     imageCostUsd: (a.imageCostUsd ?? 0) + (b.imageCostUsd ?? 0) || undefined,
     unpricedImages: (a.unpricedImages ?? 0) + (b.unpricedImages ?? 0) || undefined,
     model: b.model ?? a.model,
+    imageModel: b.imageModel ?? a.imageModel,
   };
 }

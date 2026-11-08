@@ -55,6 +55,7 @@ async function aiImage(scope: RunScope, brand: Brand, creative: Creative, prompt
   const provider = imageProvider();
   if (!provider) throw new ImageProviderUnavailable("No image provider is configured.");
   const size = sizeFor(creative.format);
+  // One retry on transient failures (no response, 429, 5xx); refusals and 4xx are not retried.
   const { data } = await runAgent(scope, "design_generation", label, { creativeId: creative.id, provider: provider.name, size }, async () => {
     const img = await provider.generate(prompt, size);
     const key = `brands/${brand.id}/creatives/${creative.id}-${crypto.randomUUID().slice(0, 8)}.png`;
@@ -65,7 +66,7 @@ async function aiImage(scope: RunScope, brand: Brand, creative: Creative, prompt
       provider: provider.name,
       usage: { images: 1, imageModel: img.model, ...(price === null ? { unpricedImages: 1 } : { imageCostUsd: price }) },
     };
-  });
+  }, { retries: 1 });
   return data.key;
 }
 

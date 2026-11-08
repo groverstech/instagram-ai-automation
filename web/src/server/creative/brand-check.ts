@@ -45,14 +45,13 @@ export function deterministicChecks(creative: Creative, brand: Brand, hasLogo: b
       out.push({ id: `contrast_${p.role}`, label: `${p.role} contrast`, status: "warn", detail: "A colour isn't a valid hex value." });
       continue;
     }
-    const min = p.role === "headline" ? 3 : 4.5;
+    // Headline and the bold CTA are large text (3:1 minimum, 4.5:1 recommended); the subline is body text (4.5:1).
+    const min = p.role === "subline" ? 4.5 : 3;
+    const recommended = 4.5;
     const approx = p.overImage ? " (text over imagery; estimated against the scrim)" : "";
-    out.push({
-      id: `contrast_${p.role}`,
-      label: `${p.role[0].toUpperCase()}${p.role.slice(1)} contrast`,
-      status: ratio >= min ? "pass" : p.overImage ? "warn" : "fail",
-      detail: `${ratio}:1 (needs ${min}:1)${approx}`,
-    });
+    const label = p.role === "cta" ? "CTA contrast" : `${p.role[0].toUpperCase()}${p.role.slice(1)} contrast`;
+    const status: CheckStatus = ratio < min ? (p.overImage ? "warn" : "fail") : ratio < recommended ? "warn" : "pass";
+    out.push({ id: `contrast_${p.role}`, label, status, detail: `${ratio}:1 (minimum ${min}:1${min < recommended ? `, recommended ${recommended}:1` : ""})${approx}` });
   }
 
   // Palette: every concept colour should be a brand colour (or a neutral).

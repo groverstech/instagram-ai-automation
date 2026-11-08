@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
 import { storage } from "../storage";
 import { formatById, styleById } from "@/lib/domain";
+import { contrastRatio } from "@/lib/creative-quality";
 import type { CreativeConcept } from "../agents/schemas";
 import type { Brand, Creative } from "../db/schema";
 
@@ -382,12 +383,14 @@ function hexA(hex: string, a: number) {
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
 }
 
+/**
+ * Text colour for a filled shape: the brand-friendly near-black or white if one reaches WCAG 4.5:1,
+ * else pure black, else whichever contrasts most.
+ */
 function contrastOn(hex: string) {
-  const h = hex.replace("#", "");
-  const full = h.length === 3 ? h.split("").map((x) => x + x).join("") : h;
-  const n = parseInt(full, 16);
-  const lum = (0.299 * ((n >> 16) & 255) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
-  return lum > 0.6 ? "#111111" : "#FFFFFF";
+  const options = ["#111111", "#FFFFFF", "#000000"];
+  const ok = options.find((o) => (contrastRatio(hex, o) ?? 0) >= 4.5);
+  return ok ?? options.reduce((best, o) => ((contrastRatio(hex, o) ?? 0) > (contrastRatio(hex, best) ?? 0) ? o : best));
 }
 
 function blend(fgHex: string, bgHex: string, alpha: number) {
