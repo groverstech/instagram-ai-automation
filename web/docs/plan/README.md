@@ -4,8 +4,9 @@
 after explicit approval, and each major deliverable ships as its own pull request.
 
 **Start here:** [Phase 4 plan: Production Readiness & Platform Foundation](PHASE4_PLAN.md). It is
-the plan awaiting approval: 7 PRs, with dependencies, migrations, testing and acceptance
-criteria. Documents 1–9 below are the detailed reference it builds on.
+the detailed plan awaiting approval: six workstreams in 10 PRs, each with architecture,
+database changes, dependencies, external API requirements, effort, testing, acceptance criteria
+and risks. Documents 1–9 below are the detailed reference it builds on.
 
 **Product vision (approved):** an AI marketing operating system.
 
