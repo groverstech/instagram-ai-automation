@@ -1,5 +1,12 @@
 # Phase 4 proposal: from AI tools to an AI marketing operation
 
+> **Superseded (8 Nov 2026).** The approved product direction and the full Phase 4 plan now
+> live in `web/docs/plan/` (branch `claude/ai-social-marketing-platform-n9rlh6`). It covers the
+> platform order Instagram → Facebook → LinkedIn → YouTube, Cloudflare R2, the Advisor / Assisted /
+> Autonomous levels, AI credits, and the effort and cost estimates. This file is kept only as the
+> earlier proposal.
+
+
 **Status:** proposal for review. Nothing here is implemented, and Phase 4 starts only after
 explicit approval.
 
