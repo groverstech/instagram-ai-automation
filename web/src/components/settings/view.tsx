@@ -23,7 +23,7 @@ export function SettingsView(props: {
   brandLimit: number;
   canAddBrand: boolean;
   workspace: { id: string; name: string; type: "creator" | "business" | "agency"; plan: string };
-  billing: {
+  billing: null | {
     configured: boolean;
     prices: { growth: boolean; agency: boolean };
     notice?: "success" | "cancelled";
@@ -32,10 +32,10 @@ export function SettingsView(props: {
     currentPeriodEnd: Date | null;
     cancelAtPeriodEnd: boolean;
   };
-  usage: { brands: number; seats: number; aiRuns: number; socialAccounts: number };
+  usage: { brands: number; seats: number; aiRuns: number; socialAccounts: number } | null;
   members: Member[];
   brands: BrandRow[];
-  integrations: { ai: { provider: string; ready: boolean; model: string }; image: { ready: boolean; provider: string }; embeddings: string; database: string };
+  integrations: { ai: { provider: string; ready: boolean; model: string }; image: { ready: boolean; provider: string }; embeddings: string; database: string } | null;
 }) {
   const isAdmin = roleAtLeast(props.role, "admin") && !props.scoped;
   const [name, setName] = useState(props.workspace.name);
@@ -71,7 +71,7 @@ export function SettingsView(props: {
           </Card>
 
           <Card>
-            <CardHeader title="Team" description={`${props.usage.seats} of ${plan.seats} seats`} />
+            <CardHeader title="Team" description={props.usage ? `${props.usage.seats} of ${plan.seats} seats` : "Your membership"} />
             <CardBody className="space-y-4">
               {isAdmin ? (
                 <div className="flex flex-wrap gap-2">
@@ -127,7 +127,7 @@ export function SettingsView(props: {
           <Card>
             <CardHeader
               title="Brands"
-              description={props.scoped ? "The brands you have access to" : `${props.usage.brands} of ${props.brandLimit} on your plan`}
+              description={props.scoped || !props.usage ? "The brands you have access to" : `${props.usage.brands} of ${props.brandLimit} on your plan`}
               action={
                 props.canAddBrand ? (
                   <Link href="/onboarding" className="inline-flex items-center gap-1 text-[12px] font-medium text-accent hover:text-accent-ink"><Plus className="size-3.5" /> Add brand</Link>
@@ -166,28 +166,37 @@ export function SettingsView(props: {
         </div>
 
         <div className="space-y-6">
+          {props.usage ? (
           <Card>
             <CardHeader title="Plan & usage" action={<Badge tone="accent">{plan.label}</Badge>} />
             <CardBody className="space-y-3">
-              <Meter label="AI runs this month" used={props.usage.aiRuns} max={plan.aiRunsPerMonth} />
-              <Meter label="Brands" used={props.usage.brands} max={plan.brands} />
-              <Meter label="Seats" used={props.usage.seats} max={plan.seats} />
-              <Meter label="Social accounts" used={props.usage.socialAccounts} max={plan.socialAccounts} />
+              <Meter label="AI runs this month" used={props.usage!.aiRuns} max={plan.aiRunsPerMonth} />
+              <Meter label="Brands" used={props.usage!.brands} max={plan.brands} />
+              <Meter label="Seats" used={props.usage!.seats} max={plan.seats} />
+              <Meter label="Social accounts" used={props.usage!.socialAccounts} max={plan.socialAccounts} />
             </CardBody>
           </Card>
 
-          <BillingCard workspaceId={props.workspace.id} currentPlan={props.workspace.plan} isOwner={props.role === "owner"} billing={props.billing} />
+          ) : (
+            <Card>
+              <CardHeader title="Client access" />
+              <CardBody className="text-[13px] text-muted">You have access to {props.brands.length} brand{props.brands.length === 1 ? "" : "s"} in this workspace. Plan, billing and usage are managed by the workspace owner.</CardBody>
+            </Card>
+          )}
+          {props.billing ? <BillingCard workspaceId={props.workspace.id} currentPlan={props.workspace.plan} isOwner={props.role === "owner"} billing={props.billing} /> : null}
 
+          {props.integrations ? (
           <Card>
             <CardHeader title="Integrations" />
             <CardBody className="space-y-3 text-[13px]">
-              <Row k="Reasoning & copy" v={props.integrations.ai.ready ? `${props.integrations.ai.provider} · ${props.integrations.ai.model}` : "Not configured"} ok={props.integrations.ai.ready} />
-              <Row k="Image generation" v={props.integrations.image.ready ? props.integrations.image.provider : "Typographic layouts only"} ok={props.integrations.image.ready} />
-              <Row k="Brand memory embeddings" v={props.integrations.embeddings} ok />
-              <Row k="Database" v={props.integrations.database} ok />
+              <Row k="Reasoning & copy" v={props.integrations!.ai.ready ? `${props.integrations!.ai.provider} · ${props.integrations!.ai.model}` : "Not configured"} ok={props.integrations!.ai.ready} />
+              <Row k="Image generation" v={props.integrations!.image.ready ? props.integrations!.image.provider : "Typographic layouts only"} ok={props.integrations!.image.ready} />
+              <Row k="Brand memory embeddings" v={props.integrations!.embeddings} ok />
+              <Row k="Database" v={props.integrations!.database} ok />
               <p className="text-[11px] text-faint">Keys are read from server environment variables and never sent to the browser.</p>
             </CardBody>
           </Card>
+          ) : null}
         </div>
       </div>
       {scopeFor ? (
@@ -272,7 +281,7 @@ function Row({ k, v, ok }: { k: string; v: string; ok: boolean }) {
 
 const STATUS_TONE: Record<string, string> = { active: "success", trialing: "info", past_due: "warn", unpaid: "danger", canceled: "neutral", incomplete: "warn", incomplete_expired: "neutral", paused: "neutral" };
 
-function BillingCard({ workspaceId, currentPlan, isOwner, billing }: { workspaceId: string; currentPlan: string; isOwner: boolean; billing: Parameters<typeof SettingsView>[0]["billing"] }) {
+function BillingCard({ workspaceId, currentPlan, isOwner, billing }: { workspaceId: string; currentPlan: string; isOwner: boolean; billing: NonNullable<Parameters<typeof SettingsView>[0]["billing"]> }) {
   const { run, busy } = useRun();
   const subscribed = ["active", "trialing", "past_due"].includes(billing.status ?? "");
   const go = (url: string) => {

@@ -18,7 +18,7 @@ process.env.IMAGE_PROVIDER = "none";
 
 type Captured = { body: Record<string, unknown> };
 const captured: Captured[] = [];
-let respond: (body: Record<string, unknown>, n: number) => Response = () => new Response("{}", { status: 500 });
+let respond: (body: Record<string, unknown>, n: number) => Response | Promise<Response> = () => new Response("{}", { status: 500 });
 
 const realFetch = globalThis.fetch;
 globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -449,5 +449,76 @@ describe("all seven agents and the advisor on the real provider path", () => {
     expect(schemaKeys(advReq)).toContain("referencedSections");
     expect(promptOf(advReq)).toContain("Studio Craft");
     expect(promptOf(advReq)).not.toContain("DRAFT-ONLY SUMMARY");
+  }, 30_000);
+});
+
+describe("requests whose response never reaches the app", () => {
+  const AUD = { overview: "o", segments: [], personas: [{ name: "Host", summary: "s", demographics: "Not established", demographicsBasis: "assumption", interests: [], needs: [], painPoints: [], motivations: [], objections: [], contentPreferences: [], platforms: ["instagram"], engagementOpportunities: [] }], insights: [] };
+  const newStrategy = async () => store.createStrategy(brandId, userId, StrategyInputs.parse({ accountType: "business", businessObjectives: ["Grow sales"], platforms: ["instagram"], startDate: "2027-01-04", postsPerWeek: 4 }), [], null);
+
+  it("server crash after the provider processed the request: run marked 'usage unknown', step re-run once on recovery, estimate excludes the lost call", async () => {
+    const db = await getDb();
+    const row = await newStrategy();
+    const [t] = await db.insert(schema.aiTasks).values({ brandId, workspaceId: (await db.select().from(schema.brands).where(eq(schema.brands.id, brandId)))[0].workspaceId, userId, kind: "strategy_workflow", strategyId: row.id, steps: [{ id: "audience", label: "a", status: "pending" }], runAfter: new Date(0) }).returning();
+    let audienceRequests = 0;
+    let sawFirst: () => void = () => {};
+    const firstSeen = new Promise<void>((r) => (sawFirst = r));
+    respond = ((b: Record<string, unknown>) => {
+      if (!isStructured(b) || !schemaKeys(b).includes("personas")) return apiError(400, "invalid_request_error");
+      audienceRequests++;
+      if (audienceRequests === 1) {
+        // The provider received (and would bill) this request, then our process "dies":
+        // the response never arrives.
+        sawFirst();
+        return new Promise<Response>(() => {});
+      }
+      return json(AUD);
+    }) as typeof respond;
+    void wf.runTask(t.id); // worker 1: never finishes
+    await firstSeen;
+    // Worker 1 is now dead from the database's point of view: no heartbeat for over 2 minutes.
+    await db.update(schema.aiTasks).set({ heartbeatAt: new Date(Date.now() - 3 * 60_000) }).where(eq(schema.aiTasks.id, t.id));
+    await wf.recoverDueTasks({ wait: true }); // worker 2 after the "restart"
+
+    const [after] = await db.select().from(schema.aiTasks).where(eq(schema.aiTasks.id, t.id));
+    expect(after).toMatchObject({ status: "succeeded", attempts: 2 });
+    expect(audienceRequests).toBe(2); // the lost request + one re-run: the provider may bill both
+    const runs = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.taskId, t.id));
+    const lost = runs.find((r) => r.status === "failed")!;
+    const good = runs.find((r) => r.status === "succeeded")!;
+    expect(runs).toHaveLength(2);
+    expect(lost.usage).toEqual({ unknownUsageAttempts: 1 });
+    expect(lost.costUsd).toBeNull(); // not priced: we never saw its usage
+    expect(lost.error).toMatch(/may have processed and billed it; its usage is unknown/);
+    expect(good.usage).toMatchObject({ inputTokens: 10_000, outputTokens: 2_000 });
+    // The estimate covers what the app saw; the unknown request is reported separately, never guessed.
+    expect(after.costUsd).toBeCloseTo(good.costUsd!, 6);
+    const cost = await wf.strategyCost(brandId, row.id);
+    expect(cost.unknownUsageCalls).toBe(1);
+    expect(cost.costUsd).toBeCloseTo(good.costUsd!, 6);
+    // The section was written once, by worker 2; worker 1 can never write it (it lost its claim).
+    const revs = await store.revisions(brandId, row.id);
+    expect(revs.filter((r) => r.action === "Generated audience & personas")).toHaveLength(1);
+  });
+
+  it("connection lost mid-request: the attempt is recorded as usage-unknown and the retry is billed normally", async () => {
+    let calls = 0;
+    respond = ((b: Record<string, unknown>) => {
+      if (!isStructured(b) || !schemaKeys(b).includes("personas")) return apiError(400, "invalid_request_error");
+      calls++;
+      if (calls <= 3) throw new TypeError("socket hang up"); // first app-level attempt incl. the SDK's own 2 retries
+      return json(AUD);
+    }) as typeof respond;
+    const row = await newStrategy();
+    const access = await requireBrandForUser({ sessionId: "s", activeBrandId: null, user: { id: userId, email: "s@example.com", name: "S" } }, brandId, "editor");
+    const taskId = await wf.startTask(access, row.id, { sections: ["audience"], inline: true });
+    const db = await getDb();
+    const [t] = await db.select().from(schema.aiTasks).where(eq(schema.aiTasks.id, taskId));
+    expect(t.status).toBe("succeeded");
+    const [run] = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.taskId, taskId));
+    expect(run).toMatchObject({ status: "succeeded", attempts: 2 });
+    expect(run.usage).toMatchObject({ inputTokens: 10_000, outputTokens: 2_000, unknownUsageAttempts: 1 });
+    expect(run.costUsd).toBeCloseTo(estimateCost({ inputTokens: 10_000, outputTokens: 2_000, model: "claude-opus-5-5" }), 6);
+    expect((await wf.strategyCost(brandId, row.id)).unknownUsageCalls).toBe(1);
   }, 30_000);
 });

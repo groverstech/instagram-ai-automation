@@ -19,7 +19,9 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ b
       brandLimit={view.brandLimit}
       canAddBrand={view.canAddBrand}
       workspace={{ id: ws.id, name: ws.name, type: ws.type, plan: ws.plan }}
-      billing={{
+      // Organisation-wide data (usage across all brands, billing, infrastructure) is never sent to
+      // brand-scoped client users: it would reveal brands and activity outside their access.
+      billing={view.scoped ? null : {
         ...billingStatus(),
         notice: billing === "success" || billing === "cancelled" ? billing : undefined,
         hasCustomer: Boolean(ws.stripeCustomerId),
@@ -27,10 +29,10 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ b
         currentPeriodEnd: ws.currentPeriodEnd,
         cancelAtPeriodEnd: ws.cancelAtPeriodEnd,
       }}
-      usage={await usage(ws.id)}
+      usage={view.scoped ? null : await usage(ws.id)}
       members={view.members}
       brands={view.brands}
-      integrations={{ ai: aiStatus(), image: imageStatus(), embeddings: process.env.VOYAGE_API_KEY ? "Voyage AI (voyage-3.5-lite)" : "Local hashing (set VOYAGE_API_KEY for semantic embeddings)", database: process.env.DATABASE_URL ? "PostgreSQL" : "Embedded PGlite (development)" }}
+      integrations={view.scoped ? null : { ai: aiStatus(), image: imageStatus(), embeddings: process.env.VOYAGE_API_KEY ? "Voyage AI (voyage-3.5-lite)" : "Local hashing (set VOYAGE_API_KEY for semantic embeddings)", database: process.env.DATABASE_URL ? "PostgreSQL" : "Embedded PGlite (development)" }}
     />
   );
 }

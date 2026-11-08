@@ -45,7 +45,7 @@ worker. These are the requirements for running it safely with real customers.
 | `STORAGE_DIR` | Upload directory (default `./.data/files`). |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_GROWTH`, `STRIPE_PRICE_AGENCY` | Billing. |
 | `META_APP_ID`/`SECRET`, `LINKEDIN_*`, `GOOGLE_*`, `PINTEREST_*`, `TIKTOK_*` | Social platform OAuth apps. |
-| `CRON_SECRET` | Protects `GET /api/cron/tick` for an external scheduler. |
+| `CRON_SECRET` | Protects `GET /api/cron/tick` for an external scheduler. At least 32 characters (e.g. `openssl rand -hex 32`); with a missing or shorter secret the endpoint refuses every call (503). Send it as `Authorization: Bearer <secret>`. Failed attempts are rate-limited per IP (10 per 15 min). |
 | `RUN_JOBS_IN_PROCESS` | Set `false` when running `npm run worker` separately (Postgres only). |
 | `ANDROID_PACKAGE_NAME`, `ANDROID_CERT_SHA256` | Android TWA asset links (see `ANDROID.md`). |
 

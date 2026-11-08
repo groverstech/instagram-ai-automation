@@ -2,6 +2,7 @@ import "server-only";
 import { desc, eq } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
 import { AGENTS, type AgentId } from "./registry";
+import Anthropic from "@anthropic-ai/sdk";
 import { usageFromError, withRetry, type Usage } from "../ai/llm";
 import { addUsage, estimateCost } from "../ai/pricing";
 
@@ -40,6 +41,10 @@ export async function runAgent<T>(
           const u = usageFromError(e);
           if (u) {
             billed = addUsage(billed, u);
+            billedAny = true;
+          } else if (e instanceof Anthropic.APIConnectionError) {
+            // Sent, but no response (connection dropped / timeout): the provider may have billed it.
+            billed = addUsage(billed, { unknownUsageAttempts: 1 });
             billedAny = true;
           }
           throw e;

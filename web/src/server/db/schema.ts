@@ -450,7 +450,7 @@ export const agentRuns = pgTable(
     output: jsonb("output").$type<unknown>(),
     error: text("error"),
     provider: text("provider"),
-    usage: jsonb("usage").$type<{ inputTokens?: number; outputTokens?: number; webSearches?: number }>(),
+    usage: jsonb("usage").$type<{ inputTokens?: number; outputTokens?: number; webSearches?: number; unknownUsageAttempts?: number }>(),
     model: text("model"),
     costUsd: real("cost_usd"),
     attempts: integer("attempts"),

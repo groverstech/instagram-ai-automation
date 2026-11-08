@@ -29,6 +29,8 @@ import {
 import { normalizeShares } from "./agents";
 
 export class StrategyError extends Error {}
+/** The background task writing this section no longer owns its job (another worker took over). */
+export class LostClaimError extends Error {}
 
 export type Actor = { userId: string; role: Role };
 type Source = "ai" | "user" | "restore" | "status";
@@ -114,7 +116,8 @@ export async function createStrategy(brandId: string, actorId: string, inputs: S
   });
 }
 
-type MutateOpts = { source: Source; action: string; sections?: SectionKey[]; note?: string; expectRev?: number; statuses?: StrategyRow["status"][]; ignoreTask?: boolean };
+type Tx = Parameters<Parameters<Awaited<ReturnType<typeof getDb>>["transaction"]>[0]>[0];
+type MutateOpts = { source: Source; action: string; sections?: SectionKey[]; note?: string; expectRev?: number; statuses?: StrategyRow["status"][]; ignoreTask?: boolean; precondition?: (tx: Tx) => Promise<void> };
 
 /**
  * The single write path for strategy documents. Row-locked, brand-scoped, optimistic-concurrency
@@ -127,6 +130,7 @@ export async function mutate(brandId: string, id: string, actorId: string | null
   return db.transaction(async (tx) => {
     const [row] = await tx.select().from(schema.strategies).where(and(eq(schema.strategies.id, id), eq(schema.strategies.brandId, brandId))).for("update");
     if (!row) throw new StrategyError("Strategy not found.");
+    await opts.precondition?.(tx);
     const allowed = opts.statuses ?? ["draft", "under_review"];
     if (!allowed.includes(row.status)) {
       throw new StrategyError(
@@ -158,8 +162,16 @@ function markStale(doc: StrategyDoc, key: SectionKey) {
 }
 
 /** Store an AI-generated section (workflow). Downstream sections are flagged as possibly stale. */
-export async function writeAiSection<K extends SectionKey>(brandId: string, id: string, key: K, data: SectionData[K], meta: { runId: string | null; provider: string | null; actorId: string; taskId?: string }) {
-  return mutate(brandId, id, meta.actorId, { source: "ai", action: `Generated ${SECTION_META[key].label.toLowerCase()}`, sections: [key] }, (doc) => {
+export async function writeAiSection<K extends SectionKey>(brandId: string, id: string, key: K, data: SectionData[K], meta: { runId: string | null; provider: string | null; actorId: string; taskId?: string; claimToken?: string }) {
+  // For background tasks, the write and the ownership check happen in one transaction: the task row
+  // is locked, so a worker that lost its claim can never write, even in a race with the new owner.
+  const precondition = meta.taskId && meta.claimToken
+    ? async (tx: Tx) => {
+        const [t] = await tx.select({ token: schema.aiTasks.claimToken }).from(schema.aiTasks).where(eq(schema.aiTasks.id, meta.taskId!)).for("update");
+        if (t?.token !== meta.claimToken) throw new LostClaimError("This task is now owned by another worker.");
+      }
+    : undefined;
+  return mutate(brandId, id, meta.actorId, { source: "ai", action: `Generated ${SECTION_META[key].label.toLowerCase()}`, sections: [key], precondition }, (doc) => {
     const env: Envelope<SectionData[K]> = { data, origin: "ai", generatedAt: new Date().toISOString(), runId: meta.runId, provider: meta.provider, editedAt: null, editedBy: null, stale: false, taskId: meta.taskId ?? null };
     (doc.sections as Record<string, unknown>)[key] = env;
     markStale(doc, key);

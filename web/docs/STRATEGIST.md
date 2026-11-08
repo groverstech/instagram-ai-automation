@@ -94,8 +94,11 @@ Strategist runs are persistent jobs in `ai_tasks` (`attempts`, `max_attempts` = 
   claim token and increments `attempts`. Only queued tasks whose `run_after` has passed, or running
   tasks whose worker stopped heartbeating for 2 minutes, can be claimed. Two workers never run one
   task at the same time.
-- **Lost claim:** heartbeats and section writes check the token. A worker that lost its claim (it
-  was paused and another worker took over) stops without writing.
+- **Lost claim:** heartbeats check the token, and each section write locks the task row and checks
+  the token in the same transaction. A worker that lost its claim (it was paused for over 2 minutes
+  and another worker took over) can never write. Its in-flight AI call may still complete and be
+  billed by the provider, so in that rare case the same step can be paid for twice; both calls
+  appear in the ledger.
 - **No duplicate work:** each section records the task that generated it (`envelope.taskId`). A
   recovered task skips any step whose section it already saved, including a crash between saving
   and marking the step done. The agent run that was in flight when a worker died is closed as
@@ -120,8 +123,26 @@ Strategist runs are persistent jobs in `ai_tasks` (`attempts`, `max_attempts` = 
   rejected (refusal, `max_tokens` truncation, invalid JSON, wrong shape, invalid pillar count)
   carries its usage on the error; `runAgent` adds each attempt's usage exactly once and records it
   even when the run fails.
-- Requests that got no response (network errors, 5xx) carry no usage, so they add nothing; the
-  attempt count still shows they happened.
+- **HTTP errors (4xx/5xx)** returned by the API carry no usage and are not billed by the provider;
+  they add nothing.
+- **Usage unknown:** a request that may have reached the provider but whose response never reached
+  the app is recorded as `usage.unknownUsageAttempts` and is **not priced**. That covers a dropped
+  connection or timeout (`APIConnectionError`), and a request in flight when the worker died (the
+  orphaned run is closed on recovery as "Interrupted … usage unknown"). The provider may have
+  billed these requests, so the estimate can be lower than the real bill. The UI shows "+N requests
+  with unknown usage" next to the estimate. Billing is not exactly-once; the Anthropic Console is
+  the source of truth.
+- The SDK's own HTTP retries inside one app-level attempt aren't individually visible; an
+  app-level attempt that ends in a connection error counts as one unknown-usage request.
+
+| Outcome of a request | Ledger (`agent_runs`) | In the estimate |
+|---|---|---|
+| Succeeded | `succeeded`, usage from the response | Priced |
+| Rejected by the app after a response (invalid output, truncation, refusal) | usage of every such attempt added to the run (success or failure) | Priced |
+| Retried within `runAgent` | one row; `attempts` counts tries; usage = sum of billed tries | Priced once per try |
+| API error response (4xx/5xx) | `attempts` counted; no usage | Nothing (not billed) |
+| Connection dropped / timeout | `unknownUsageAttempts += 1` | Not priced; shown as unknown |
+| Worker died mid-request | run closed on recovery as Interrupted, `unknownUsageAttempts: 1`, cost null; the step re-runs as a new row | Re-run priced; lost call shown as unknown |
 - Cost is an **estimate** from usage (`src/server/ai/pricing.ts`). It is shown per task and per
   strategy.
 - Logs carry ids, agent names and error messages, never prompts, brand content or keys.

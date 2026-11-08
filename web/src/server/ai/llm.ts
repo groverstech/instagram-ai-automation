@@ -24,7 +24,19 @@ export type StructuredRequest<T> = {
   mock: () => T;
 };
 
-export type Usage = { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number; cacheWriteTokens?: number; webSearches?: number; model?: string };
+export type Usage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  webSearches?: number;
+  model?: string;
+  /**
+   * Requests whose outcome is unknown: the request may have reached the provider (and been billed)
+   * but no response reached the app (connection dropped, timeout, worker died). Not priced.
+   */
+  unknownUsageAttempts?: number;
+};
 
 /** A search result the model actually received from the web search tool. */
 export type ResearchSource = { url: string; title: string; publishedAt: string | null; cited: boolean };

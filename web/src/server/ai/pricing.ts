@@ -47,6 +47,7 @@ export function addUsage(a: Usage, b: Usage | undefined): Usage {
     cacheReadTokens: (a.cacheReadTokens ?? 0) + (b.cacheReadTokens ?? 0),
     cacheWriteTokens: (a.cacheWriteTokens ?? 0) + (b.cacheWriteTokens ?? 0),
     webSearches: (a.webSearches ?? 0) + (b.webSearches ?? 0),
+    unknownUsageAttempts: (a.unknownUsageAttempts ?? 0) + (b.unknownUsageAttempts ?? 0) || undefined,
     model: b.model ?? a.model,
   };
 }

@@ -47,7 +47,7 @@ type Props = {
   revisions: Revision[];
   task: Task | null;
   running: boolean;
-  cost: { costUsd: number; inputTokens: number; outputTokens: number; webSearches: number } | null;
+  cost: { costUsd: number; inputTokens: number; outputTokens: number; webSearches: number; unknownUsageCalls?: number } | null;
   chat: AdvisorMsg[];
   startNew: boolean;
   initialTab?: string;
@@ -185,7 +185,12 @@ export function StrategistWorkspace(p: Props) {
             <span>·</span>
             <span>Updated {formatDistanceToNow(new Date(s.updatedAt), { addSuffix: true })}</span>
             {s.approvedAt ? <span>· Approved {format(new Date(s.approvedAt), "d MMM yyyy")}{s.approvedByName ? ` by ${s.approvedByName}` : ""}</span> : null}
-            {p.cost && p.cost.costUsd > 0 ? <span title={`${p.cost.inputTokens.toLocaleString()} input / ${p.cost.outputTokens.toLocaleString()} output tokens · ${p.cost.webSearches} web searches`}>· AI cost ≈ {money(p.cost.costUsd)}</span> : null}
+            {p.cost && p.cost.costUsd > 0 ? <span title={`${p.cost.inputTokens.toLocaleString()} input / ${p.cost.outputTokens.toLocaleString()} output tokens · ${p.cost.webSearches} web searches. An estimate from reported usage; the Anthropic Console is the billing record.`}>· AI cost ≈ {money(p.cost.costUsd)}</span> : null}
+            {p.cost?.unknownUsageCalls ? (
+              <span className="text-warn" title="Requests that may have reached the AI provider but whose response never arrived (connection lost, timeout or server restart). The provider may have billed them; their cost isn't in the estimate.">
+                · +{p.cost.unknownUsageCalls} request{p.cost.unknownUsageCalls === 1 ? "" : "s"} with unknown usage
+              </span>
+            ) : null}
             {doc.profileRef ? <span>· Brand profile v{doc.profileRef.version}</span> : null}
           </div>
           <div className="flex flex-wrap gap-2">

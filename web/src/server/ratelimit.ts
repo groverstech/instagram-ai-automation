@@ -22,7 +22,7 @@ export class RateLimitError extends Error {
   }
 }
 
-export type LimitKind = "ai" | "ai_heavy" | "upload" | "render" | "login";
+export type LimitKind = "ai" | "ai_heavy" | "upload" | "render" | "login" | "cron_auth";
 type Scope = "user" | "org" | "key";
 type Rule = { scope: Scope; limit: number; windowSec: number };
 
@@ -43,6 +43,8 @@ export const RULES: Record<LimitKind, Rule[]> = {
   ],
   render: [{ scope: "user", limit: 600, windowSec: 60 }],
   login: [{ scope: "key", limit: 10, windowSec: 900 }],
+  /** Failed cron authentications per client IP (successful calls are not counted). */
+  cron_auth: [{ scope: "key", limit: 10, windowSec: 900 }],
 };
 
 /** Simultaneously running AI tasks. */
@@ -60,6 +62,7 @@ const MESSAGES: Record<LimitKind, string> = {
   upload: "Too many uploads in a short time.",
   render: "Too many image renders in a short time.",
   login: "Too many sign-in attempts.",
+  cron_auth: "Too many failed cron authentication attempts.",
 };
 
 function retryText(sec: number) {

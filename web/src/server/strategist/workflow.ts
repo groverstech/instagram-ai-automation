@@ -10,7 +10,7 @@ import type { BrandAccess } from "../auth/guard";
 import { log } from "../log";
 import { SECTION_KEYS, SECTION_META, missingSections, type SectionKey } from "@/lib/strategy";
 import { SECTION_RUNNERS, regenerateEntry, type AgentCtx } from "./agents";
-import { STALE_TASK_MS, StrategyError, activeTask, docOf, getStrategy, isLiveTask, replaceEntryFromAi, writeAiSection } from "./store";
+import { LostClaimError, STALE_TASK_MS, StrategyError, activeTask, docOf, getStrategy, isLiveTask, replaceEntryFromAi, writeAiSection } from "./store";
 
 /**
  * Strategist jobs are persistent rows in ai_tasks.
@@ -131,12 +131,6 @@ async function claim(taskId: string): Promise<(AiTask & { token: string }) | nul
   return t ? { ...t, token } : null;
 }
 
-async function owns(taskId: string, token: string) {
-  const db = await getDb();
-  const [t] = await db.select({ token: schema.aiTasks.claimToken }).from(schema.aiTasks).where(eq(schema.aiTasks.id, taskId));
-  return t?.token === token;
-}
-
 /** Update the task only while this worker still owns it. Returns false if the claim was lost. */
 async function save(taskId: string, token: string, set: Partial<typeof schema.aiTasks.$inferInsert>) {
   const db = await getDb();
@@ -153,7 +147,7 @@ async function closeOrphanRuns(taskId: string) {
   const db = await getDb();
   await db
     .update(schema.agentRuns)
-    .set({ status: "failed", error: "Interrupted: the worker stopped during this run; no usage was reported.", finishedAt: new Date() })
+    .set({ status: "failed", error: "Interrupted: the worker stopped while this request was in flight. The provider may have processed and billed it; its usage is unknown.", usage: { unknownUsageAttempts: 1 }, finishedAt: new Date() })
     .where(and(eq(schema.agentRuns.taskId, taskId), eq(schema.agentRuns.status, "running")));
 }
 
@@ -233,8 +227,13 @@ export async function runTask(taskId: string): Promise<"claimed_elsewhere" | "wa
       try {
         const ctx: AgentCtx = { scope: { brandId: t.brandId, userId: t.userId, taskId }, brand: brand as Brand, doc, strategyId: row.id, instruction: instruction || undefined, reviewerNote: row.revisionNote };
         const out = await SECTION_RUNNERS[key](ctx);
-        if (lost || !(await owns(taskId, token))) return (outcome = "lost_claim");
-        await writeAiSection(t.brandId, row.id, key, out.data as never, { runId: out.runIds.at(-1) ?? null, provider: out.provider, actorId: t.userId, taskId });
+        if (lost) return (outcome = "lost_claim");
+        try {
+          await writeAiSection(t.brandId, row.id, key, out.data as never, { runId: out.runIds.at(-1) ?? null, provider: out.provider, actorId: t.userId, taskId, claimToken: token });
+        } catch (e) {
+          if (e instanceof LostClaimError) return (outcome = "lost_claim");
+          throw e;
+        }
         step.status = "done";
         step.finishedAt = new Date().toISOString();
         await save(taskId, token, { steps });
@@ -353,10 +352,11 @@ export async function strategyCost(brandId: string, strategyId: string) {
       inTok: sql<number>`coalesce(sum((${schema.agentRuns.usage}->>'inputTokens')::numeric), 0)`,
       outTok: sql<number>`coalesce(sum((${schema.agentRuns.usage}->>'outputTokens')::numeric), 0)`,
       searches: sql<number>`coalesce(sum((${schema.agentRuns.usage}->>'webSearches')::numeric), 0)`,
+      unknown: sql<number>`coalesce(sum((${schema.agentRuns.usage}->>'unknownUsageAttempts')::numeric), 0)`,
     })
     .from(schema.agentRuns)
     .where(and(eq(schema.agentRuns.brandId, brandId), sql`${schema.agentRuns.input}->>'strategyId' = ${strategyId}`));
-  return { costUsd: Number(r?.cost ?? 0), inputTokens: Number(r?.inTok ?? 0), outputTokens: Number(r?.outTok ?? 0), webSearches: Number(r?.searches ?? 0) };
+  return { costUsd: Number(r?.cost ?? 0), inputTokens: Number(r?.inTok ?? 0), outputTokens: Number(r?.outTok ?? 0), webSearches: Number(r?.searches ?? 0), unknownUsageCalls: Number(r?.unknown ?? 0) };
 }
 
 /** Sections a resumed workflow should (re)generate: anything missing. */
