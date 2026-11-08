@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import { listAccessibleBrands, requireActiveBrand } from "@/server/auth/guard";
 import { getDb, schema } from "@/server/db/client";
 import { aiStatus } from "@/server/ai/llm";
@@ -9,6 +9,9 @@ import { advisorHistory } from "@/server/strategist/advisor";
 import { webSearchEnabled } from "@/server/strategist/agents";
 import { StrategistWorkspace } from "@/components/strategist/workspace";
 import { isDocV2, type StrategyDoc } from "@/lib/strategy";
+import { imageStatus } from "@/server/ai/image";
+import { brandPhotos } from "@/server/creative/visuals";
+import { latestProfile, profileOf } from "@/server/agents/context";
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ v?: string; new?: string; tab?: string }> }) {
   const sp = await searchParams;
@@ -19,6 +22,19 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ v
   const v2 = row && isDocV2(row.data, row.schemaVersion) ? (row.data as unknown as StrategyDoc) : null;
   const [revs, task, running, cost] = row && v2 ? await Promise.all([revisions(brand.id, row.id), latestTask(brand.id, row.id), activeTask(brand.id, row.id), strategyCost(brand.id, row.id)]) : [[], null, null, null];
   const db = await getDb();
+  const [linked, photos, prof] = row
+    ? await Promise.all([
+        db
+          .select({ id: schema.creatives.id, entryId: schema.creatives.calendarEntryId, status: schema.creatives.status, format: schema.creatives.format, updatedAt: schema.creatives.updatedAt })
+          .from(schema.creatives)
+          .where(and(eq(schema.creatives.brandId, brand.id), eq(schema.creatives.strategyId, row.id), ne(schema.creatives.status, "rejected")))
+          .orderBy(desc(schema.creatives.createdAt)),
+        brandPhotos(brand.id),
+        latestProfile(brand.id),
+      ])
+    : [[], [], null];
+  const img = imageStatus();
+  const preferred = prof ? (profileOf(prof.approved ?? prof.latest)?.visual.preferredStyles ?? []) : [];
   const names = row ? await db.select({ id: schema.users.id, name: schema.users.name }).from(schema.users).where(eq(schema.users.id, row.approvedBy ?? "-")) : [];
   return (
     <StrategistWorkspace
@@ -54,6 +70,13 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ v
       running={Boolean(running)}
       cost={cost}
       chat={chat.map((m) => ({ id: m.id, role: m.role, content: m.content, meta: m.meta }))}
+      production={{
+        creatives: linked.filter((c) => c.entryId).map((c) => ({ id: c.id, entryId: c.entryId!, status: c.status, format: c.format, v: c.updatedAt.getTime() })),
+        style: preferred[0] ?? "premium_editorial",
+        visualSource: img.ready ? "ai" : photos.length ? "brand_photo" : "typographic",
+        imageReady: img.ready,
+        photos: photos.length,
+      }}
       startNew={sp.new === "1"}
       initialTab={sp.tab}
     />

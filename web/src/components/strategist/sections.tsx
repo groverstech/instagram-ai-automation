@@ -1,7 +1,8 @@
 "use client";
 import { useState } from "react";
+import Link from "next/link";
 import { format, parseISO } from "date-fns";
-import { Check, ExternalLink, Info, Plus, ShieldCheck, Trash2, TriangleAlert } from "lucide-react";
+import { Check, ExternalLink, Info, Palette, Plus, ShieldCheck, Trash2, TriangleAlert } from "lucide-react";
 import { editSectionAction, itemApprovalAction } from "@/app/actions/strategist";
 import { Badge, Button, Card, CardBody, Notice, Select } from "@/components/ui";
 import { PlatformTag } from "@/components/bits";
@@ -932,7 +933,12 @@ export function CampaignsView({ env, platforms }: { env?: Envelope<CampaignsSect
                 <div className="flex flex-wrap items-center gap-3">{x.platforms.map((p) => <PlatformTag key={p} platform={p} />)}</div>
                 <div className="flex flex-wrap gap-1.5">{x.formats.map((f) => <Pill key={f}>{f}</Pill>)}</div>
                 <div><Kicker>Success metrics</Kicker><Bullets items={x.metrics} /></div>
-                <div className="pt-1"><ApproveToggle section="campaigns" id={x.id} approved={x.approved} /></div>
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <ApproveToggle section="campaigns" id={x.id} approved={x.approved} />
+                  <Link href={`/creative-studio?${new URLSearchParams({ brief: `${x.name}: ${x.keyMessage}\n${x.concept}\nCreative direction: ${x.creativeDirection}\nCTA: ${x.cta}`.slice(0, 1900), objective: x.objective })}`} className="inline-flex items-center gap-1.5 text-[12px] font-medium text-accent-ink hover:underline">
+                    <Palette className="size-3.5" /> Create creative
+                  </Link>
+                </div>
               </CardBody>
             </Card>
           ))}
