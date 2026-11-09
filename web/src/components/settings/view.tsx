@@ -96,8 +96,8 @@ export function SettingsView(props: {
               ) : null}
               <ul className="divide-y divide-line">
                 {props.members.map((m) => (
-                  <li key={m.id} className="flex items-center gap-3 py-2.5">
-                    <div className="min-w-0 flex-1">
+                  <li key={m.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5">
+                    <div className="min-w-[min(100%,14rem)] flex-1">
                       <p className="truncate text-[13px] font-medium">{m.name ?? m.invitedEmail}</p>
                       <p className="truncate text-[11px] text-faint">{m.email ?? m.invitedEmail}{m.status === "invited" ? " · invitation pending" : ""}{m.brandIds ? ` · client access: ${m.brandIds.map(brandName).join(", ")}` : m.role === "owner" || m.role === "admin" ? " · all brands" : ""}</p>
                     </div>
