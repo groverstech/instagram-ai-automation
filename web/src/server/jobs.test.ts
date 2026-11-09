@@ -92,6 +92,35 @@ describe("duplicate-publishing protection", () => {
     expect(j.status).toBe("failed");
   });
 
+  it("re-runs an interrupted publish job whose publish never started, and publishes once", async () => {
+    // The previous worker claimed the job but died before the post moved to "publishing": nothing
+    // was sent, so the post must not be left silently "scheduled" with a dead job.
+    const calls = stubLinkedIn(1);
+    const post = await approvedPost();
+    const db = await getDb();
+    const [job] = await db
+      .insert(schema.jobs)
+      .values({ type: "publish_post", payload: { postId: post.id }, status: "running", lockedAt: new Date(Date.now() - 11 * 60 * 1000), attempts: 1, runAt: new Date(Date.now() - 12 * 60 * 1000) })
+      .returning();
+    const res = await runDueJobs(handlers, 10, interruptedHooks);
+    expect(res.find((r) => r.id === job.id)?.ok).toBe(true);
+    expect(calls()).toBe(1);
+    const [p] = await db.select().from(schema.posts).where(eq(schema.posts.id, post.id));
+    expect(p.status).toBe("published");
+  });
+
+  it("an interrupted job for a post that already went out doesn't publish it again", async () => {
+    const calls = stubLinkedIn(1);
+    const post = await approvedPost();
+    const db = await getDb();
+    await db.update(schema.posts).set({ status: "published", externalId: "urn:li:share:done" }).where(eq(schema.posts.id, post.id));
+    await db.insert(schema.jobs).values({ type: "publish_post", payload: { postId: post.id }, status: "running", lockedAt: new Date(Date.now() - 11 * 60 * 1000), attempts: 1, runAt: new Date(Date.now() - 12 * 60 * 1000) });
+    await runDueJobs(handlers, 10, interruptedHooks);
+    expect(calls()).toBe(0);
+    const [p] = await db.select().from(schema.posts).where(eq(schema.posts.id, post.id));
+    expect(p).toMatchObject({ status: "published", externalId: "urn:li:share:done" });
+  });
+
   it("still retries interrupted jobs that are safe to repeat (metric syncs)", async () => {
     const db = await getDb();
     const sync = vi.spyOn(handlers, "sync_metrics").mockResolvedValue(undefined as never);

@@ -30,6 +30,9 @@ marked **pending**.
   - `DEPLOY_ENV` (development, test, demo, staging, production).
   - `src/server/config.ts` validates every variable at boot for the web, worker and migrate roles.
   - In staging and production, errors stop the process; elsewhere they are warnings.
+  - **Fail closed:** an unknown `DEPLOY_ENV` is treated as strict and refused; invalid values of
+    other settings are errors rather than silent defaults; the container image defaults to
+    `DEPLOY_ENV=production`, so forgetting it can't switch the safeguards off.
   - Only variable names are ever reported.
 - **Consequences:**
   - Existing local, demo and E2E setups keep working unchanged.
@@ -45,8 +48,9 @@ marked **pending**.
   - On Postgres, migrations run on one connection holding a session advisory lock
     (`src/server/db/migrate.ts`).
   - `npm run db:migrate` (the `migrate` role) is the deploy step.
-  - `MIGRATE_ON_START` stays `true` by default for backward compatibility; it's recommended
-    `false` in staging and production.
+  - App instances **never migrate on start in staging or production** (`MIGRATE_ON_START` is off
+    there by default, and production refuses `true`). Development, demo and test keep migrating
+    on start, so local setups are unchanged.
   - Readiness reports pending migrations.
   - All migrations are additive (expand and contract).
 - **Consequences:**
@@ -95,8 +99,13 @@ marked **pending**.
   - IPs are stored only as keyed hashes. Details pass through log redaction.
   - Rows survive user and brand deletion (no cascades).
   - Writing an audit event never breaks the action it records.
-  - Unscoped owners and admins can read the log in **Settings → Security log**; client users
-    can't.
+  - Owners and admins read it in **Settings → Security log**. What they see follows their
+    membership's brand scope, never the role alone: whole-organisation access sees organisation
+    events and members' sign-ins (only from when each member joined); a brand-scoped viewer would
+    see only those brands' events. Editors, viewers, client users and outsiders are refused.
+  - Refused access (other organisations' brands or workspaces, out-of-scope brands, insufficient
+    role, the log itself) is recorded as `access.denied` against the organisation that owns the
+    resource. Viewing the log is recorded too (`audit.view`, at most hourly per viewer).
 - **Future phases:** autonomous-agent actions (P4-6 `agent_actions`) and credit changes (PR 4.5)
   build on the same pattern. Retention and export come in PR 4.9.
 
@@ -121,8 +130,10 @@ marked **pending**.
 - **Decision:**
   - The post moves to `publishing` with one conditional update, so only one caller can publish.
   - The queue lets each job type decide what happens when its previous run was interrupted.
-    Publishing is **never re-sent automatically**: the post is marked failed with "check the
-    account before retrying". Metric syncs, which are idempotent, retry normally.
+    A publish that had started (post in `publishing`) is **never re-sent automatically**: the post
+    is marked failed with "check the account before retrying". One interrupted before it started
+    runs again (nothing was sent, and the atomic claim still blocks a post that already went
+    out). Metric syncs, which are idempotent, retry normally.
   - Workers take queue roles and drain gracefully.
 - **Consequences:**
   - A crash can at worst leave a post *maybe* published, flagged for a human, never published twice

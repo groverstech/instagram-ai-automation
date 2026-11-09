@@ -18,12 +18,14 @@ export const handlers = {
 
 /** What to do when a job's previous run was interrupted mid-flight (see queue.ts). */
 export const interruptedHooks: Record<string, InterruptedHook> = {
-  // Publishing has an external side effect: the platform may already have the post. Never
-  // re-publish automatically. Mark the post failed with a "check the account" message instead.
+  // Publishing has an external side effect. If the post had reached "publishing", the platform
+  // may already have it: never re-publish automatically; mark it failed with a "check the
+  // account" message instead. If it hadn't (the worker died before starting), nothing was sent,
+  // so the job runs again; publishPost's atomic claim still stops a post that already went out.
   async publish_post(payload) {
     const post = await markPublishInterrupted(String(payload.postId));
-    log.warn("jobs.publish_interrupted", { postId: String(payload.postId), marked: Boolean(post) });
-    return true;
+    log.warn("jobs.publish_interrupted", { postId: String(payload.postId), flaggedForCheck: Boolean(post) });
+    return Boolean(post);
   },
   // sync_metrics only reads from platforms and overwrites snapshots: safe to simply run again.
 };

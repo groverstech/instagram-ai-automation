@@ -193,7 +193,6 @@ export async function approvePost(brandId: string, postId: string, userId: strin
   return p;
 }
 
-
 /**
  * A publish job whose worker stopped mid-flight (stale lock). The platform may or may not have
  * received the post, so never publish again automatically: mark the post failed with a message

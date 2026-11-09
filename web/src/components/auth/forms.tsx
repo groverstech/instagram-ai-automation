@@ -1,11 +1,11 @@
 "use client";
 import Link from "next/link";
 import { useActionState } from "react";
-import { logIn, signUp } from "@/app/actions/auth";
+import { logIn, signUp, type AuthFormState } from "@/app/actions/auth";
 import { Button, Field, Input, Notice, Select } from "@/components/ui";
 
 export function LoginForm() {
-  const [state, action, pending] = useActionState(logIn, {});
+  const [state, action, pending] = useActionState(logIn, {} as AuthFormState);
   return (
     <form action={action} className="w-full max-w-sm space-y-4">
       <div className="mb-8">
@@ -14,7 +14,8 @@ export function LoginForm() {
       </div>
       {state.error ? <Notice tone="danger">{state.error}</Notice> : null}
       <Field label="Email">
-        <Input name="email" type="email" autoComplete="email" required />
+        {/* React resets the form after the action; defaultValue brings back what was typed. */}
+        <Input name="email" type="email" autoComplete="email" defaultValue={state.values?.email} required />
       </Field>
       <Field label="Password">
         <Input name="password" type="password" autoComplete="current-password" required />
@@ -33,7 +34,7 @@ export function LoginForm() {
 }
 
 export function SignupForm() {
-  const [state, action, pending] = useActionState(signUp, {});
+  const [state, action, pending] = useActionState(signUp, {} as AuthFormState);
   return (
     <form action={action} className="w-full max-w-sm space-y-4">
       <div className="mb-8">
@@ -42,20 +43,20 @@ export function SignupForm() {
       </div>
       {state.error ? <Notice tone="danger">{state.error}</Notice> : null}
       <Field label="Your name">
-        <Input name="name" autoComplete="name" required />
+        <Input name="name" autoComplete="name" defaultValue={state.values?.name} required />
       </Field>
       <Field label="Work email">
-        <Input name="email" type="email" autoComplete="email" required />
+        <Input name="email" type="email" autoComplete="email" defaultValue={state.values?.email} required />
       </Field>
       <Field label="Password" hint="8+ characters">
         <Input name="password" type="password" autoComplete="new-password" minLength={8} required />
       </Field>
       <div className="grid grid-cols-[1.4fr_1fr] gap-3">
         <Field label="Workspace name">
-          <Input name="workspace" placeholder="Acme Studio" required />
+          <Input name="workspace" placeholder="Acme Studio" defaultValue={state.values?.workspace} required />
         </Field>
         <Field label="You are">
-          <Select name="type" defaultValue="business">
+          <Select name="type" defaultValue={state.values?.type || "business"}>
             <option value="creator">Creator</option>
             <option value="business">Business</option>
             <option value="agency">Agency</option>

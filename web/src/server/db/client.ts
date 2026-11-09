@@ -6,6 +6,7 @@ import { drizzle as drizzlePg } from "drizzle-orm/postgres-js";
 import { migrate as migratePglite } from "drizzle-orm/pglite/migrator";
 import * as schema from "./schema";
 import { MIGRATIONS_DIR, migrationStatus, runPostgresMigrations } from "./migrate";
+import { migrateOnStart } from "../config";
 
 export type DB = PgliteDatabase<typeof schema>;
 
@@ -18,13 +19,15 @@ async function create(): Promise<DB> {
   const url = process.env.DATABASE_URL;
   if (url) {
     // Migrations: under an advisory lock on their own connection (src/server/db/migrate.ts).
-    // MIGRATE_ON_START=false leaves them to the `npm run db:migrate` deploy step.
-    if (process.env.MIGRATE_ON_START !== "false") await runPostgresMigrations(url, MIGRATIONS);
+    // Staging and production never migrate here unless MIGRATE_ON_START=true (config.ts): the
+    // `npm run db:migrate` deploy step does it. Readiness reports pending migrations.
+    const autoMigrate = migrateOnStart();
+    if (autoMigrate) await runPostgresMigrations(url, MIGRATIONS);
     const { default: postgres } = await import("postgres");
     const max = Number(process.env.DATABASE_POOL_MAX ?? 10);
     const sql = postgres(url, { max: Number.isFinite(max) && max > 0 ? max : 10, prepare: false, onnotice: () => {} });
     const db = drizzlePg(sql, { schema });
-    if (process.env.MIGRATE_ON_START === "false") {
+    if (!autoMigrate) {
       const st = await migrationStatus(db, MIGRATIONS);
       if (!st.upToDate) console.warn(JSON.stringify({ ts: new Date().toISOString(), level: "warn", event: "db.migrations_pending", pending: st.pending }));
     }

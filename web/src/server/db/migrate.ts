@@ -9,8 +9,9 @@ import { sql } from "drizzle-orm";
  * - On Postgres, migrations run on one dedicated connection holding a session-level advisory
  *   lock. Concurrent runs (several instances starting, or a deploy job racing a web start) are
  *   serialised: the second waits, then finds nothing left to apply.
- * - Recommended for staging/production: run `npm run db:migrate` as its own deploy step, and set
- *   MIGRATE_ON_START=false so app instances never migrate.
+ * - Staging and production: `npm run db:migrate` (the image's `migrate` role) is its own deploy
+ *   step, and app instances never migrate on start (config.ts `migrateOnStart`; production
+ *   refuses MIGRATE_ON_START=true). Development, demo and test still migrate on start.
  * - Migrations are additive (expand/contract): a release never drops what the previous release
  *   still uses, so rolling back the application is always safe.
  */

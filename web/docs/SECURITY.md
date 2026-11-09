@@ -18,8 +18,12 @@ only their brands.
 - Organisation-wide data (billing, usage, integrations, the security log) is never sent to
   brand-scoped users.
 
+- Refused access (another organisation's brand or workspace, a brand outside the member's scope,
+  an insufficient role) is recorded in the audit log of the organisation that owns the resource.
+
 **Tests:** isolation tests (other organisation: 403; client users: their brands only), member and
-scope tests, Security log access.
+scope tests, and Security log isolation (`audit-access.test.ts`: other organisations' events,
+brand scope, members' sign-ins only from joining, refusals and their audit records).
 
 **Planned:** Postgres Row-Level Security as defence in depth (pilot in PR 4.9).
 
@@ -28,7 +32,7 @@ scope tests, Security log access.
 | Area | How it works |
 |---|---|
 | Passwords | scrypt with self-describing parameters (`scrypt2$N$r$p$…`, OWASP's 16 MiB option). Older hashes still verify and are **re-hashed transparently** at the next successful login. Length capped at 256 characters. |
-| Sign-in | The same hashing work runs whether or not the email exists (no timing oracle). Rate-limited per email and per IP (hashed keys). Every attempt is audited, failures with a reason. |
+| Sign-in | The same hashing work runs whether or not the email exists (no timing oracle). Rate-limited per email and per IP (hashed keys). Every attempt is audited, failures with a reason. After a failed attempt the form keeps the email (never the password). |
 | Sessions | Random 256-bit tokens; only their SHA-256 is stored. `httpOnly`, `SameSite=Lax`, `Secure` in production; 30-day expiry; logout deletes the session server-side. |
 | CSRF | Server actions use Next's origin check. Cookies are `SameSite=Lax`. OAuth flows use a signed `state` plus a nonce cookie. |
 
@@ -90,9 +94,19 @@ An append-only `audit_events` table records:
 - workspace updates and brand creation;
 - social connect and disconnect;
 - billing checkout and plan changes (Stripe webhook, recorded as a system actor);
-- creative approvals that override blocking brand checks.
+- creative approvals that override blocking brand checks;
+- refused access (`access.denied`) and viewing the Security log (`audit.view`, at most hourly per
+  viewer).
 
-Owners and admins with access to every brand see it in **Settings → Security log**.
+**Who sees what (Settings → Security log):**
+- Only active **owners and admins** of the workspace. Editors, viewers, client users and people
+  outside the organisation are refused, and the refusal is recorded.
+- **Scope comes from the membership, not the role.** Whole-organisation access sees the
+  organisation's events plus its current members' sign-in events, **only from when each member
+  joined** (so another organisation can't see someone's earlier activity). Brand-scoped access
+  sees only events about those brands: no organisation-wide events or sign-ins. Today admins
+  can't be brand-scoped (the member rules refuse it); the log enforces the scope regardless.
+- People outside the organisation appear as "Not a current member", never by name.
 
 ## Background jobs and publishing
 
@@ -104,6 +118,8 @@ Owners and admins with access to every brand see it in **Settings → Security l
 
 ## Verified by automated tests (PR 4.0)
 
+In CI, the full suite also runs against real Postgres 16 with pgvector.
+
 - **Configuration:**
   - strict-mode refusal (and that local, demo and E2E runs aren't refused);
   - variable names reported without values;
@@ -113,14 +129,22 @@ Owners and admins with access to every brand see it in **Settings → Security l
   dummy verification.
 - **Storage:** key traversal rejection, atomic concurrent writes, the health round trip.
 - **Health:** readiness checks with no values exposed.
-- **Audit log:** IP hashing, detail redaction, access control (unscoped owners and admins only),
-  real member operations recorded.
+- **Audit log:** IP hashing, detail redaction, real member operations recorded; organisation and
+  brand isolation, membership-scoped visibility, members' sign-ins only from joining, refusals
+  recorded against the owning organisation, log views recorded (mutation-checked: removing the
+  brand filter or the joined-at condition fails the tests).
+- **Sign-in and sign-up forms:** an error keeps what was typed, never the password.
+- **Production safeguards:** no migrations at start-up in staging or production (also on real
+  Postgres: a production start leaves an empty database untouched and not ready); local-disk
+  storage refused without the opt-in, at boot and when storage is created; unknown `DEPLOY_ENV`
+  and invalid values refused.
 - **Outbound allowlists:** fonts and LinkedIn upload URLs.
 - **Errors:** database and system errors hidden behind a reference; intentional messages kept.
 - **Request IDs** and the **email interface** (never claims delivery; refused in strict
   environments).
-- **Jobs:** single publish under a concurrent race; an interrupted publish isn't re-sent; idempotent
-  jobs still retry.
+- **Jobs:** single publish under a concurrent race; an interrupted publish isn't re-sent; one
+  interrupted before it started runs again and publishes once; a post that already went out
+  isn't published again; idempotent jobs still retry.
 - **Real Postgres:** concurrent migrations apply once; the app client, readiness and audit work on
   the production driver.
 - **Container:**

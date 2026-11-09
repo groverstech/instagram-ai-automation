@@ -15,7 +15,48 @@ security model is in [SECURITY.md](SECURITY.md).
 >
 > **Not yet decided or provisioned:** the hosting platform, managed Postgres/Redis providers,
 > object storage (Cloudflare R2 arrives in PR 4.2), the error-tracking and email providers, and a
-> deploy pipeline. See [§10](#10-outstanding-production-prerequisites).
+> deploy pipeline. See [§0](#0-production-readiness-at-a-glance) and
+> [§10](#10-outstanding-production-prerequisites).
+
+## 0. Production readiness at a glance
+
+### Implemented and tested (no external accounts needed)
+
+| Area | What's in place | Tested by |
+|---|---|---|
+| Container image | One image, roles `web` / `worker` / `migrate`, non-root, `HEALTHCHECK`, `SIGTERM` reaches the process | CI container job (build, all three roles, graceful stop) |
+| Fail-closed configuration | Staging and production refuse unsafe or invalid settings; the image defaults to `DEPLOY_ENV=production`; a typo in `DEPLOY_ENV` is refused | Unit tests; CI refuses a missing `DEPLOY_ENV`, a typo, local disk without opt-in, and `MIGRATE_ON_START=true` |
+| Migrations | Separate deploy step under a Postgres advisory lock; app instances never migrate in staging or production | Real Postgres (three concurrent runs apply once; a production start leaves the database untouched); CI container job |
+| Health | Liveness and readiness (database, migrations, storage round trip, configuration) | Unit, real Postgres, CI container job |
+| Background jobs | Durable AI tasks, single publish under races, interrupted publishes flagged not re-sent, graceful worker drain | Unit and integration; CI worker `SIGTERM` check |
+| Security | Tenant and brand isolation, Security log scoped to the viewer's access, refused access audited, headers, trusted client IP, password hashing, outbound allowlists, hidden internal errors | Integration tests (see SECURITY.md) |
+
+### Needs external credentials or infrastructure (pending)
+
+| Area | Needs | Until then |
+|---|---|---|
+| Hosting and deploy pipeline | Your hosting decision (§10) | CI builds and smoke-tests the image; nothing is pushed or deployed |
+| Managed Postgres with pgvector and PITR | Provider choice and account | Verified against Postgres 16 + pgvector in CI only |
+| Object storage (Cloudflare R2) | R2 account, buckets, API token (PR 4.2) | Single-instance pilot only, with `ALLOW_LOCAL_STORAGE_IN_PRODUCTION=true` and a backed-up volume |
+| Real AI (Anthropic, OpenAI) | Production API keys | Real-provider validation is **pending**; demo mode is labelled and refused in production |
+| Error tracking, log shipping, alerts | Provider choice | Structured logs and the `captureError` hook only |
+| Email | Provider choice | Sending is refused in staging and production; nothing claims delivery |
+| Social platform apps, Stripe | Developer apps and keys | Integrations stay off |
+| Egress firewall, metadata protection | Platform network configuration (§8) | Application-level SSRF protection only |
+
+### The hosting decision
+
+Whatever you choose, it must provide:
+- long-running containers, for web and worker (not serverless functions);
+- a one-off job or release step that runs the `migrate` role **before** new web instances start;
+- rolling deploys gated on `GET /api/health/ready`, with `SIGTERM` and a 30-second or longer grace
+  period;
+- a secret manager for the environment variables in §6;
+- egress controls (§8) and TLS termination;
+- managed Postgres 15+ with pgvector, PITR and a connection pooler in the same region.
+
+Container platforms with these (for example AWS ECS/Fargate, Google Cloud Run with jobs, Fly.io,
+Render or Railway) all run the image unchanged. Only the deploy pipeline depends on the choice.
 
 ## 1. Environments
 
@@ -24,11 +65,17 @@ security model is in [SECURITY.md](SECURITY.md).
 
 | `DEPLOY_ENV` | Use | Configuration errors |
 |---|---|---|
-| `development` (default) | Local development, PGlite, local disk | Logged as warnings |
+| `development` (default outside the container) | Local development, PGlite, local disk | Logged as warnings |
 | `test` | Automated tests | Logged as warnings |
 | `demo` | Demos and E2E (demo AI mode allowed) | Logged as warnings |
 | `staging` | Pre-production; production-like infrastructure | **Stop the process at boot** |
-| `production` | Real customers | **Stop the process at boot** |
+| `production` (**the container image's default**) | Real customers | **Stop the process at boot** |
+| anything else (a typo such as `prod`) | — | Treated as strict and **refused** until fixed |
+
+The container image sets `DEPLOY_ENV=production`, so a deployment that forgets to set it gets the
+strict checks rather than running without them. Set `staging`, `demo` or `test` explicitly for
+other uses of the image. Outside the container (`npm start`), an unset `DEPLOY_ENV` means
+development, with a warning when `NODE_ENV=production`.
 
 At start-up, the web, worker and migrate roles all validate the configuration
 (`src/server/config.ts`). In staging and production, any error stops the process with a
@@ -42,7 +89,15 @@ The process stops when:
 - there are no Anthropic credentials;
 - `APP_URL` isn't https;
 - a platform or Stripe credential is half-configured;
-- `CRON_SECRET` is too short.
+- `CRON_SECRET` is too short;
+- `DEPLOY_ENV` isn't a known value;
+- `MIGRATE_ON_START=true` in production (migrations are a deploy step);
+- a setting has an invalid value instead of silently meaning a default: yes/no settings other than
+  `true`/`false`, non-numeric pool and worker timings, or an unknown `AI_PROVIDER`,
+  `IMAGE_PROVIDER`, `EMAIL_PROVIDER` or `STORAGE_DRIVER`.
+
+Storage refuses local disk in staging and production a second time when it's first used, so a
+script that skips the boot check can't write production files to one server's disk either.
 
 ## 2. Runtime requirements
 
@@ -84,8 +139,9 @@ Pass `--build-arg BASE_IMAGE=<mirror>/node:22-bookworm-slim` to build from a reg
 1. **Back up** the database (or confirm the latest PITR point).
 2. **Migrate:** run the `migrate` role with the new image. It's safe to run concurrently (advisory
    lock) and idempotent. It refuses unsafe configuration in staging and production.
-3. **Deploy web**, rolling, with `MIGRATE_ON_START=false`. New instances join the load balancer
-   once `/api/health/ready` returns 200.
+3. **Deploy web**, rolling. Instances never migrate in staging or production; new instances join
+   the load balancer once `/api/health/ready` returns 200 (it returns 503 while migrations are
+   pending, so a skipped step 2 keeps new instances out of rotation).
 4. **Deploy workers.** Old workers drain on `SIGTERM`.
 5. **Smoke test:**
    - `/api/health/ready` returns 200;
@@ -98,10 +154,10 @@ previous release still uses, so **rollback = redeploy the previous image tag**. 
 doesn't need to be rolled back.
 
 **`MIGRATE_ON_START`:**
-- Default `true`, for backward compatibility: the app migrates at start-up, now under the same
-  advisory lock, so concurrent starts are safe.
-- In staging and production, set it to `false` and use step 2. Instances then never change the
-  schema, and readiness reports pending migrations as not ready.
+- **Staging and production: off by default.** Instances never change the schema; step 2 does.
+  Production refuses `MIGRATE_ON_START=true`; staging allows it with a warning.
+- Development, demo and test: on by default (unchanged), under the same advisory lock, so
+  concurrent starts are safe. `false` turns it off.
 
 **Large tables:** indexes are created inside the migration transaction. That's fine at today's
 sizes; for tables with millions of rows, create indexes `CONCURRENTLY` in a separate step first.
@@ -122,7 +178,7 @@ limiter, and are never cached. Responses carry `version` from `APP_VERSION` or `
 
 | Variable | Purpose |
 |---|---|
-| `DEPLOY_ENV` | `staging` or `production` (§1) |
+| `DEPLOY_ENV` | `staging` or `production` (§1). The image defaults to `production`. |
 | `APP_URL` | Public https URL, e.g. `https://app.example.com`. OAuth redirects, Stripe return URLs, signed media links. |
 | `APP_SECRET` | 32+ random characters (`openssl rand -base64 48`). Encrypts OAuth tokens at rest, signs links, keys the audit-log IP hashes. Rotating it invalidates stored tokens (users reconnect accounts). |
 | `DATABASE_URL` | Postgres connection string (`postgres://…`). |
@@ -132,7 +188,7 @@ limiter, and are never cached. Responses carry `version` from `APP_VERSION` or `
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `MIGRATE_ON_START` | `true` | `false` = instances never migrate; use the migrate role (§4) |
+| `MIGRATE_ON_START` | off in staging/production, on elsewhere | Whether instances migrate when they start. Production refuses `true`; use the migrate role (§4). |
 | `DATABASE_POOL_MAX` | `10` | Connections per process. Size against your pooler or database limit: instances × processes × pool. |
 | `RUN_JOBS_IN_PROCESS` | `true` | `false` on web instances when dedicated workers run |
 | `WORKER_QUEUES` | `jobs,ai` | Which work a worker takes (§3) |
@@ -267,6 +323,21 @@ For large deployments, also put a CDN or WAF rate limit in front.
   - `ratelimit.*` spikes;
   - Anthropic and OpenAI spend.
 
+### External service dependencies
+
+| Service | Used for | Required for launch | Configured with | Status |
+|---|---|---|---|---|
+| Postgres 15+ with pgvector | All data | Yes | `DATABASE_URL` | Provider pending |
+| Anthropic (Claude) | Every AI feature | Yes | `ANTHROPIC_API_KEY` | Key pending; validation pending |
+| OpenAI | AI images | No (brand-photo and type-led creatives work without it) | `OPENAI_API_KEY` | Key pending |
+| Voyage AI | Semantic brand memory | No (local hashing otherwise) | `VOYAGE_API_KEY` | Optional |
+| Cloudflare R2 | File storage for more than one instance | Yes, for more than one web instance | PR 4.2 | Account pending |
+| Stripe | Billing | For paid plans | `STRIPE_*` | Keys pending |
+| Meta, LinkedIn, Google, Pinterest, TikTok | Publishing and metrics | Per platform | OAuth app pairs | Apps pending |
+| Error tracker, log backend | Alerts and debugging | Yes | Adapter via `addErrorReporter` | Provider pending |
+| Email provider | Invitations, alerts (from PR 4.6) | Before email features | `EMAIL_PROVIDER` | Provider pending |
+| Google Fonts | Creative rendering fonts | Yes | — (fixed hosts) | Works today |
+
 ### Backup and disaster recovery (requirements)
 
 | Item | Requirement |
@@ -300,7 +371,7 @@ For large deployments, also put a CDN or WAF rate limit in front.
 
 ## 11. Go-live checklist
 
-- [ ] `DEPLOY_ENV=production`; the boot log shows no `config.problem` errors.
+- [ ] `DEPLOY_ENV=production` (the image default); the boot log shows no `config.problem` errors.
 - [ ] Migrate role ran; `/api/health/ready` returns 200 on every instance.
 - [ ] Object storage configured (PR 4.2), or the single-instance local-storage opt-in with a
       backed-up volume.

@@ -13,8 +13,9 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ b
   const { brand, role, session } = await requireActiveBrand();
   const view = await workspaceSettingsFor(session, brand.workspaceId, brand.id);
   const ws = view.workspace;
-  // The security log covers the whole organisation: owners/admins with access to every brand only.
-  const auditLog = !view.scoped && roleAtLeast(role, "admin") ? await auditTrailFor(session, ws.id) : null;
+  // Security log: owners and admins only. auditTrailFor re-checks the membership on the server and
+  // limits the events to the viewer's brand scope.
+  const auditLog = roleAtLeast(role, "admin") ? await auditTrailFor(session, ws.id) : null;
   return (
     <SettingsView
       role={role}

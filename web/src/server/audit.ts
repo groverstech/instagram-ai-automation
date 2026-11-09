@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, inArray, isNull, like, lt, or } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, like, lt, or, sql } from "drizzle-orm";
 import { getDb, schema } from "./db/client";
 import { keyedHash } from "./crypto";
 import { redact, log } from "./log";
@@ -28,7 +28,9 @@ export type AuditAction =
   | "social.disconnect"
   | "billing.checkout_started"
   | "billing.plan_changed"
-  | "creative.approve_override";
+  | "creative.approve_override"
+  | "access.denied"
+  | "audit.view";
 
 export type AuditEvent = {
   action: AuditAction;
@@ -64,24 +66,44 @@ export async function audit(e: AuditEvent) {
 }
 
 /**
- * A workspace's audit trail, newest first (owners/admins only; the caller checks the role).
- * Includes the workspace's own events, plus account-level sign-in events (sign-in, failed
- * sign-in, sign-out) of the workspace's current members. Those aren't tied to one workspace, but
- * an owner needs to see them. Failed sign-ins for unknown emails belong to no tenant and appear
- * in no workspace's log.
+ * Whose events a viewer may see. `brandIds: null` = the whole organisation; an array = only events
+ * about those brands (organisation-wide and account events are excluded). Derived from the
+ * viewer's membership scope, never from the role alone.
  */
-export async function auditTrail(workspaceId: string, opts: { limit?: number; before?: Date } = {}) {
+export type AuditScope = { brandIds: string[] | null };
+
+/**
+ * A workspace's audit trail, newest first. The caller has already authorised the viewer (see
+ * auditTrailFor).
+ *
+ * - **Whole-organisation scope:** the workspace's own events, plus account-level sign-in events
+ *   (sign-in, failed sign-in, sign-out) of the workspace's current members, **only from when they
+ *   joined this workspace**. Those events aren't tied to one workspace, so they can't otherwise
+ *   be attributed. A member's history from before they joined, and everyone else's events, stay
+ *   hidden. Failed sign-ins for unknown emails belong to no tenant and appear in no log.
+ * - **Brand scope:** only this workspace's events about those brands.
+ */
+export async function auditTrail(workspaceId: string, opts: { limit?: number; before?: Date; scope?: AuditScope } = {}) {
   const db = await getDb();
-  const members = await db.select({ userId: schema.workspaceMembers.userId }).from(schema.workspaceMembers).where(eq(schema.workspaceMembers.workspaceId, workspaceId));
-  const memberIds = members.map((m) => m.userId).filter((x): x is string => Boolean(x));
-  const scope = memberIds.length
-    ? or(eq(schema.auditEvents.workspaceId, workspaceId), and(isNull(schema.auditEvents.workspaceId), inArray(schema.auditEvents.actorUserId, memberIds), like(schema.auditEvents.action, "auth.%")))
-    : eq(schema.auditEvents.workspaceId, workspaceId);
+  const e = schema.auditEvents;
+  const brandIds = opts.scope?.brandIds ?? null;
+  const where = brandIds
+    ? brandIds.length
+      ? and(eq(e.workspaceId, workspaceId), inArray(e.brandId, brandIds))
+      : sql`false`
+    : or(
+        eq(e.workspaceId, workspaceId),
+        and(
+          isNull(e.workspaceId),
+          like(e.action, "auth.%"),
+          sql`exists (select 1 from ${schema.workspaceMembers} wm where wm.workspace_id = ${workspaceId} and wm.user_id = ${e.actorUserId} and wm.status = 'active' and wm.created_at <= ${e.createdAt})`,
+        ),
+      );
   return db
     .select()
-    .from(schema.auditEvents)
-    .where(and(scope, opts.before ? lt(schema.auditEvents.createdAt, opts.before) : undefined))
-    .orderBy(desc(schema.auditEvents.createdAt))
+    .from(e)
+    .where(and(where, opts.before ? lt(e.createdAt, opts.before) : undefined))
+    .orderBy(desc(e.createdAt))
     .limit(Math.min(opts.limit ?? 50, 200));
 }
 
@@ -98,28 +120,69 @@ export type AuditRow = {
   createdAt: Date;
 };
 
+/** Viewing the log is itself audited, at most once per viewer and workspace per hour. */
+const VIEW_AUDIT_EVERY_MS = 60 * 60 * 1000;
+
 /**
- * The Settings "Security log": workspace owners and admins with access to every brand only.
- * Brand-scoped (client) users are refused, because the log covers the whole organisation.
+ * The Settings "Security log". Needs an active owner or admin membership of this workspace. What
+ * the viewer sees follows their membership's brand scope (see AuditScope), so an admin role alone
+ * never widens it. Refusals are recorded as `access.denied`.
+ *
+ * Actor names are shown only for current members of this workspace (and "System"), so the log
+ * never reveals who someone outside the organisation is.
  */
-export async function auditTrailFor(session: import("./auth/session").SessionUser, workspaceId: string, limit = 50): Promise<AuditRow[]> {
-  const { requireWorkspaceRoleForUser } = await import("./auth/guard");
-  await requireWorkspaceRoleForUser(session, workspaceId, "admin");
-  const rows = await auditTrail(workspaceId, { limit });
-  const ids = [...new Set(rows.map((r) => r.actorUserId).filter((x): x is string => Boolean(x)))];
+export async function auditTrailFor(session: import("./auth/session").SessionUser, workspaceId: string, limit = 50): Promise<{ rows: AuditRow[]; scope: AuditScope }> {
+  const { AccessError } = await import("./auth/guard");
+  const { roleAtLeast } = await import("@/lib/roles");
   const db = await getDb();
-  const users = ids.length ? await db.select({ id: schema.users.id, name: schema.users.name, email: schema.users.email }).from(schema.users).where(inArray(schema.users.id, ids)) : [];
-  const nameOf = new Map(users.map((u) => [u.id, u.name || u.email]));
-  return rows.map((r) => ({
-    id: r.id,
-    action: r.action,
-    outcome: r.outcome,
-    actorType: r.actorType,
-    actorName: r.actorUserId ? (nameOf.get(r.actorUserId) ?? "Former user") : r.actorType === "system" ? "System" : null,
-    targetType: r.targetType,
-    targetId: r.targetId,
-    brandId: r.brandId,
-    details: r.details,
-    createdAt: r.createdAt,
-  }));
+  const wm = schema.workspaceMembers;
+  const [me] = await db
+    .select()
+    .from(wm)
+    .where(and(eq(wm.workspaceId, workspaceId), eq(wm.userId, session.user.id), eq(wm.status, "active")))
+    .limit(1);
+  if (!me || !roleAtLeast(me.role, "admin")) {
+    await audit({ action: "access.denied", workspaceId, actorUserId: session.user.id, outcome: "denied", targetType: "security_log", targetId: workspaceId, details: { needed: "admin", member: Boolean(me) } });
+    throw new AccessError();
+  }
+  // Only brands that still belong to this workspace count towards a brand scope.
+  let brandIds: string[] | null = null;
+  if (Array.isArray(me.brandIds)) {
+    const owned = me.brandIds.length ? await db.select({ id: schema.brands.id }).from(schema.brands).where(and(eq(schema.brands.workspaceId, workspaceId), inArray(schema.brands.id, me.brandIds))) : [];
+    brandIds = owned.map((b) => b.id);
+  }
+  const scope: AuditScope = { brandIds };
+
+  const [recent] = await db
+    .select({ id: schema.auditEvents.id })
+    .from(schema.auditEvents)
+    .where(and(eq(schema.auditEvents.action, "audit.view"), eq(schema.auditEvents.workspaceId, workspaceId), eq(schema.auditEvents.actorUserId, session.user.id), gt(schema.auditEvents.createdAt, new Date(Date.now() - VIEW_AUDIT_EVERY_MS))))
+    .limit(1);
+  if (!recent) await audit({ action: "audit.view", workspaceId, actorUserId: session.user.id, targetType: "security_log", targetId: workspaceId, details: { scope: brandIds ? "brands" : "organisation" } });
+
+  const rows = await auditTrail(workspaceId, { limit, scope });
+  const actorIds = [...new Set(rows.map((r) => r.actorUserId).filter((x): x is string => Boolean(x)))];
+  const members = actorIds.length
+    ? await db
+        .select({ id: schema.users.id, name: schema.users.name, email: schema.users.email })
+        .from(wm)
+        .innerJoin(schema.users, eq(schema.users.id, wm.userId))
+        .where(and(eq(wm.workspaceId, workspaceId), inArray(wm.userId, actorIds)))
+    : [];
+  const nameOf = new Map(members.map((u) => [u.id, u.name || u.email]));
+  return {
+    scope,
+    rows: rows.map((r) => ({
+      id: r.id,
+      action: r.action,
+      outcome: r.outcome,
+      actorType: r.actorType,
+      actorName: r.actorUserId ? (nameOf.get(r.actorUserId) ?? "Not a current member") : r.actorType === "system" ? "System" : null,
+      targetType: r.targetType,
+      targetId: r.targetId,
+      brandId: r.brandId,
+      details: r.details,
+      createdAt: r.createdAt,
+    })),
+  };
 }

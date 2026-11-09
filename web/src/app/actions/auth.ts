@@ -27,6 +27,14 @@ async function limited(kind: "login" | "signup", ...parts: string[]): Promise<st
   }
 }
 
+/**
+ * Result of a failed sign-in or sign-up. `values` echoes what the person typed (never the
+ * password) so the form can show it again: React resets a form after its action runs.
+ */
+export type AuthFormState = { error?: string; values?: { email?: string; name?: string; workspace?: string; type?: string } };
+
+const echo = (v: FormDataEntryValue | null) => String(v ?? "").slice(0, 320);
+
 const SignUp = z.object({
   name: z.string().trim().min(1, "Enter your name"),
   email: z.string().trim().toLowerCase().email("Enter a valid email"),
@@ -35,16 +43,17 @@ const SignUp = z.object({
   type: z.enum(["creator", "business", "agency"]),
 });
 
-export async function signUp(_: unknown, fd: FormData): Promise<{ error?: string }> {
+export async function signUp(_: unknown, fd: FormData): Promise<AuthFormState> {
+  const values = { name: echo(fd.get("name")), email: echo(fd.get("email")), workspace: echo(fd.get("workspace")), type: echo(fd.get("type")) };
   const parsed = SignUp.safeParse(Object.fromEntries(fd));
-  if (!parsed.success) return { error: parsed.error.issues[0].message };
+  if (!parsed.success) return { error: parsed.error.issues[0].message, values };
   const { name, email, password, workspace, type } = parsed.data;
   const ip = await clientIp();
   const blocked = await limited("signup", `ip:${ip}`);
-  if (blocked) return { error: blocked };
+  if (blocked) return { error: blocked, values };
   const db = await getDb();
   const [exists] = await db.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.email, email));
-  if (exists) return { error: "An account with this email already exists." };
+  if (exists) return { error: "An account with this email already exists.", values };
   const [user] = await db.insert(schema.users).values({ name, email, passwordHash: await hashPassword(password) }).returning();
 
   // Accept pending invitations for this email, otherwise create the user's own workspace.
@@ -64,14 +73,15 @@ export async function signUp(_: unknown, fd: FormData): Promise<{ error?: string
   redirect(invites.length ? "/dashboard" : "/onboarding");
 }
 
-export async function logIn(_: unknown, fd: FormData): Promise<{ error?: string }> {
+export async function logIn(_: unknown, fd: FormData): Promise<AuthFormState> {
+  const values = { email: echo(fd.get("email")) };
   const email = String(fd.get("email") ?? "").trim().toLowerCase();
   const password = String(fd.get("password") ?? "").slice(0, 256);
   const ip = await clientIp();
   const blocked = await limited("login", `email:${email}`, `ip:${ip}`);
   if (blocked) {
     await audit({ action: "auth.login_failed", outcome: "denied", ip, details: { reason: "rate_limited", emailHash: keyedHash(`email:${email}`) } });
-    return { error: blocked };
+    return { error: blocked, values };
   }
   const db = await getDb();
   const [user] = await db.select().from(schema.users).where(eq(schema.users.email, email));
@@ -79,7 +89,7 @@ export async function logIn(_: unknown, fd: FormData): Promise<{ error?: string 
   const ok = user ? await verifyPassword(password, user.passwordHash) : await verifyDummy(password);
   if (!user || !ok) {
     await audit({ action: "auth.login_failed", outcome: "denied", actorUserId: user?.id ?? null, ip, details: { reason: user ? "wrong_password" : "unknown_email", emailHash: keyedHash(`email:${email}`) } });
-    return { error: "Email or password is incorrect." };
+    return { error: "Email or password is incorrect.", values };
   }
   // Upgrade older password hashes transparently now that we know the password.
   if (needsRehash(user.passwordHash)) await db.update(schema.users).set({ passwordHash: await hashPassword(password) }).where(eq(schema.users.id, user.id));

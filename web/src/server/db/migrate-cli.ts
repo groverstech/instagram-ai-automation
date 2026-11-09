@@ -3,6 +3,7 @@
 // the deploy pipeline stops before new application code starts.
 import { enforceConfig } from "../config";
 import { expectedMigrations, runPostgresMigrations } from "./migrate";
+import { log } from "../log";
 
 async function main() {
   enforceConfig("migrate");
@@ -12,20 +13,20 @@ async function main() {
     // Development: PGlite migrates when the client is created.
     const { getDb } = await import("./client");
     await getDb();
-    console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", event: "db.migrate.done", database: "pglite", expected: expectedMigrations().length, ms: Date.now() - started }));
+    log.info("db.migrate.done", { database: "pglite", expected: expectedMigrations().length, ms: Date.now() - started });
     return;
   }
   const res = await runPostgresMigrations(url, undefined, {
-    onLocked: () => console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", event: "db.migrate.locked" })),
+    onLocked: () => log.info("db.migrate.locked"),
   });
-  console.log(JSON.stringify({ ts: new Date().toISOString(), level: "info", event: "db.migrate.done", database: "postgres", applied: res.applied, total: res.total, expected: res.expected, ms: Date.now() - started }));
+  log.info("db.migrate.done", { database: "postgres", applied: res.applied, total: res.total, expected: res.expected, ms: Date.now() - started });
   if (res.total < res.expected) throw new Error(`Only ${res.total} of ${res.expected} migrations are applied.`);
 }
 
 main().then(
   () => process.exit(0),
   (e) => {
-    console.error(JSON.stringify({ ts: new Date().toISOString(), level: "error", event: "db.migrate.failed", error: e instanceof Error ? e.message : String(e) }));
+    log.error("db.migrate.failed", { error: e instanceof Error ? e.message : String(e) });
     process.exit(1);
   },
 );

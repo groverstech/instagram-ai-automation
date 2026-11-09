@@ -27,8 +27,18 @@ if (!queues.size || unknown.length) {
   process.exit(1);
 }
 const scope: TickScope = { jobs: queues.has("jobs"), ai: queues.has("ai") };
-const interval = Number(process.env.WORKER_INTERVAL_MS ?? 15_000);
-const drainMs = Number(process.env.WORKER_DRAIN_MS ?? 120_000);
+/** A positive whole number of milliseconds, or exit: NaN would turn the poll into a busy loop. */
+function ms(name: string, fallback: number) {
+  const v = process.env[name]?.trim();
+  if (!v) return fallback;
+  if (!/^[1-9]\d*$/.test(v)) {
+    console.error(`${name} must be a positive whole number of milliseconds.`);
+    process.exit(1);
+  }
+  return Number(v);
+}
+const interval = ms("WORKER_INTERVAL_MS", 15_000);
+const drainMs = ms("WORKER_DRAIN_MS", 120_000);
 
 let stopping = false;
 let current: Promise<unknown> | null = null;

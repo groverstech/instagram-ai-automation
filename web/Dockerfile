@@ -21,7 +21,11 @@ RUN npm run build && npm prune --omit=dev --no-audit --no-fund
 
 FROM ${BASE_IMAGE} AS runtime
 WORKDIR /app
+# DEPLOY_ENV defaults to production, so a deployment that forgets to set it gets the strict
+# checks (refused on unsafe configuration, no migrations at start-up) rather than silently
+# running without them. Set DEPLOY_ENV=staging, demo or test explicitly for other uses.
 ENV NODE_ENV=production \
+    DEPLOY_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000
 RUN groupadd --system app && useradd --system --gid app --home-dir /app app

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,10 +9,10 @@ process.env.PGLITE_DIR = "memory://";
 process.env.AI_PROVIDER = "mock";
 process.env.STORAGE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bp-infra-"));
 
-const { checkConfig, isStrict, deployEnv, enforceConfig } = await import("./config");
+const { checkConfig, isStrict, deployEnv, enforceConfig, migrateOnStart, configSummary } = await import("./config");
 const { clientIp } = await import("./client-ip");
 const { hashPassword, verifyPassword, needsRehash, verifyDummy } = await import("./auth/password");
-const { storage, localDisk, assertKey, StorageKeyError } = await import("./storage");
+const { storage, localDisk, assertKey, StorageKeyError, createStorage, StorageNotConfigured } = await import("./storage");
 const { readiness } = await import("./health");
 const { audit, auditTrail } = await import("./audit");
 const { getDb, schema } = await import("./db/client");
@@ -76,6 +76,73 @@ describe("production configuration validation", () => {
     expect(exited).toBe(1);
     expect(deployEnv({ DEPLOY_ENV: "nonsense" })).toBe("development");
     expect(keys({ DEPLOY_ENV: "nonsense" })).toContain("DEPLOY_ENV");
+  });
+});
+
+describe("production safeguards", () => {
+  const levelOf = (env: Record<string, string>, key: string) => checkConfig(env).find((p) => p.key === key)?.level;
+
+  it("never migrates at start-up in staging or production unless explicitly asked", () => {
+    expect(migrateOnStart({ DEPLOY_ENV: "production" })).toBe(false);
+    expect(migrateOnStart({ DEPLOY_ENV: "staging" })).toBe(false);
+    expect(migrateOnStart({ DEPLOY_ENV: "production", MIGRATE_ON_START: "yes" })).toBe(false); // invalid → never
+    expect(migrateOnStart({ DEPLOY_ENV: "prod" })).toBe(false); // unknown env → strict
+    expect(migrateOnStart({ DEPLOY_ENV: "staging", MIGRATE_ON_START: "true" })).toBe(true);
+    // Local, demo and E2E behaviour unchanged.
+    expect(migrateOnStart({})).toBe(true);
+    expect(migrateOnStart({ NODE_ENV: "production" })).toBe(true);
+    expect(migrateOnStart({ DEPLOY_ENV: "demo" })).toBe(true);
+    expect(migrateOnStart({ MIGRATE_ON_START: "false" })).toBe(false);
+  });
+
+  it("production refuses MIGRATE_ON_START=true; staging warns; invalid values are errors", () => {
+    expect(levelOf({ ...goodProd, MIGRATE_ON_START: "true" }, "MIGRATE_ON_START")).toBe("error");
+    expect(levelOf({ ...goodProd, DEPLOY_ENV: "staging", MIGRATE_ON_START: "true" }, "MIGRATE_ON_START")).toBe("warning");
+    expect(levelOf({ ...goodProd, MIGRATE_ON_START: "yes" }, "MIGRATE_ON_START")).toBe("error");
+    const unset: Record<string, string> = { ...goodProd };
+    delete unset.MIGRATE_ON_START;
+    expect(keys(unset)).toEqual([]); // unset is the safe default in production
+  });
+
+  it("production refuses local-disk storage unless explicitly allowed, at boot and at run time", () => {
+    expect(keys({ ...goodProd, ALLOW_LOCAL_STORAGE_IN_PRODUCTION: "" })).toContain("STORAGE_DRIVER");
+    expect(keys({ ...goodProd, ALLOW_LOCAL_STORAGE_IN_PRODUCTION: "yes" })).toEqual(expect.arrayContaining(["ALLOW_LOCAL_STORAGE_IN_PRODUCTION", "STORAGE_DRIVER"]));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bp-guard-"));
+    for (const env of [{ DEPLOY_ENV: "production" }, { DEPLOY_ENV: "staging" }, { DEPLOY_ENV: "prod" }, { DEPLOY_ENV: "production", ALLOW_LOCAL_STORAGE_IN_PRODUCTION: "yes" }]) {
+      expect(() => createStorage({ ...env, STORAGE_DIR: dir })).toThrow(StorageNotConfigured);
+    }
+    expect(createStorage({ DEPLOY_ENV: "production", ALLOW_LOCAL_STORAGE_IN_PRODUCTION: "true", STORAGE_DIR: dir }).driver).toBe("local");
+    expect(createStorage({ STORAGE_DIR: dir }).driver).toBe("local"); // development unchanged
+    expect(() => createStorage({ STORAGE_DRIVER: "s3" })).toThrow(/PR 4.2/);
+    expect(() => createStorage({ STORAGE_DRIVER: "gcs" })).toThrow(StorageNotConfigured);
+  });
+
+  it("an unrecognised DEPLOY_ENV fails closed instead of falling back to development", () => {
+    expect(isStrict({ DEPLOY_ENV: "prod" })).toBe(true);
+    expect(isStrict({ DEPLOY_ENV: " Production " })).toBe(true);
+    expect(deployEnv({ DEPLOY_ENV: " Production " })).toBe("production");
+    expect(configSummary({ DEPLOY_ENV: "prod" }).deployEnv).toBe("unknown");
+    expect(keys({ DEPLOY_ENV: "prod" })).toContain("DEPLOY_ENV");
+    const exit = vi.fn() as unknown as (code: number) => never;
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    const quietW = vi.spyOn(console, "warn").mockImplementation(() => {});
+    enforceConfig("test", { ...goodProd, DEPLOY_ENV: "prod" }, exit);
+    expect(exit).toHaveBeenCalledWith(1);
+    quiet.mockRestore();
+    quietW.mockRestore();
+  });
+
+  it("invalid values are clear errors, not silent defaults", () => {
+    const bad = keys({ ...goodProd, AI_PROVIDER: "antropic", IMAGE_PROVIDER: "dalle", DATABASE_POOL_MAX: "ten", WORKER_DRAIN_MS: "-5", EMAIL_PROVIDER: "smtp", RUN_JOBS_IN_PROCESS: "no" });
+    expect(bad).toEqual(expect.arrayContaining(["AI_PROVIDER", "IMAGE_PROVIDER", "DATABASE_POOL_MAX", "WORKER_DRAIN_MS", "EMAIL_PROVIDER", "RUN_JOBS_IN_PROCESS"]));
+    // Messages name the setting and what to use, never the value given.
+    for (const p of checkConfig({ ...goodProd, AI_PROVIDER: "antropic", DATABASE_POOL_MAX: "ten" })) expect(p.message).not.toMatch(/antropic|ten\b/);
+    expect(keys({ ...goodProd, AI_PROVIDER: "anthropic", IMAGE_PROVIDER: "none", DATABASE_POOL_MAX: "20" })).toEqual([]);
+  });
+
+  it("warns when NODE_ENV=production runs without DEPLOY_ENV (safeguards off)", () => {
+    expect(checkConfig({ NODE_ENV: "production" }).find((p) => p.key === "DEPLOY_ENV")).toMatchObject({ level: "warning" });
+    expect(checkConfig({}).some((p) => p.key === "DEPLOY_ENV")).toBe(false);
   });
 });
 
@@ -203,38 +270,22 @@ describe("migration 0007 on an existing database", () => {
   });
 });
 
-describe("security log access and member audit trail", () => {
-  it("records real member changes, and only unscoped owners/admins can read the log", async () => {
+describe("member audit trail", () => {
+  it("records real member changes with the acting user (access rules: audit-access.test.ts)", async () => {
     const { changeRoleFor, inviteMemberFor } = await import("./members");
     const { auditTrailFor } = await import("./audit");
     const db = await getDb();
     const [owner] = await db.insert(schema.users).values({ email: "own@x.test", name: "Owner", passwordHash: "x" }).returning();
-    const [client] = await db.insert(schema.users).values({ email: "cli@x.test", name: "Client", passwordHash: "x" }).returning();
-    const [editor] = await db.insert(schema.users).values({ email: "ed@x.test", name: "Editor", passwordHash: "x" }).returning();
+    await db.insert(schema.users).values({ email: "ed@x.test", name: "Editor", passwordHash: "x" });
     const [w] = await db.insert(schema.workspaces).values({ name: "Agency", plan: "agency" }).returning();
-    const [b] = await db.insert(schema.brands).values({ workspaceId: w.id, name: "Client Brand" }).returning();
-    await db.insert(schema.workspaceMembers).values([
-      { workspaceId: w.id, userId: owner.id, role: "owner" },
-      { workspaceId: w.id, userId: client.id, role: "editor", brandIds: [b.id] },
-    ]);
-    const sess = (u: { id: string; email: string; name: string }) => ({ sessionId: `s-${u.id}`, activeBrandId: null, user: { id: u.id, email: u.email, name: u.name } });
+    await db.insert(schema.workspaceMembers).values({ workspaceId: w.id, userId: owner.id, role: "owner" });
+    const sess = { sessionId: "s-owner", activeBrandId: null, user: { id: owner.id, email: owner.email, name: owner.name } };
 
-    const invited = await inviteMemberFor(sess(owner), w.id, "ed@x.test", "viewer");
-    await changeRoleFor(sess(owner), w.id, invited.id, "editor");
-    const log = await auditTrailFor(sess(owner), w.id);
-    expect(log.map((r) => r.action)).toEqual(expect.arrayContaining(["member.invite", "member.role_change"]));
-    expect(log.find((r) => r.action === "member.role_change")).toMatchObject({ actorName: "Owner", details: { from: "viewer", to: "editor" } });
-
-    // Account-level sign-in events of members appear; other people's don't.
-    await audit({ action: "auth.login_failed", outcome: "denied", actorUserId: client.id, details: { reason: "wrong_password" } });
-    await audit({ action: "auth.login", actorUserId: owner.id });
-    const [stranger] = await db.insert(schema.users).values({ email: "str@x.test", name: "Stranger", passwordHash: "x" }).returning();
-    await audit({ action: "auth.login", actorUserId: stranger.id });
-    const withAuth = await auditTrailFor(sess(owner), w.id);
-    expect(withAuth.filter((r) => r.action.startsWith("auth.")).map((r) => r.actorName).sort()).toEqual(["Client", "Owner"]);
-
-    await expect(auditTrailFor(sess(client), w.id)).rejects.toThrow(); // brand-scoped client
-    await expect(auditTrailFor(sess(editor), w.id)).rejects.toThrow(); // editor, not admin
+    const invited = await inviteMemberFor(sess, w.id, "ed@x.test", "viewer");
+    await changeRoleFor(sess, w.id, invited.id, "editor");
+    const { rows } = await auditTrailFor(sess, w.id);
+    expect(rows.map((r) => r.action)).toEqual(expect.arrayContaining(["member.invite", "member.role_change", "audit.view"]));
+    expect(rows.find((r) => r.action === "member.role_change")).toMatchObject({ actorName: "Owner", details: { from: "viewer", to: "editor" } });
   });
 });
 

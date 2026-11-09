@@ -14,7 +14,7 @@ import { ROLE_DESCRIPTIONS, roleAtLeast, type Role } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
 type Member = { id: string; role: Role; brandIds: string[] | null; status: string; invitedEmail: string | null; userId: string | null; name: string | null; email: string | null };
-type AuditRow = { id: string; action: string; outcome: string; actorType: string; actorName: string | null; targetType: string | null; targetId: string | null; brandId: string | null; details: Record<string, unknown>; createdAt: Date };
+import type { AuditRow, AuditScope } from "@/server/audit";
 type BrandRow = { id: string; name: string; createdAt: Date; active: boolean; colors: string[]; access: { all: number; scoped: number } };
 
 export function SettingsView(props: {
@@ -37,7 +37,7 @@ export function SettingsView(props: {
   members: Member[];
   brands: BrandRow[];
   /** Owners/admins with access to every brand only; null for everyone else. */
-  auditLog?: AuditRow[] | null;
+  auditLog?: { rows: AuditRow[]; scope: AuditScope } | null;
   integrations: { ai: { provider: string; ready: boolean; model: string }; image: { ready: boolean; provider: string }; embeddings: string; database: string } | null;
 }) {
   const isAdmin = roleAtLeast(props.role, "admin") && !props.scoped;
@@ -167,7 +167,7 @@ export function SettingsView(props: {
             </CardBody>
           </Card>
 
-          {props.auditLog ? <SecurityLog rows={props.auditLog} brandName={brandName} /> : null}
+          {props.auditLog ? <SecurityLog rows={props.auditLog.rows} scope={props.auditLog.scope} brandName={brandName} /> : null}
         </div>
 
         <div className="space-y-6">
@@ -363,6 +363,8 @@ const AUDIT_LABELS: Record<string, string> = {
   "billing.checkout_started": "Started a plan checkout",
   "billing.plan_changed": "Plan changed",
   "creative.approve_override": "Approved a creative despite blocking issues",
+  "access.denied": "Access refused",
+  "audit.view": "Viewed the security log",
 };
 
 function auditDetail(r: AuditRow, brandName: (id: string) => string) {
@@ -378,10 +380,17 @@ function auditDetail(r: AuditRow, brandName: (id: string) => string) {
   return parts.join(" · ");
 }
 
-function SecurityLog({ rows, brandName }: { rows: AuditRow[]; brandName: (id: string) => string }) {
+function SecurityLog({ rows, scope, brandName }: { rows: AuditRow[]; scope: AuditScope; brandName: (id: string) => string }) {
   return (
     <Card>
-      <CardHeader title="Security log" description="Sign-ins, membership and access changes, connections and billing in this workspace. Visible to owners and admins." />
+      <CardHeader
+        title="Security log"
+        description={
+          scope.brandIds
+            ? "Security events for the brands you have access to. Visible to owners and admins."
+            : "Sign-ins, membership and access changes, connections and billing in this workspace. Visible to owners and admins."
+        }
+      />
       <CardBody className="pt-3">
         {rows.length ? (
           <ul className="divide-y divide-line" aria-label="Security log">

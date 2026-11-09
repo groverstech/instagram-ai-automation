@@ -2,6 +2,7 @@ import "server-only";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
+import { isStrict } from "../config";
 
 /**
  * Provider-independent object storage (ADR-004 in docs/ARCHITECTURE_DECISIONS.md).
@@ -11,7 +12,7 @@ import { randomUUID } from "node:crypto";
  * STORAGE_DRIVER:
  *   local  files under STORAGE_DIR (development, tests, single-instance pilots). In
  *          staging/production it needs an explicit ALLOW_LOCAL_STORAGE_IN_PRODUCTION=true, enforced
- *          at boot by src/server/config.ts.
+ *          at boot (src/server/config.ts) and again when the driver is created (createStorage).
  *   s3     S3-compatible object storage (Cloudflare R2 or AWS S3). Arrives in PR 4.2 with
  *          presigned URLs, tenant key layout and the render cache. Selecting it before then fails
  *          loudly instead of silently falling back to disk.
@@ -88,15 +89,27 @@ export function localDisk(root = process.env.STORAGE_DIR ?? path.join(process.cw
   };
 }
 
-function create(): StorageProvider {
-  const driver = (process.env.STORAGE_DRIVER ?? "local").toLowerCase();
-  if (driver === "local") return localDisk();
-  if (driver === "s3") throw new Error("STORAGE_DRIVER=s3 is not available yet: the S3/R2 adapter arrives in PR 4.2.");
-  throw new Error(`Unknown STORAGE_DRIVER "${driver}".`);
+export class StorageNotConfigured extends Error {}
+
+/**
+ * Choose the driver. Refuses local disk in staging/production unless
+ * ALLOW_LOCAL_STORAGE_IN_PRODUCTION=true, here as well as in the boot check, so code paths that
+ * skip the boot check (scripts, one-off jobs) can't write production files to one server's disk.
+ */
+export function createStorage(env: Record<string, string | undefined> = process.env): StorageProvider {
+  const driver = (env.STORAGE_DRIVER ?? "local").trim().toLowerCase() || "local";
+  if (driver === "local") {
+    if (isStrict(env) && (env.ALLOW_LOCAL_STORAGE_IN_PRODUCTION ?? "").trim().toLowerCase() !== "true") {
+      throw new StorageNotConfigured("Local-disk storage is refused in staging/production. Configure object storage (PR 4.2) or set ALLOW_LOCAL_STORAGE_IN_PRODUCTION=true for a single-instance pilot.");
+    }
+    return localDisk(env.STORAGE_DIR ?? path.join(process.cwd(), ".data", "files"));
+  }
+  if (driver === "s3") throw new StorageNotConfigured("STORAGE_DRIVER=s3 is not available yet: the S3/R2 adapter arrives in PR 4.2.");
+  throw new StorageNotConfigured(`Unknown STORAGE_DRIVER "${driver}".`);
 }
 
 let current: StorageProvider | null = null;
-const impl = () => (current ??= create());
+const impl = () => (current ??= createStorage());
 
 /** The configured storage. Resolved on first use, so tests can set STORAGE_DIR beforehand. */
 export const storage: StorageProvider = {

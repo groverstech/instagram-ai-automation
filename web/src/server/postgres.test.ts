@@ -54,6 +54,14 @@ describe.skipIf(!ADMIN_URL)("real Postgres", () => {
     const [w] = await db.insert(schema.workspaces).values({ name: "PG Co" }).returning();
     await audit({ action: "workspace.update", workspaceId: w.id, actorUserId: "u1", ip: "203.0.113.1", details: { type: "agency" } });
     expect((await auditTrail(w.id))[0]).toMatchObject({ action: "workspace.update", outcome: "success" });
+    // Members' sign-ins (the correlated membership subquery) and brand scope on the real driver.
+    const [u] = await db.insert(schema.users).values({ email: "pg@x.test", name: "PG", passwordHash: "x" }).returning();
+    const [b] = await db.insert(schema.brands).values({ workspaceId: w.id, name: "PG Brand" }).returning();
+    await db.insert(schema.workspaceMembers).values({ workspaceId: w.id, userId: u.id, role: "owner", createdAt: new Date(Date.now() - 60_000) });
+    await audit({ action: "auth.login", actorUserId: u.id });
+    await audit({ action: "brand.create", workspaceId: w.id, brandId: b.id, actorUserId: u.id });
+    expect((await auditTrail(w.id)).map((e) => e.action).sort()).toEqual(["auth.login", "brand.create", "workspace.update"]);
+    expect((await auditTrail(w.id, { scope: { brandIds: [b.id] } })).map((e) => e.action)).toEqual(["brand.create"]);
     const r = await readiness();
     expect(r.checks.database.ok).toBe(true);
     expect(r.checks.migrations.ok).toBe(true);
@@ -73,5 +81,31 @@ describe.skipIf(!ADMIN_URL)("real Postgres", () => {
     await runPostgresMigrations(url);
     expect((await migrationStatus(db)).upToDate).toBe(true);
     await sql.end();
+  }, 120_000);
+
+  it("in production the app never migrates on start: the database stays as the deploy step left it", async () => {
+    const url = await freshDatabase("prodstart");
+    const saved = { ...process.env };
+    const g = globalThis as { __db?: unknown };
+    const cached = g.__db;
+    try {
+      Object.assign(process.env, { DATABASE_URL: url, DEPLOY_ENV: "production" });
+      delete process.env.MIGRATE_ON_START;
+      g.__db = undefined; // a fresh app process
+      const { getDb } = await import("./db/client");
+      const { readiness } = await import("./health");
+      await getDb();
+      const { default: postgres } = await import("postgres");
+      const sql = postgres(url, { max: 1, onnotice: () => {} });
+      const [{ t }] = await sql`select to_regclass('public.users')::text as t`;
+      expect(t).toBeNull(); // no tables were created
+      await sql.end();
+      const r = await readiness();
+      expect(r.checks.migrations.ok).toBe(false); // so the load balancer keeps traffic away
+      expect(r.status).toBe("not_ready");
+    } finally {
+      process.env = saved;
+      g.__db = cached;
+    }
   }, 120_000);
 });

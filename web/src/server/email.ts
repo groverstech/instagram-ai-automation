@@ -31,7 +31,7 @@ const logDriver: EmailProvider = {
 export class EmailNotConfigured extends Error {}
 
 export function emailProvider(): EmailProvider {
-  const name = (process.env.EMAIL_PROVIDER ?? "log").toLowerCase();
+  const name = (process.env.EMAIL_PROVIDER ?? "").trim().toLowerCase() || "log";
   if (name === "log") {
     if (isStrict()) throw new EmailNotConfigured("No email provider is configured (EMAIL_PROVIDER). Emails can't be sent in this environment.");
     return logDriver;

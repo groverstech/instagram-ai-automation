@@ -11,6 +11,10 @@ import "server-only";
  * (web, worker and migrate). In every other environment they are logged as warnings, so
  * existing local, demo and E2E setups keep working.
  *
+ * Fail closed: an unrecognised DEPLOY_ENV (a typo such as "prod") is treated as strict and
+ * refused, never as development. Unrecognised values of other settings are errors too, rather
+ * than silently meaning a default.
+ *
  * Only variable *names* are reported, never their values.
  */
 
@@ -21,18 +25,48 @@ export type ConfigProblem = { level: "error" | "warning"; key: string; message: 
 
 type Env = Record<string, string | undefined>;
 
+const norm = (v: string | undefined) => (v ?? "").trim().toLowerCase();
+const knownEnv = (v: string): v is DeployEnv => (DEPLOY_ENVS as readonly string[]).includes(v);
+
+/** The deployment environment. Unset means development; an unrecognised value is reported by checkConfig. */
 export function deployEnv(env: Env = process.env): DeployEnv {
-  const v = (env.DEPLOY_ENV ?? "").toLowerCase();
-  return (DEPLOY_ENVS as readonly string[]).includes(v) ? (v as DeployEnv) : "development";
+  const v = norm(env.DEPLOY_ENV);
+  return knownEnv(v) ? v : "development";
 }
 
-/** True where configuration errors must stop the process. */
+/** For logs and health output: the deployment environment, or "unknown" for an unrecognised value. */
+export function deployEnvLabel(env: Env = process.env): DeployEnv | "unknown" {
+  const v = norm(env.DEPLOY_ENV);
+  return v && !knownEnv(v) ? "unknown" : deployEnv(env);
+}
+
+/**
+ * True where configuration errors must stop the process: staging, production, and any
+ * unrecognised DEPLOY_ENV (fail closed, so a typo can't switch the safeguards off).
+ */
 export function isStrict(env: Env = process.env) {
-  const d = deployEnv(env);
-  return d === "staging" || d === "production";
+  const v = norm(env.DEPLOY_ENV);
+  if (v && !knownEnv(v)) return true;
+  return v === "staging" || v === "production";
+}
+
+/**
+ * Whether the app applies database migrations itself when it first connects.
+ *
+ * - Staging and production: **off** unless MIGRATE_ON_START=true. Migrations run as the separate
+ *   deploy step (`npm run db:migrate`, the image's `migrate` role); production refuses `true`.
+ * - Elsewhere: on unless MIGRATE_ON_START=false (local, demo and E2E setups unchanged).
+ * - An unrecognised value never migrates in strict environments (and is a configuration error).
+ */
+export function migrateOnStart(env: Env = process.env): boolean {
+  const v = norm(env.MIGRATE_ON_START);
+  if (v === "true") return true;
+  if (v === "false") return false;
+  return !isStrict(env);
 }
 
 const set = (v: string | undefined) => Boolean(v && v.trim());
+const BOOL_KEYS = ["MIGRATE_ON_START", "ALLOW_LOCAL_STORAGE_IN_PRODUCTION", "AI_ALLOW_MOCK_IN_PRODUCTION", "RUN_JOBS_IN_PROCESS"] as const;
 
 /** Validate the environment. Pure (takes the env as input) so it's easy to test. */
 export function checkConfig(env: Env = process.env): ConfigProblem[] {
@@ -42,8 +76,16 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   const strict = isStrict(env);
   const prod = strict || env.NODE_ENV === "production";
 
-  if (env.DEPLOY_ENV && !(DEPLOY_ENVS as readonly string[]).includes(env.DEPLOY_ENV.toLowerCase())) {
-    err("DEPLOY_ENV", `Unknown value. Use one of: ${DEPLOY_ENVS.join(", ")}.`);
+  const isProd = deployEnv(env) === "production";
+  if (set(env.DEPLOY_ENV) && !knownEnv(norm(env.DEPLOY_ENV))) {
+    err("DEPLOY_ENV", `Unknown value. Use one of: ${DEPLOY_ENVS.join(", ")}. Treated as strict until fixed.`);
+  } else if (!set(env.DEPLOY_ENV) && env.NODE_ENV === "production") {
+    warn("DEPLOY_ENV", "Not set: running without the staging/production safeguards. Set DEPLOY_ENV=production (or staging) on real deployments; demo for demos.");
+  }
+
+  // Yes/no settings: anything other than true/false is a mistake, not a silent "no".
+  for (const k of BOOL_KEYS) {
+    if (set(env[k]) && !["true", "false"].includes(norm(env[k]))) err(k, "Must be `true` or `false`.");
   }
 
   // Secrets used to encrypt OAuth tokens and sign links.
@@ -59,11 +101,11 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   }
 
   // Storage: production must not depend on one server's local disk (ADR-004).
-  const driver = (env.STORAGE_DRIVER ?? "local").toLowerCase();
+  const driver = norm(env.STORAGE_DRIVER) || "local";
   if (!["local", "s3"].includes(driver)) err("STORAGE_DRIVER", "Use `local` or `s3`.");
   if (driver === "s3") {
     err("STORAGE_DRIVER", "The S3/R2 storage adapter arrives in PR 4.2. Until then only `local` is available.");
-  } else if (strict && env.ALLOW_LOCAL_STORAGE_IN_PRODUCTION !== "true") {
+  } else if (strict && norm(env.ALLOW_LOCAL_STORAGE_IN_PRODUCTION) !== "true") {
     err(
       "STORAGE_DRIVER",
       "Local-disk storage can't be used in staging/production: files would live on one server and be lost on redeploy. Configure object storage (Cloudflare R2, PR 4.2), or set ALLOW_LOCAL_STORAGE_IN_PRODUCTION=true only for a single-instance pilot with a persistent, backed-up volume.",
@@ -77,15 +119,18 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   // otherwise the real provider is used and needs credentials.
   const mockRequested = env.AI_PROVIDER === "mock";
   const mockEffective = mockRequested && (env.NODE_ENV !== "production" || env.AI_ALLOW_MOCK_IN_PRODUCTION === "true");
-  if (mockRequested && env.DEPLOY_ENV?.toLowerCase() === "production") err("AI_PROVIDER", "Demo mode (mock) can't run in production. Remove AI_PROVIDER=mock.");
+  if (set(env.AI_PROVIDER) && !["anthropic", "mock"].includes(env.AI_PROVIDER!)) err("AI_PROVIDER", "Use `anthropic` (or leave unset) for Claude, or `mock` for demos.");
+  if (mockRequested && isProd) err("AI_PROVIDER", "Demo mode (mock) can't run in production. Remove AI_PROVIDER=mock.");
   else if (mockRequested && !mockEffective) warn("AI_PROVIDER", "AI_PROVIDER=mock is ignored with NODE_ENV=production unless AI_ALLOW_MOCK_IN_PRODUCTION=true; the real AI provider is used.");
   if (!mockEffective && !set(env.ANTHROPIC_API_KEY) && !set(env.ANTHROPIC_AUTH_TOKEN)) {
     (strict ? err : warn)("ANTHROPIC_API_KEY", "No Anthropic credentials: AI features are unavailable. Real-provider validation stays pending until it's configured.");
   }
-  if (env.AI_ALLOW_MOCK_IN_PRODUCTION === "true" && env.DEPLOY_ENV?.toLowerCase() === "production") {
+  if (env.AI_ALLOW_MOCK_IN_PRODUCTION === "true" && isProd) {
     err("AI_ALLOW_MOCK_IN_PRODUCTION", "Must not be set in production.");
   }
-  if ((env.IMAGE_PROVIDER ?? "openai").toLowerCase() === "openai" && !set(env.OPENAI_API_KEY)) {
+  const imageProvider = norm(env.IMAGE_PROVIDER) || "openai";
+  if (!["openai", "none"].includes(imageProvider)) err("IMAGE_PROVIDER", "Use `openai`, or `none` to turn AI images off.");
+  else if (imageProvider === "openai" && !set(env.OPENAI_API_KEY)) {
     warn("OPENAI_API_KEY", "Not set: AI images are unavailable (brand-photo and type-led creatives still work).");
   }
 
@@ -103,10 +148,17 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
     warn("TRUSTED_PROXY_HOPS", "Not set: assuming one proxy in front of the app. Set it (or CLIENT_IP_HEADER) to match your load balancer/CDN.");
   }
 
-  // Migrations: in staging/production they should run as a separate step (ADR-003).
-  if (strict && env.MIGRATE_ON_START !== "false") {
-    warn("MIGRATE_ON_START", "Migrations run at start-up. Recommended: run `npm run db:migrate` as a deploy step and set MIGRATE_ON_START=false.");
+  // Migrations: in staging/production they run as a separate deploy step (ADR-003).
+  if (strict && norm(env.MIGRATE_ON_START) === "true") {
+    (isProd ? err : warn)("MIGRATE_ON_START", "Migrations must run as the separate deploy step (`npm run db:migrate`, the image's `migrate` role), not at start-up. Remove MIGRATE_ON_START=true.");
   }
+
+  // Numeric settings: an invalid value must not silently become a default.
+  for (const k of ["DATABASE_POOL_MAX", "WORKER_INTERVAL_MS", "WORKER_DRAIN_MS"] as const) {
+    if (set(env[k]) && !/^[1-9]\d*$/.test(env[k]!.trim())) err(k, "Must be a positive whole number.");
+  }
+  if (set(env.EMAIL_PROVIDER) && norm(env.EMAIL_PROVIDER) !== "log") err("EMAIL_PROVIDER", "Unknown provider. Only `log` exists until an email provider is chosen.");
+  else if (strict) warn("EMAIL_PROVIDER", "No email provider: emails can't be sent in this environment (sending fails loudly).");
 
   // Paired settings: an ID without its secret (or vice versa) is a misconfiguration.
   for (const [id, secret] of [
@@ -119,7 +171,7 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
     if (set(env[id]) !== set(env[secret])) err(set(env[id]) ? secret : id, `${id} and ${secret} must be set together.`);
   }
   if (set(env.STRIPE_SECRET_KEY) && !set(env.STRIPE_WEBHOOK_SECRET)) err("STRIPE_WEBHOOK_SECRET", "Required when STRIPE_SECRET_KEY is set.");
-  if (strict && /^sk_test_/.test(env.STRIPE_SECRET_KEY ?? "") && env.DEPLOY_ENV?.toLowerCase() === "production") {
+  if (/^sk_test_/.test(env.STRIPE_SECRET_KEY ?? "") && isProd) {
     warn("STRIPE_SECRET_KEY", "A Stripe test key is configured in production.");
   }
   return out;
@@ -129,10 +181,11 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
 export function configSummary(env: Env = process.env) {
   const problems = checkConfig(env);
   return {
-    deployEnv: deployEnv(env),
+    deployEnv: deployEnvLabel(env),
     strict: isStrict(env),
     database: set(env.DATABASE_URL) ? "postgres" : "pglite",
-    storage: (env.STORAGE_DRIVER ?? "local").toLowerCase(),
+    storage: norm(env.STORAGE_DRIVER) || "local",
+    migrateOnStart: migrateOnStart(env),
     aiMode: env.AI_PROVIDER === "mock" ? "demo" : "production",
     errors: problems.filter((p) => p.level === "error").length,
     warnings: problems.filter((p) => p.level === "warning").length,
@@ -151,7 +204,7 @@ export function enforceConfig(where: string, env: Env = process.env, exit: (code
   }
   const errors = problems.filter((p) => p.level === "error");
   if (errors.length && isStrict(env)) {
-    console.error(JSON.stringify({ ts: new Date().toISOString(), level: "error", event: "config.refused", where, deployEnv: deployEnv(env), errors: errors.map((e) => e.key) }));
+    console.error(JSON.stringify({ ts: new Date().toISOString(), level: "error", event: "config.refused", where, deployEnv: deployEnvLabel(env), errors: errors.map((e) => e.key) }));
     exit(1);
   }
   return problems;
