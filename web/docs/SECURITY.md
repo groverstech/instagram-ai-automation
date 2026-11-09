@@ -164,4 +164,6 @@ In CI, the full suite also runs against real Postgres 16 with pgvector.
 | Row-Level Security | Defence in depth planned (PR 4.9 pilot). Application-level isolation is tested. |
 | Hot rate-limit counters in Postgres | Fine at current scale; move to Redis per the scalability plan (PR 4.9). |
 | Audit-log retention and export | Not yet configurable (PR 4.9). |
+| `access.denied` volume | A signed-in user could generate many refusal records. Bounded by the request rate limits; retention arrives in PR 4.9. Unknown brand or workspace ids are never recorded. |
+| Public readiness output | `/api/health/ready` shows error, warning and migration counts (never values). Restrict it at the load balancer if preferred. |
 | Penetration test | Planned before launch (PR 4.9). |
