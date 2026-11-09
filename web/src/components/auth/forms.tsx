@@ -56,7 +56,8 @@ export function SignupForm() {
           <Input name="workspace" placeholder="Acme Studio" defaultValue={state.values?.workspace} required />
         </Field>
         <Field label="You are">
-          <Select name="type" defaultValue={state.values?.type || "business"}>
+          {/* A form reset restores a select's initially selected option, so remount it with the typed value. */}
+          <Select key={state.values?.type || "business"} name="type" defaultValue={state.values?.type || "business"}>
             <option value="creator">Creator</option>
             <option value="business">Business</option>
             <option value="agency">Agency</option>
