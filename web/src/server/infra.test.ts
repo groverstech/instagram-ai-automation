@@ -222,6 +222,14 @@ describe("security log access and member audit trail", () => {
     expect(log.map((r) => r.action)).toEqual(expect.arrayContaining(["member.invite", "member.role_change"]));
     expect(log.find((r) => r.action === "member.role_change")).toMatchObject({ actorName: "Owner", details: { from: "viewer", to: "editor" } });
 
+    // Account-level sign-in events of members appear; other people's don't.
+    await audit({ action: "auth.login_failed", outcome: "denied", actorUserId: client.id, details: { reason: "wrong_password" } });
+    await audit({ action: "auth.login", actorUserId: owner.id });
+    const [stranger] = await db.insert(schema.users).values({ email: "str@x.test", name: "Stranger", passwordHash: "x" }).returning();
+    await audit({ action: "auth.login", actorUserId: stranger.id });
+    const withAuth = await auditTrailFor(sess(owner), w.id);
+    expect(withAuth.filter((r) => r.action.startsWith("auth.")).map((r) => r.actorName).sort()).toEqual(["Client", "Owner"]);
+
     await expect(auditTrailFor(sess(client), w.id)).rejects.toThrow(); // brand-scoped client
     await expect(auditTrailFor(sess(editor), w.id)).rejects.toThrow(); // editor, not admin
   });

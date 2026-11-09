@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, like, lt, or } from "drizzle-orm";
 import { getDb, schema } from "./db/client";
 import { keyedHash } from "./crypto";
 import { redact, log } from "./log";
@@ -63,13 +63,24 @@ export async function audit(e: AuditEvent) {
   }
 }
 
-/** A workspace's audit trail, newest first (owners/admins only; the caller checks the role). */
+/**
+ * A workspace's audit trail, newest first (owners/admins only; the caller checks the role).
+ * Includes the workspace's own events, plus account-level sign-in events (sign-in, failed
+ * sign-in, sign-out) of the workspace's current members. Those aren't tied to one workspace, but
+ * an owner needs to see them. Failed sign-ins for unknown emails belong to no tenant and appear
+ * in no workspace's log.
+ */
 export async function auditTrail(workspaceId: string, opts: { limit?: number; before?: Date } = {}) {
   const db = await getDb();
+  const members = await db.select({ userId: schema.workspaceMembers.userId }).from(schema.workspaceMembers).where(eq(schema.workspaceMembers.workspaceId, workspaceId));
+  const memberIds = members.map((m) => m.userId).filter((x): x is string => Boolean(x));
+  const scope = memberIds.length
+    ? or(eq(schema.auditEvents.workspaceId, workspaceId), and(isNull(schema.auditEvents.workspaceId), inArray(schema.auditEvents.actorUserId, memberIds), like(schema.auditEvents.action, "auth.%")))
+    : eq(schema.auditEvents.workspaceId, workspaceId);
   return db
     .select()
     .from(schema.auditEvents)
-    .where(and(eq(schema.auditEvents.workspaceId, workspaceId), opts.before ? lt(schema.auditEvents.createdAt, opts.before) : undefined))
+    .where(and(scope, opts.before ? lt(schema.auditEvents.createdAt, opts.before) : undefined))
     .orderBy(desc(schema.auditEvents.createdAt))
     .limit(Math.min(opts.limit ?? 50, 200));
 }
@@ -97,7 +108,6 @@ export async function auditTrailFor(session: import("./auth/session").SessionUse
   const rows = await auditTrail(workspaceId, { limit });
   const ids = [...new Set(rows.map((r) => r.actorUserId).filter((x): x is string => Boolean(x)))];
   const db = await getDb();
-  const { inArray } = await import("drizzle-orm");
   const users = ids.length ? await db.select({ id: schema.users.id, name: schema.users.name, email: schema.users.email }).from(schema.users).where(inArray(schema.users.id, ids)) : [];
   const nameOf = new Map(users.map((u) => [u.id, u.name || u.email]));
   return rows.map((r) => ({
