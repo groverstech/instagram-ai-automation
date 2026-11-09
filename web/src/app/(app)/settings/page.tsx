@@ -5,12 +5,16 @@ import { aiStatus } from "@/server/ai/llm";
 import { imageStatus } from "@/server/ai/image";
 import { SettingsView } from "@/components/settings/view";
 import { billingStatus } from "@/server/billing";
+import { auditTrailFor } from "@/server/audit";
+import { roleAtLeast } from "@/lib/roles";
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ billing?: string }> }) {
   const { billing } = await searchParams;
   const { brand, role, session } = await requireActiveBrand();
   const view = await workspaceSettingsFor(session, brand.workspaceId, brand.id);
   const ws = view.workspace;
+  // The security log covers the whole organisation: owners/admins with access to every brand only.
+  const auditLog = !view.scoped && roleAtLeast(role, "admin") ? await auditTrailFor(session, ws.id) : null;
   return (
     <SettingsView
       role={role}
@@ -30,6 +34,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ b
         cancelAtPeriodEnd: ws.cancelAtPeriodEnd,
       }}
       usage={view.scoped ? null : await usage(ws.id)}
+      auditLog={auditLog}
       members={view.members}
       brands={view.brands}
       integrations={view.scoped ? null : { ai: aiStatus(), image: imageStatus(), embeddings: process.env.VOYAGE_API_KEY ? "Voyage AI (voyage-3.5-lite)" : "Local hashing (set VOYAGE_API_KEY for semantic embeddings)", database: process.env.DATABASE_URL ? "PostgreSQL" : "Embedded PGlite (development)" }}

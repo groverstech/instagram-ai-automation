@@ -19,23 +19,37 @@ export async function cancelJobs(type: JobType, match: (p: Record<string, unknow
 
 type Handler = (payload: Record<string, unknown>) => Promise<unknown>;
 
+/**
+ * Optional per-type hook for a job whose previous run was interrupted (its worker stopped
+ * holding the lock: crash, deploy, kill). Return true to skip re-running it. Used for jobs with
+ * external side effects that can't be safely repeated without checking first (publishing).
+ */
+export type InterruptedHook = (payload: Record<string, unknown>) => Promise<boolean>;
+
 /** Claim and run due jobs. Safe to call concurrently: claim is a single conditional UPDATE. */
-export async function runDueJobs(handlers: Record<string, Handler>, limit = 10) {
+export async function runDueJobs(handlers: Record<string, Handler>, limit = 10, onInterrupted: Record<string, InterruptedHook> = {}) {
   const db = await getDb();
   const staleLock = new Date(Date.now() - 10 * 60 * 1000);
   const due = await db
-    .select({ id: schema.jobs.id })
+    .select({ id: schema.jobs.id, status: schema.jobs.status })
     .from(schema.jobs)
     .where(and(lte(schema.jobs.runAt, new Date()), sql`(${schema.jobs.status} = 'queued' or (${schema.jobs.status} = 'running' and ${schema.jobs.lockedAt} < ${staleLock}))`))
     .limit(limit);
   const results: { id: string; ok: boolean; error?: string }[] = [];
-  for (const { id } of due) {
+  for (const { id, status: before } of due) {
     const [job] = await db
       .update(schema.jobs)
       .set({ status: "running", lockedAt: new Date(), attempts: sql`${schema.jobs.attempts} + 1` })
       .where(and(eq(schema.jobs.id, id), sql`(${schema.jobs.status} = 'queued' or ${schema.jobs.lockedAt} < ${staleLock})`))
       .returning();
     if (!job) continue;
+    // Re-claimed from a worker that stopped mid-run: let the type decide whether re-running is safe.
+    const interrupted = before === "running" ? onInterrupted[job.type] : undefined;
+    if (interrupted && (await interrupted(job.payload).catch(() => true))) {
+      await db.update(schema.jobs).set({ status: "failed", lastError: "Interrupted; not retried automatically (outcome unknown).", lockedAt: null }).where(eq(schema.jobs.id, id));
+      results.push({ id, ok: false, error: "interrupted" });
+      continue;
+    }
     const handler = handlers[job.type];
     try {
       if (!handler) throw new Error(`No handler for job type ${job.type}`);

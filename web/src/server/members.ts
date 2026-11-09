@@ -5,6 +5,7 @@ import { getDb, schema } from "./db/client";
 import { AccessError, inBrandScope, requireBrandForUser, requireWorkspaceRoleForUser } from "./auth/guard";
 import { setActiveBrand, type SessionUser } from "./auth/session";
 import { assertCanAdd } from "./quota";
+import { audit } from "./audit";
 import { PLANS, type PlanId } from "@/lib/plans";
 import type { Role } from "@/lib/roles";
 
@@ -54,6 +55,7 @@ export async function inviteMemberFor(session: SessionUser, workspaceId: string,
     .insert(schema.workspaceMembers)
     .values(user ? { workspaceId, userId: user.id, role, status: "active", invitedEmail: e, brandIds: scope } : { workspaceId, invitedEmail: e, role, status: "invited", brandIds: scope })
     .returning();
+  await audit({ action: "member.invite", workspaceId, actorUserId: session.user.id, targetType: "member", targetId: m.id, details: { role, scopedBrands: scope?.length ?? null, existingUser: Boolean(user) } });
   return m;
 }
 
@@ -68,6 +70,7 @@ export async function changeRoleFor(session: SessionUser, workspaceId: string, m
     if (n <= 1) throw new MemberError("A workspace needs at least one owner.");
   }
   await db.update(schema.workspaceMembers).set({ role }).where(eq(schema.workspaceMembers.id, memberId));
+  await audit({ action: "member.role_change", workspaceId, actorUserId: session.user.id, targetType: "member", targetId: memberId, details: { from: m.role, to: role } });
 }
 
 /** Limit a member to specific brands (client access), or pass null for every brand. */
@@ -78,6 +81,7 @@ export async function setMemberBrandsFor(session: SessionUser, workspaceId: stri
   const scope = await checkScope(workspaceId, m.role, brandIds);
   const db = await getDb();
   await db.update(schema.workspaceMembers).set({ brandIds: scope }).where(eq(schema.workspaceMembers.id, memberId));
+  await audit({ action: "member.brand_scope_change", workspaceId, actorUserId: session.user.id, targetType: "member", targetId: memberId, details: { from: m.brandIds, to: scope } });
   // Sessions whose active brand is no longer allowed fall back to an allowed brand on next load
   // (requireActiveBrand). Clear it now so no request keeps using a revoked brand.
   if (scope && m.userId) {
@@ -94,6 +98,7 @@ export async function removeMemberFor(session: SessionUser, workspaceId: string,
   if (m.userId === session.user.id) throw new MemberError("You can't remove yourself.");
   const db = await getDb();
   await db.delete(schema.workspaceMembers).where(eq(schema.workspaceMembers.id, memberId));
+  await audit({ action: "member.remove", workspaceId, actorUserId: session.user.id, targetType: "member", targetId: memberId, details: { role: m.role, userId: m.userId } });
 }
 
 /** Switch the session's active brand. Only brands the user may access (workspace + brand scope). */

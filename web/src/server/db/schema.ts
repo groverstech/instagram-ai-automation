@@ -277,21 +277,25 @@ export const aiTasks = pgTable(
   (t) => [index("ai_tasks_brand_idx").on(t.brandId, t.createdAt), index("ai_tasks_strategy_idx").on(t.strategyId), index("ai_tasks_due_idx").on(t.status, t.runAfter)],
 );
 
-export const campaigns = pgTable("campaigns", {
-  id: id(),
-  brandId: text("brand_id")
-    .notNull()
-    .references(() => brands.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  type: text("type").notNull(), // launch | promotion | awareness | seasonal | engagement | other
-  objective: text("objective").notNull(),
-  status: text("status").$type<"planning" | "active" | "completed" | "paused">().notNull().default("planning"),
-  startDate: timestamp("start_date", { withTimezone: true }).notNull(),
-  endDate: timestamp("end_date", { withTimezone: true }).notNull(),
-  brief: jsonb("brief").$type<Record<string, unknown>>().notNull().default({}),
-  runId: text("run_id"),
-  createdAt: createdAt(),
-});
+export const campaigns = pgTable(
+  "campaigns",
+  {
+    id: id(),
+    brandId: text("brand_id")
+      .notNull()
+      .references(() => brands.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    type: text("type").notNull(), // launch | promotion | awareness | seasonal | engagement | other
+    objective: text("objective").notNull(),
+    status: text("status").$type<"planning" | "active" | "completed" | "paused">().notNull().default("planning"),
+    startDate: timestamp("start_date", { withTimezone: true }).notNull(),
+    endDate: timestamp("end_date", { withTimezone: true }).notNull(),
+    brief: jsonb("brief").$type<Record<string, unknown>>().notNull().default({}),
+    runId: text("run_id"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("campaigns_brand_idx").on(t.brandId)],
+);
 
 export type CreativeSlide = { headline: string; body: string; imagePrompt?: string; imagePath?: string | null; imageError?: string | null };
 export type VisualSource = "ai" | "brand_photo" | "typographic";
@@ -442,18 +446,47 @@ export const accountMetrics = pgTable(
   (t) => [uniqueIndex("am_acct_date").on(t.socialAccountId, t.date)],
 );
 
-export const competitors = pgTable("competitors", {
-  id: id(),
-  brandId: text("brand_id")
-    .notNull()
-    .references(() => brands.id, { onDelete: "cascade" }),
-  name: text("name").notNull(),
-  url: text("url"),
-  handles: jsonb("handles").$type<string[]>().notNull().default([]),
-  analysis: jsonb("analysis").$type<Record<string, unknown> | null>(),
-  analyzedAt: timestamp("analyzed_at", { withTimezone: true }),
-  createdAt: createdAt(),
-});
+export const competitors = pgTable(
+  "competitors",
+  {
+    id: id(),
+    brandId: text("brand_id")
+      .notNull()
+      .references(() => brands.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    url: text("url"),
+    handles: jsonb("handles").$type<string[]>().notNull().default([]),
+    analysis: jsonb("analysis").$type<Record<string, unknown> | null>(),
+    analyzedAt: timestamp("analyzed_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("competitors_brand_idx").on(t.brandId)],
+);
+
+export type AuditOutcome = "success" | "denied" | "failure";
+/**
+ * Append-only security audit log (ADR-006). Records who did what to which tenant resource, from
+ * where (hashed IP), and whether it succeeded. Never stores secrets, tokens or message bodies.
+ * Rows are kept when users or brands are deleted (no FK cascade), so the trail survives.
+ */
+export const auditEvents = pgTable(
+  "audit_events",
+  {
+    id: id(),
+    workspaceId: text("workspace_id"),
+    brandId: text("brand_id"),
+    actorUserId: text("actor_user_id"),
+    actorType: text("actor_type").$type<"user" | "system" | "agent">().notNull().default("user"),
+    action: text("action").notNull(),
+    targetType: text("target_type"),
+    targetId: text("target_id"),
+    outcome: text("outcome").$type<AuditOutcome>().notNull().default("success"),
+    ipHash: text("ip_hash"),
+    details: jsonb("details").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [index("audit_ws_time_idx").on(t.workspaceId, t.createdAt), index("audit_brand_time_idx").on(t.brandId, t.createdAt), index("audit_actor_time_idx").on(t.actorUserId, t.createdAt)],
+);
 
 export const agentRuns = pgTable(
   "agent_runs",

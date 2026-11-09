@@ -61,3 +61,12 @@ export function sha256(s: string): string {
 export function randomToken(bytes = 32): string {
   return crypto.randomBytes(bytes).toString("base64url");
 }
+
+/**
+ * Keyed hash (HMAC-SHA256 with the app secret), truncated. For identifiers we must match later
+ * but must not store in readable form, e.g. client IPs in the audit log. Unlike a plain hash, it
+ * can't be reversed by hashing every IPv4 address.
+ */
+export function keyedHash(s: string, len = 32): string {
+  return crypto.createHmac("sha256", secret()).update(s).digest("hex").slice(0, len);
+}

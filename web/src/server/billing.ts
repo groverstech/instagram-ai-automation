@@ -1,4 +1,5 @@
 import "server-only";
+import { audit } from "./audit";
 import Stripe from "stripe";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "./db/client";
@@ -133,6 +134,9 @@ export async function applySubscription(sub: Stripe.Subscription) {
       cancelAtPeriodEnd: sub.cancel_at_period_end,
     })
     .where(eq(schema.workspaces.id, ws.id));
+  if (plan !== ws.plan || sub.status !== ws.subscriptionStatus) {
+    await audit({ action: "billing.plan_changed", workspaceId: ws.id, actorType: "system", targetType: "subscription", targetId: sub.id, details: { from: ws.plan, to: plan, status: sub.status } });
+  }
   return { applied: true as const, workspaceId: ws.id, plan, status: sub.status };
 }
 
