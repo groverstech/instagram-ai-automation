@@ -140,6 +140,9 @@ describe("storage abstraction", () => {
 
 describe("readiness", () => {
   it("reports database, migrations, storage and config without exposing values", async () => {
+    // Open the database first: readiness allows 3s, and the first getDb() here also creates the
+    // test database and applies every migration (took ~4s on a CI runner, so the check timed out).
+    await getDb();
     const r = await readiness();
     expect(r.checks.database.ok).toBe(true);
     expect(r.checks.migrations).toMatchObject({ ok: true, detail: `${expectedMigrations().length}/${expectedMigrations().length} applied` });
