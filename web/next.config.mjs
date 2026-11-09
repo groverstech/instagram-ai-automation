@@ -1,5 +1,5 @@
-import type { NextConfig } from "next";
-
+// Plain JavaScript on purpose: with next.config.ts, `next start` needs TypeScript at run time and
+// tries to install it, which hangs a production container that has no dev dependencies.
 /**
  * Security headers on every response (ADR-005). The CSP sets only directives that can't break
  * the app: no framing, no <base> or form-target hijacking, no plugins. A script-src policy needs
@@ -15,7 +15,8 @@ const securityHeaders = [
   { key: "Content-Security-Policy", value: "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'" },
 ];
 
-const nextConfig: NextConfig = {
+/** @type {import("next").NextConfig} */
+const nextConfig = {
   serverExternalPackages: ["@electric-sql/pglite", "@electric-sql/pglite-pgvector", "postgres"],
   // Must exceed MAX_TOTAL_UPLOAD_BYTES (src/server/assets.ts) plus form overhead.
   experimental: { serverActions: { bodySizeLimit: "60mb" } },

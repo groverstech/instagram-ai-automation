@@ -9,16 +9,30 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   web:
     name: Typecheck, lint, test, build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: web
     env:
       NEXT_TELEMETRY_DISABLED: "1"
+      # Real Postgres (with pgvector) for src/server/postgres.test.ts: migration locking and the
+      # production database driver. Throwaway CI credentials, not a secret.
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
 
@@ -37,7 +51,7 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Integration tests
+      - name: Integration tests (PGlite + real Postgres)
         run: npm test
 
       - name: Production build
@@ -45,3 +59,62 @@ jobs:
 
       - name: Client bundle secret check
         run: npm run check:secrets
+
+  container:
+    name: Container image (build and role smoke test)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    # Builds the image and checks the migrate, web and worker roles against Postgres.
+    # Nothing is pushed or deployed.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DB: postgres://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t brandpilot:ci web
+
+      - name: Migrate (two concurrent runs, advisory lock)
+        run: |
+          docker run --rm --network host -e DATABASE_URL="$DB" brandpilot:ci migrate &
+          docker run --rm --network host -e DATABASE_URL="$DB" brandpilot:ci migrate &
+          wait
+
+      - name: Web role in strict staging mode is ready
+        run: |
+          docker run -d --name web --network host -e PORT=3000 -e DEPLOY_ENV=staging -e DATABASE_URL="$DB" \
+            -e MIGRATE_ON_START=false -e APP_SECRET="$(openssl rand -hex 32)" -e APP_URL=https://staging.example.com \
+            -e AI_PROVIDER=mock -e AI_ALLOW_MOCK_IN_PRODUCTION=true -e STORAGE_DIR=/tmp/store \
+            -e ALLOW_LOCAL_STORAGE_IN_PRODUCTION=true -e TRUSTED_PROXY_HOPS=1 -e RUN_JOBS_IN_PROCESS=false brandpilot:ci
+          for i in $(seq 1 60); do curl -fs -o /dev/null localhost:3000/api/health/live && break; sleep 2; done
+          curl -fsS localhost:3000/api/health/ready
+          curl -fsI localhost:3000/login | grep -i "x-frame-options: DENY"
+          docker stop -t 30 web
+          test "$(docker inspect -f '{{.State.ExitCode}}' web)" = "0"
+
+      - name: Worker role shuts down gracefully on SIGTERM
+        run: |
+          docker run -d --name worker --network host -e DATABASE_URL="$DB" -e MIGRATE_ON_START=false \
+            -e APP_SECRET="$(openssl rand -hex 32)" -e AI_PROVIDER=mock -e AI_ALLOW_MOCK_IN_PRODUCTION=true brandpilot:ci worker
+          for i in $(seq 1 60); do docker logs worker 2>&1 | grep -q '"worker.started"' && break; sleep 1; done
+          docker stop -t 30 worker
+          docker logs worker 2>&1 | grep '"worker.stopped"'
+          test "$(docker inspect -f '{{.State.ExitCode}}' worker)" = "0"
+
+      - name: Strict production refuses unsafe configuration
+        run: |
+          set +e
+          docker run --rm -e DEPLOY_ENV=production -e AI_PROVIDER=mock brandpilot:ci migrate > out.log 2>&1
+          code=$?
+          set -e
+          cat out.log
+          test "$code" != "0"
+          grep '"config.refused"' out.log

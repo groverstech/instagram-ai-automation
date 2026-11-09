@@ -7,7 +7,8 @@ platform APIs after human approval, and analyses real performance.
 
 **Architecture, schema, agent design and roadmap:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 **Brand Intelligence Agent (Phase 1):** [`docs/BRAND_INTELLIGENCE.md`](docs/BRAND_INTELLIGENCE.md)
-**Production deployment requirements:** [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+**Production deployment (environments, container roles, migrations, health, backups):** [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
+**Security model:** [`docs/SECURITY.md`](docs/SECURITY.md) · **Architecture decisions:** [`docs/ARCHITECTURE_DECISIONS.md`](docs/ARCHITECTURE_DECISIONS.md)
 
 ## Quick start
 
@@ -99,5 +100,7 @@ npm run build       # production build (type-checks)
 npm test            # integration tests: agents, brand intelligence, billing on in-memory Postgres + pgvector
 npm run lint        # ESLint (next/core-web-vitals + TypeScript)
 npm run test:live   # LIVE, paid real-provider checks (OpenAI images, Claude); never in CI. See docs/CREATIVE_STUDIO_REAL_AI_TEST_PLAN.md
+npm run db:migrate  # apply migrations (advisory-locked; the deploy step in staging/production)
+npm run worker      # background worker (Postgres): WORKER_QUEUES=jobs,ai
 npm run typecheck
 ```

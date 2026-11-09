@@ -49,6 +49,13 @@ describe("production configuration validation", () => {
     expect(keys({ ...goodProd, STORAGE_DRIVER: "s3" })).toContain("STORAGE_DRIVER"); // adapter arrives in PR 4.2
   });
 
+  it("checks the effective AI mode: an ignored mock setting still needs real credentials", () => {
+    const staging = { ...goodProd, DEPLOY_ENV: "staging", ANTHROPIC_API_KEY: "" };
+    expect(keys({ ...staging, AI_PROVIDER: "mock" })).toContain("ANTHROPIC_API_KEY"); // mock ignored → real provider
+    expect(keys({ ...staging, AI_PROVIDER: "mock", AI_ALLOW_MOCK_IN_PRODUCTION: "true" })).not.toContain("ANTHROPIC_API_KEY"); // demo staging
+    expect(keys({ ...goodProd, AI_PROVIDER: "mock", AI_ALLOW_MOCK_IN_PRODUCTION: "true" })).toEqual(expect.arrayContaining(["AI_PROVIDER", "AI_ALLOW_MOCK_IN_PRODUCTION"]));
+  });
+
   it("flags half-configured integrations", () => {
     expect(keys({ ...goodProd, META_APP_ID: "123" })).toContain("META_APP_SECRET");
     expect(keys({ ...goodProd, STRIPE_SECRET_KEY: "sk_test_placeholder" })).toContain("STRIPE_WEBHOOK_SECRET");

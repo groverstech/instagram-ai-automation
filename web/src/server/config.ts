@@ -72,11 +72,14 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
     warn("STORAGE_DRIVER", "Local-disk storage: back up STORAGE_DIR and run a single instance (or a shared volume).");
   }
 
-  // AI mode: demo output must never reach real users (see src/server/ai/mode.ts).
-  if (env.AI_PROVIDER === "mock") {
-    if (strict && env.DEPLOY_ENV?.toLowerCase() === "production") err("AI_PROVIDER", "Demo mode (mock) can't run in production. Remove AI_PROVIDER=mock.");
-    else if (prod && env.AI_ALLOW_MOCK_IN_PRODUCTION !== "true") warn("AI_PROVIDER", "AI_PROVIDER=mock is ignored with NODE_ENV=production unless AI_ALLOW_MOCK_IN_PRODUCTION=true.");
-  } else if (!set(env.ANTHROPIC_API_KEY) && !set(env.ANTHROPIC_AUTH_TOKEN)) {
+  // AI mode: demo output must never reach real users. Mirrors src/server/ai/mode.ts: with
+  // NODE_ENV=production, AI_PROVIDER=mock only takes effect with AI_ALLOW_MOCK_IN_PRODUCTION=true;
+  // otherwise the real provider is used and needs credentials.
+  const mockRequested = env.AI_PROVIDER === "mock";
+  const mockEffective = mockRequested && (env.NODE_ENV !== "production" || env.AI_ALLOW_MOCK_IN_PRODUCTION === "true");
+  if (mockRequested && env.DEPLOY_ENV?.toLowerCase() === "production") err("AI_PROVIDER", "Demo mode (mock) can't run in production. Remove AI_PROVIDER=mock.");
+  else if (mockRequested && !mockEffective) warn("AI_PROVIDER", "AI_PROVIDER=mock is ignored with NODE_ENV=production unless AI_ALLOW_MOCK_IN_PRODUCTION=true; the real AI provider is used.");
+  if (!mockEffective && !set(env.ANTHROPIC_API_KEY) && !set(env.ANTHROPIC_AUTH_TOKEN)) {
     (strict ? err : warn)("ANTHROPIC_API_KEY", "No Anthropic credentials: AI features are unavailable. Real-provider validation stays pending until it's configured.");
   }
   if (env.AI_ALLOW_MOCK_IN_PRODUCTION === "true" && env.DEPLOY_ENV?.toLowerCase() === "production") {
