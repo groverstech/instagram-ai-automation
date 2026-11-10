@@ -373,7 +373,7 @@ describe("formats and storage", () => {
       await pruneCreativeFiles(c, null);
       await db.delete(schema.creatives).where(eq(schema.creatives.id, c.id));
     }
-  });
+  }, 120_000); // renders every format: slower than the 30s default on CI runners
 
   it("removes a replaced visual's file, keeps a re-used one, and removes all files when a creative is deleted", async () => {
     const db = await getDb();

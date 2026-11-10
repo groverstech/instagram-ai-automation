@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { format } from "date-fns";
-import { ArrowLeftRight, Building2, Check, Plus, Trash2 } from "lucide-react";
+import { ArrowLeftRight, Building2, Check, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { switchBrand } from "@/app/actions/brand";
 import { changeRole, inviteMember, removeMember, setMemberBrands, updateWorkspace } from "@/app/actions/settings";
@@ -14,6 +14,7 @@ import { ROLE_DESCRIPTIONS, roleAtLeast, type Role } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
 type Member = { id: string; role: Role; brandIds: string[] | null; status: string; invitedEmail: string | null; userId: string | null; name: string | null; email: string | null };
+import type { AuditRow, AuditScope } from "@/server/audit";
 type BrandRow = { id: string; name: string; createdAt: Date; active: boolean; colors: string[]; access: { all: number; scoped: number } };
 
 export function SettingsView(props: {
@@ -35,6 +36,8 @@ export function SettingsView(props: {
   usage: { brands: number; seats: number; aiRuns: number; socialAccounts: number } | null;
   members: Member[];
   brands: BrandRow[];
+  /** Owners/admins with access to every brand only; null for everyone else. */
+  auditLog?: { rows: AuditRow[]; scope: AuditScope } | null;
   integrations: { ai: { provider: string; ready: boolean; model: string }; image: { ready: boolean; provider: string }; embeddings: string; database: string } | null;
 }) {
   const isAdmin = roleAtLeast(props.role, "admin") && !props.scoped;
@@ -93,8 +96,8 @@ export function SettingsView(props: {
               ) : null}
               <ul className="divide-y divide-line">
                 {props.members.map((m) => (
-                  <li key={m.id} className="flex items-center gap-3 py-2.5">
-                    <div className="min-w-0 flex-1">
+                  <li key={m.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5">
+                    <div className="min-w-[min(100%,14rem)] flex-1">
                       <p className="truncate text-[13px] font-medium">{m.name ?? m.invitedEmail}</p>
                       <p className="truncate text-[11px] text-faint">{m.email ?? m.invitedEmail}{m.status === "invited" ? " · invitation pending" : ""}{m.brandIds ? ` · client access: ${m.brandIds.map(brandName).join(", ")}` : m.role === "owner" || m.role === "admin" ? " · all brands" : ""}</p>
                     </div>
@@ -163,6 +166,8 @@ export function SettingsView(props: {
               <p className="mt-3 text-[12px] text-faint">Each brand keeps separate memory, assets, strategies, campaigns and social connections. Switching changes the brand every page works on.</p>
             </CardBody>
           </Card>
+
+          {props.auditLog ? <SecurityLog rows={props.auditLog.rows} scope={props.auditLog.scope} brandName={brandName} /> : null}
         </div>
 
         <div className="space-y-6">
@@ -337,6 +342,79 @@ function BillingCard({ workspaceId, currentPlan, isOwner, billing }: { workspace
         {!isOwner ? <p className="text-[11px] text-faint">Only workspace owners can change billing.</p> : null}
         {!billing.configured ? <p className="text-[11px] text-faint">Set STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET and the plan price ids to enable self-serve billing.</p> : null}
         <p className="text-[11px] text-faint">Downgrading keeps your existing brands, members and accounts; you just can&apos;t add more beyond the new plan&apos;s limits.</p>
+      </CardBody>
+    </Card>
+  );
+}
+
+const AUDIT_LABELS: Record<string, string> = {
+  "auth.login": "Signed in",
+  "auth.login_failed": "Sign-in failed",
+  "auth.signup": "Created an account",
+  "auth.logout": "Signed out",
+  "member.invite": "Invited a member",
+  "member.role_change": "Changed a role",
+  "member.brand_scope_change": "Changed brand access",
+  "member.remove": "Removed a member",
+  "workspace.update": "Updated workspace details",
+  "brand.create": "Created a brand",
+  "social.connect": "Connected social accounts",
+  "social.disconnect": "Disconnected a social account",
+  "billing.checkout_started": "Started a plan checkout",
+  "billing.plan_changed": "Plan changed",
+  "creative.approve_override": "Approved a creative despite blocking issues",
+  "access.denied": "Access refused",
+  "audit.view": "Viewed the security log",
+};
+
+function auditDetail(r: AuditRow, brandName: (id: string) => string) {
+  const d = r.details ?? {};
+  const parts: string[] = [];
+  if (typeof d.from === "string" && typeof d.to === "string") parts.push(`${d.from} → ${d.to}`);
+  if (typeof d.role === "string" && r.action !== "member.remove") parts.push(`as ${d.role}`);
+  if (typeof d.plan === "string") parts.push(d.plan);
+  if (typeof d.platform === "string") parts.push(d.platform);
+  if (typeof d.accounts === "number") parts.push(`${d.accounts} account${d.accounts === 1 ? "" : "s"}`);
+  if (r.brandId) parts.push(brandName(r.brandId));
+  if (typeof d.reason === "string") parts.push(d.reason.replace(/_/g, " "));
+  if (d.suppressed === true) parts.push("further attempts from this source not recorded for 10 minutes");
+  return parts.join(" · ");
+}
+
+function SecurityLog({ rows, scope, brandName }: { rows: AuditRow[]; scope: AuditScope; brandName: (id: string) => string }) {
+  return (
+    <Card>
+      <CardHeader
+        title="Security log"
+        description={
+          scope.brandIds
+            ? "Security events for the brands you have access to. Visible to owners and admins."
+            : "Sign-ins, membership and access changes, connections and billing in this workspace. Visible to owners and admins."
+        }
+      />
+      <CardBody className="pt-3">
+        {rows.length ? (
+          <ul className="divide-y divide-line" aria-label="Security log">
+            {rows.map((r) => (
+              <li key={r.id} className="flex flex-wrap items-start gap-x-3 gap-y-1 py-2.5 text-[13px]">
+                <ShieldCheck className={cn("mt-0.5 size-4 shrink-0", r.outcome === "success" ? "text-success" : "text-danger")} />
+                <span className="min-w-0 flex-1">
+                  <span className="block font-medium">{AUDIT_LABELS[r.action] ?? r.action}</span>
+                  <span className="block text-[11px] text-faint">
+                    {r.actorName ?? "Unknown"}
+                    {auditDetail(r, brandName) ? ` · ${auditDetail(r, brandName)}` : ""}
+                  </span>
+                </span>
+                <span className="flex shrink-0 items-center gap-2">
+                  {r.outcome !== "success" ? <Badge tone="danger">{r.outcome}</Badge> : null}
+                  <time className="text-[11px] text-faint" dateTime={new Date(r.createdAt).toISOString()}>{format(new Date(r.createdAt), "d MMM, HH:mm")}</time>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-[13px] text-muted">No security events yet.</p>
+        )}
       </CardBody>
     </Card>
   );

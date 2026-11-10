@@ -1,4 +1,5 @@
 "use server";
+import { audit } from "@/server/audit";
 import { pruneCreativeFiles } from "@/server/creative/visuals";
 import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
@@ -120,8 +121,9 @@ export async function updateCreativeAction(brandId: string, creativeId: string, 
 export async function setCreativeStatusAction(brandId: string, creativeId: string, status: "approved" | "rejected" | "draft", force = false) {
   return safe(async () => {
     // Approving past blocking brand-check issues is an admin decision.
-    await requireBrand(brandId, force ? "admin" : "editor");
+    const { session, brand } = await requireBrand(brandId, force ? "admin" : "editor");
     await setCreativeStatus(brandId, creativeId, status, { force });
+    if (force && status === "approved") await audit({ action: "creative.approve_override", workspaceId: brand.workspaceId, brandId, actorUserId: session.user.id, targetType: "creative", targetId: creativeId });
     revalidatePath("/creative-studio");
   });
 }

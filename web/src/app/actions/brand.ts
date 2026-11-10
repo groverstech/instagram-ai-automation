@@ -1,4 +1,5 @@
 "use server";
+import { audit } from "@/server/audit";
 import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -94,6 +95,7 @@ export async function createBrand(fd: FormData) {
       .returning();
     await storeUploads(brand.id, uploads);
     await setActiveBrand(session.sessionId, brand.id);
+    await audit({ action: "brand.create", workspaceId, brandId: brand.id, actorUserId: session.user.id, targetType: "brand", targetId: brand.id });
     return { brandId: brand.id };
   });
 }

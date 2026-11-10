@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
 import { decrypt, encrypt, sign } from "../crypto";
 import { provider } from "./registry";
@@ -91,7 +91,14 @@ export async function publishPost(postId: string) {
 
   const [creative] = await db.select().from(schema.creatives).where(eq(schema.creatives.id, post.creativeId));
   const [brand] = await db.select().from(schema.brands).where(eq(schema.brands.id, post.brandId));
-  await db.update(schema.posts).set({ status: "publishing", publishError: null }).where(eq(schema.posts.id, postId));
+  // Claim the post atomically: only one caller (scheduled job or "publish now") can move it to
+  // "publishing", so concurrent attempts can't both publish.
+  const [claimed] = await db
+    .update(schema.posts)
+    .set({ status: "publishing", publishError: null })
+    .where(and(eq(schema.posts.id, postId), inArray(schema.posts.status, ["approved", "scheduled", "failed"])))
+    .returning({ id: schema.posts.id });
+  if (!claimed) return { ok: false as const, error: "This post is already being published." };
 
   const caption = [post.caption ?? "", post.hashtags.length ? post.hashtags.map((h) => `#${h.replace(/^#/, "")}`).join(" ") : ""].filter(Boolean).join("\n\n");
   try {
@@ -184,4 +191,19 @@ export async function approvePost(brandId: string, postId: string, userId: strin
     await remember(brandId, [{ kind: "approval", content: `Approved ${p.platform} caption (${p.objective ?? "general"}): "${p.caption.slice(0, 280)}"`, source: "post:approved", weight: 1.2 }]);
   }
   return p;
+}
+
+/**
+ * A publish job whose worker stopped mid-flight (stale lock). The platform may or may not have
+ * received the post, so never publish again automatically: mark the post failed with a message
+ * telling people to check the account first. Retrying is then an explicit human decision.
+ */
+export async function markPublishInterrupted(postId: string) {
+  const db = await getDb();
+  const [post] = await db
+    .update(schema.posts)
+    .set({ status: "failed", publishError: "The publish attempt was interrupted before BrandPilot heard back from the platform. Check the account to see whether the post went out before you retry." })
+    .where(and(eq(schema.posts.id, postId), eq(schema.posts.status, "publishing")))
+    .returning({ id: schema.posts.id, brandId: schema.posts.brandId, platform: schema.posts.platform });
+  return post ?? null;
 }

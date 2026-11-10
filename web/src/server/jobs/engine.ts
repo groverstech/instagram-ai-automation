@@ -325,6 +325,11 @@ const inFlight = new Set<string>();
  * Find jobs that need a worker (queued and due, or running with a dead worker) and run them.
  * Jobs whose kind has no handler in this process are left for a process that has one.
  */
+/** AI tasks this process is running right now (used to drain a worker on shutdown). */
+export function inFlightCount() {
+  return inFlight.size;
+}
+
 export async function recoverDueTasks(opts: { wait?: boolean } = {}) {
   const db = await getDb();
   const now = new Date();

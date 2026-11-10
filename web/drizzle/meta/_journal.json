@@ -50,6 +50,13 @@
       "when": 1794112836293,
       "tag": "0006_creative_studio",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1794191939176,
+      "tag": "0007_ops_baseline",
+      "breakpoints": true
     }
   ]
 }

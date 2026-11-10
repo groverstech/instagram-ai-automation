@@ -11,8 +11,9 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:live": "vitest run --config vitest.live.config.ts",
-    "worker": "tsx --conditions=react-server src/server/jobs/worker.ts",
+    "worker": "node --conditions=react-server --import tsx src/server/jobs/worker.ts",
     "db:seed": "tsx --conditions=react-server src/server/db/seed.ts",
+    "db:migrate": "node --conditions=react-server --import tsx src/server/db/migrate-cli.ts",
     "check:secrets": "node scripts/check-client-secrets.mjs"
   },
   "dependencies": {
@@ -34,6 +35,7 @@
     "sharp": "^0.35.5",
     "stripe": "^23.1.0",
     "tailwind-merge": "^3.7.0",
+    "tsx": "^4.23.15",
     "zod": "^4.6.7"
   },
   "devDependencies": {
@@ -47,7 +49,6 @@
     "eslint-config-next": "^15.5.29",
     "postcss": "^8.5.32",
     "tailwindcss": "^4.3.5",
-    "tsx": "^4.23.15",
     "typescript": "5.9",
     "vitest": "^5.1.0"
   }
