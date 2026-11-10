@@ -374,9 +374,10 @@ function auditDetail(r: AuditRow, brandName: (id: string) => string) {
   if (typeof d.role === "string" && r.action !== "member.remove") parts.push(`as ${d.role}`);
   if (typeof d.plan === "string") parts.push(d.plan);
   if (typeof d.platform === "string") parts.push(d.platform);
-  if (Array.isArray(d.accounts)) parts.push(`${d.accounts.length} account${d.accounts.length === 1 ? "" : "s"}`);
+  if (typeof d.accounts === "number") parts.push(`${d.accounts} account${d.accounts === 1 ? "" : "s"}`);
   if (r.brandId) parts.push(brandName(r.brandId));
   if (typeof d.reason === "string") parts.push(d.reason.replace(/_/g, " "));
+  if (d.suppressed === true) parts.push("further attempts from this source not recorded for 10 minutes");
   return parts.join(" · ");
 }
 

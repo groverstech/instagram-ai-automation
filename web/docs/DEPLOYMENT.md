@@ -58,6 +58,9 @@ Whatever you choose, it must provide:
 Container platforms with these (for example AWS ECS/Fargate, Google Cloud Run with jobs, Fly.io,
 Render or Railway) all run the image unchanged. Only the deploy pipeline depends on the choice.
 
+For running more than one instance, see [§12](#12-scaling-beyond-one-instance): **Cloudflare R2
+solves file storage only**, and several other items apply.
+
 ## 1. Environments
 
 `DEPLOY_ENV` says what a deployment *is*. It's independent of `NODE_ENV`, because any local
@@ -105,7 +108,7 @@ script that skips the boot check can't write production files to one server's di
 |---|---|
 | Container | `web/Dockerfile`: Node 22, runs as an unprivileged user, liveness `HEALTHCHECK` built in. Or run directly with Node 22 LTS: `npm ci && npm run build && npm start`. |
 | Process model | Long-running processes (serverless isn't supported: workers and the in-process scheduler need persistent processes). |
-| Instances | Web: one or more (rate limits and AI concurrency leases are shared through Postgres; the edge flood limiter in `middleware.ts` is per instance). Workers: one or more per queue. |
+| Instances | **One web instance until object storage (R2, PR 4.2) is in place.** After that, more than one, with the requirements in §12. Workers: one or more per queue. |
 | Database | PostgreSQL 15+ with **pgvector**. The app runs `create extension if not exists vector`; grant that permission, or create the extension beforehand. |
 | Storage | Production must not depend on one server's disk. Object storage (Cloudflare R2) arrives in PR 4.2. Until then, staging and production need `ALLOW_LOCAL_STORAGE_IN_PRODUCTION=true` **and** a persistent, backed-up volume, which limits you to a **single web instance** (or a shared volume). |
 | HTTPS | Required. Terminate TLS at your load balancer or CDN. Session cookies are `Secure` in production; HSTS is sent on every response. |
@@ -383,3 +386,63 @@ For large deployments, also put a CDN or WAF rate limit in front.
 - [ ] Real-provider validation run (`npm run test:live` plus the manual checks) with production
       keys.
 - [ ] One live brand analysed, and one strategy generated, end to end with real keys.
+
+## 12. Scaling beyond one instance
+
+**Cloudflare R2 (PR 4.2) solves file storage, not application scaling.** It removes the one hard
+single-instance dependency (files on one server's disk). Running several web or worker instances
+also needs the items below.
+
+### What already works across instances
+
+| Area | How it's shared | Verified by |
+|---|---|---|
+| Sessions | Stored in Postgres (only token hashes). Any instance can serve any request; no sticky sessions. | Creative route tests (cookie → database session) |
+| Sign-in protection and per-user/organisation rate limits | Counters in Postgres, shared by all instances | Security and sign-in tests |
+| AI concurrency limits | Leases in Postgres, serialised with transaction-scoped advisory locks | Strategist tests |
+| Background jobs (publishing, metric syncs) | Claimed with one conditional update; stale claims recovered; a publish runs once even when instances race | Job tests (including a 3-way race) |
+| AI tasks (strategist, creative studio) | Claimed atomically, with heartbeats; a dead instance's tasks are picked up by another | Strategist and creative recovery tests |
+| OAuth and signed links | Signed with `APP_SECRET` plus a cookie nonce, so any instance can complete a flow started on another | By design; no automated multi-instance test |
+| Progress screens | The browser polls; state is in Postgres, not in instance memory | Browser regression |
+| Migrations | A separate deploy step under a lock; instances never migrate in staging or production | Real Postgres and CI container checks |
+| Shutdown | `SIGTERM` drains workers; health checks gate traffic | CI container checks |
+
+In-memory caches (Google font files, API clients, the dummy password hash) are per instance and
+hold no shared state, so they're safe to duplicate.
+
+### Required before running more than one instance
+
+1. **Object storage (R2, PR 4.2).** Until then, files (uploads, brand assets, creative visuals,
+   renders) live on one server's disk. Staging and production refuse local disk unless the
+   single-instance opt-in is set. **This is the only hard blocker.**
+2. **The same image and secrets on every instance.** `APP_SECRET` must match everywhere (it
+   decrypts tokens and verifies signed links). Next.js server actions are tied to the build, so
+   all instances must run the same image. Set `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` to keep action
+   encryption stable across builds. During a rolling deploy, a browser holding a page from the
+   previous release may get a "server action not found" error and must reload; use your
+   platform's deployment skew protection, or accept a reload.
+3. **Background work in dedicated workers.** Set `RUN_JOBS_IN_PROCESS=false` on web instances and
+   run worker deployments (`WORKER_QUEUES`), or call `/api/cron/tick` from one scheduler. With the
+   default, every web instance also polls for work: it stays correct (claims are atomic) but
+   duplicates polling, and two instances can occasionally plan the same metric sync (harmless,
+   because syncs are idempotent).
+4. **A connection pooler.** Each process opens up to `DATABASE_POOL_MAX` (default 10)
+   connections, so the total is instances × processes × pool. Put PgBouncer or the provider's
+   pooler in front, in **transaction mode**: the app is compatible (no prepared statements, only
+   transaction-scoped advisory locks). **The `migrate` role must connect directly or in session
+   mode**, because it holds a session-level lock while it runs.
+5. **An edge rate limit.** The per-IP flood limiter in `middleware.ts` keeps its counters in
+   instance memory, so with N instances an IP can send up to N times the limit. Add a CDN or WAF
+   rate limit, or move the counters to Redis (PR 4.9). Sign-in, user and organisation limits are
+   already shared through Postgres.
+6. **Load test** at the target instance count (PR 4.9) before relying on it.
+
+### Remaining single-instance dependencies
+
+| Dependency | Effect with several instances | Resolution |
+|---|---|---|
+| Local-disk storage | Files written on one instance are missing on the others | R2 (PR 4.2): **required** |
+| Per-instance flood limiter | Weaker per-IP limit (× instances) | Edge or WAF limit now; Redis (PR 4.9) |
+| In-process scheduler on by default | Duplicate polling; correct but wasteful | `RUN_JOBS_IN_PROCESS=false` plus workers |
+| Embedded PGlite | Single process only | Development only; refused in staging and production |
+

@@ -9,7 +9,7 @@ process.env.AI_PROVIDER = "mock";
 process.env.STORAGE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bp-audit-"));
 
 const { getDb, schema } = await import("./db/client");
-const { audit, auditTrail, auditTrailFor } = await import("./audit");
+const { audit, auditTrail, auditTrailFor, NOISE_LIMIT } = await import("./audit");
 const { requireBrandForUser, requireWorkspaceRoleForUser, AccessError } = await import("./auth/guard");
 const { changeRoleFor, inviteMemberFor } = await import("./members");
 
@@ -66,10 +66,10 @@ beforeAll(async () => {
   // Account-level sign-in events (no workspace) for "both": one before joining either org, one
   // between joining B and A, one after joining both.
   await db.insert(schema.auditEvents).values([
-    { action: "auth.login", actorUserId: both.id, createdAt: new Date(now - 3 * HOUR), details: { n: 1 } },
-    { action: "auth.login", actorUserId: both.id, createdAt: new Date(now - 90 * 60_000), details: { n: 2 } },
+    { action: "auth.login", actorUserId: both.id, targetId: "login-1", createdAt: new Date(now - 3 * HOUR) },
+    { action: "auth.login", actorUserId: both.id, targetId: "login-2", createdAt: new Date(now - 90 * 60_000) },
   ]);
-  await audit({ action: "auth.login", actorUserId: both.id, details: { n: 3 } });
+  await audit({ action: "auth.login", actorUserId: both.id, targetId: "login-3" });
   await audit({ action: "auth.login", actorUserId: ownerB.id }); // B-only member
 });
 
@@ -100,9 +100,9 @@ describe("Security log: organisation isolation", () => {
 
   it("shows members' sign-ins only from when they joined that organisation", async () => {
     const nOf = (rows: Awaited<ReturnType<typeof logFor>>) =>
-      rows.filter((r) => r.action === "auth.login" && r.actorName === "Both Orgs").map((r) => (r.details as { n: number }).n).sort();
-    expect(nOf(await logFor(ownerA, A))).toEqual([3]); // joined A an hour ago
-    expect(nOf(await logFor(ownerB, B))).toEqual([2, 3]); // joined B two hours ago
+      rows.filter((r) => r.action === "auth.login" && r.actorName === "Both Orgs").map((r) => r.targetId).sort();
+    expect(nOf(await logFor(ownerA, A))).toEqual(["login-3"]); // joined A an hour ago
+    expect(nOf(await logFor(ownerB, B))).toEqual(["login-2", "login-3"]); // joined B two hours ago
     // B-only members' sign-ins never appear in A.
     expect((await logFor(ownerA, A)).some((r) => r.actorName === "Owner B")).toBe(false);
   });
@@ -198,5 +198,54 @@ describe("Refused access is audited against the owning organisation", () => {
     await expect(requireBrandForUser(sess(ownerB), "no-such-brand", "viewer")).rejects.toBeInstanceOf(AccessError);
     await expect(requireWorkspaceRoleForUser(sess(ownerB), "no-such-workspace", "viewer")).rejects.toBeInstanceOf(AccessError);
     expect(await count()).toBe(n);
+  });
+});
+
+describe("Security-event volume and exposure", () => {
+  it("caps refused-access records per user: a flood records at most the limit plus one marker", async () => {
+    const db = await getDb();
+    const [flooder] = await db.insert(schema.users).values({ email: "flood@x.test", name: "Flooder", passwordHash: "x" }).returning();
+    for (let i = 0; i < 60; i++) await expect(requireBrandForUser(sess(flooder), A1.id, "viewer")).rejects.toBeInstanceOf(AccessError);
+    const rows = (await denials(A)).filter((r) => r.actorUserId === flooder.id);
+    expect(rows).toHaveLength(NOISE_LIMIT + 1);
+    expect(rows.filter((r) => (r.details as { suppressed?: boolean }).suppressed)).toHaveLength(1);
+    // Access is still refused every time; other users' refusals are still recorded.
+    const before = (await denials(A)).length;
+    await expect(requireBrandForUser(sess(ownerB), A2.id, "viewer")).rejects.toBeInstanceOf(AccessError);
+    expect((await denials(A)).length).toBe(before + 1);
+  });
+
+  it("caps anonymous failed sign-in records per client IP", async () => {
+    const db = await getDb();
+    const count = async () => (await db.select().from(schema.auditEvents).where(eq(schema.auditEvents.action, "auth.login_failed"))).length;
+    const n = await count();
+    for (let i = 0; i < 50; i++) await audit({ action: "auth.login_failed", outcome: "denied", ip: "203.0.113.77", details: { reason: "unknown_email" } });
+    expect((await count()) - n).toBe(NOISE_LIMIT + 1);
+    await audit({ action: "auth.login_failed", outcome: "denied", ip: "203.0.113.78", details: { reason: "unknown_email" } });
+    expect((await count()) - n).toBe(NOISE_LIMIT + 2); // a different source is unaffected
+  });
+
+  it("never sends credentials, tokens, hashes or personal identifiers to the browser", async () => {
+    await audit({
+      action: "auth.login_failed",
+      outcome: "denied",
+      actorUserId: ownerA.id,
+      ip: "198.51.100.200",
+      details: { reason: "wrong_password", emailHash: "e".repeat(32), password: "hunter2-secret", accessToken: "tok_live_abc123", note: "victim@example.com" },
+    });
+    await audit({ action: "social.connect", workspaceId: A.id, brandId: A1.id, actorUserId: ownerA.id, details: { accounts: [{ platform: "instagram", externalId: "17841400000000001" }] } });
+    await audit({ action: "member.remove", workspaceId: A.id, actorUserId: ownerA.id, details: { role: "editor", userId: viewerA.id } });
+    const { rows } = await auditTrailFor(sess(ownerA), A.id, 200);
+    const sent = JSON.stringify(rows);
+    for (const secret of ["hunter2-secret", "tok_live_abc123", "e".repeat(32), "victim@example.com", "17841400000000001", "198.51.100.200", viewerA.id, "emailHash", "ipHash", '"password"', "accessToken"]) {
+      expect(sent).not.toContain(secret);
+    }
+    expect(rows.find((r) => r.action === "social.connect")?.details).toEqual({ accounts: 1 });
+    expect(rows.find((r) => r.action === "member.remove")?.details).toEqual({ role: "editor" });
+    // Stored rows are redacted too (log redaction on write).
+    const stored = JSON.stringify(await (await getDb()).select().from(schema.auditEvents).where(eq(schema.auditEvents.actorUserId, ownerA.id)));
+    expect(stored).not.toContain("hunter2-secret");
+    expect(stored).not.toContain("tok_live_abc123");
+    expect(stored).not.toContain("198.51.100.200");
   });
 });

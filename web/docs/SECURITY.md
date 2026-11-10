@@ -107,6 +107,14 @@ An append-only `audit_events` table records:
   sees only events about those brands: no organisation-wide events or sign-ins. Today admins
   can't be brand-scoped (the member rules refuse it); the log enforces the scope regardless.
 - People outside the organisation appear as "Not a current member", never by name.
+- **Enforced on the server.** The log is read only by the Settings page, through `auditTrailFor`,
+  which re-checks the membership and scope itself. No API route or server action returns it.
+- **What it never shows:** passwords, tokens and secrets are redacted before storage. IPs and
+  failed-sign-in emails are stored only as keyed hashes, and those hashes are never sent to the
+  browser. The browser receives only allow-listed detail fields (role, plan, platform, reason,
+  counts), never user or platform account ids, and actor names only for current members.
+- **Bounded volume:** refused access and failed sign-ins record at most 20 events per source per
+  10 minutes, then one marker; the request itself is still refused.
 
 ## Background jobs and publishing
 
@@ -159,11 +167,11 @@ In CI, the full suite also runs against real Postgres 16 with pgvector.
 |---|---|
 | Sign-up reveals whether an email is registered ("account already exists") | Accepted for now (sign-up is rate-limited per IP). The fix needs email verification, which needs an email provider. |
 | CSP `script-src` | Not set: Next's inline scripts need per-request nonces. Follow-up. |
-| Multi-factor authentication | Not implemented. Recommended for owners and admins before agency launch. |
+| Multi-factor authentication | **Not implemented: a known security enhancement.** Recommended stage: its own PR after PR 4.6 (which brings the email provider needed for recovery and security notifications) and **before the first external agency or paying customer is onboarded**, so before the PR 4.9 penetration test. Scope: TOTP with hashed one-time recovery codes; required for owners and admins and optional for others; a fresh second factor for sensitive actions (role and member changes, billing, social connections); "sign out everywhere"; every MFA event in the audit log. |
 | "Sign out everywhere" and session revocation on password change | No password-change flow exists yet; add both together. |
 | Row-Level Security | Defence in depth planned (PR 4.9 pilot). Application-level isolation is tested. |
 | Hot rate-limit counters in Postgres | Fine at current scale; move to Redis per the scalability plan (PR 4.9). |
 | Audit-log retention and export | Not yet configurable (PR 4.9). |
-| `access.denied` volume | A signed-in user could generate many refusal records. Bounded by the request rate limits; retention arrives in PR 4.9. Unknown brand or workspace ids are never recorded. |
+| Security-event volume | Refused access and failed sign-ins are capped at 20 records per source (user, or IP when anonymous) per 10 minutes, then one "further attempts not recorded" marker. Requests are still refused, and counted, every time. Unknown brand or workspace ids are never recorded. Retention and export: PR 4.9. |
 | Public readiness output | `/api/health/ready` shows error, warning and migration counts (never values). Restrict it at the load balancer if preferred. |
 | Penetration test | Planned before launch (PR 4.9). |

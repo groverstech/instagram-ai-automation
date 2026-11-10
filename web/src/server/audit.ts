@@ -45,9 +45,42 @@ export type AuditEvent = {
   details?: Record<string, unknown>;
 };
 
+/**
+ * Events that people outside the organisation, or a script, can trigger over and over. Each
+ * source (the signed-in user, else the client IP) records at most NOISE_LIMIT of each per
+ * NOISE_WINDOW_SEC; the next one is recorded once as a "further events not recorded" marker, and
+ * the rest of the window is only counted. Flooding requests can't flood the audit table.
+ */
+const NOISY = new Set<AuditAction>(["access.denied", "auth.login_failed"]);
+export const NOISE_LIMIT = 20;
+export const NOISE_WINDOW_SEC = 600;
+
+/** How many noisy events this source has produced in the current window, counting this one. */
+async function noiseCount(action: AuditAction, source: string, now = new Date()) {
+  const db = await getDb();
+  const windowMs = NOISE_WINDOW_SEC * 1000;
+  const start = new Date(Math.floor(now.getTime() / windowMs) * windowMs);
+  const [row] = await db
+    .insert(schema.rateLimitBuckets)
+    .values({ key: `audit:${action}:${keyedHash(source)}`, windowStart: start, count: 1 })
+    .onConflictDoUpdate({ target: [schema.rateLimitBuckets.key, schema.rateLimitBuckets.windowStart], set: { count: sql`${schema.rateLimitBuckets.count} + 1` } })
+    .returning({ count: schema.rateLimitBuckets.count });
+  return row.count;
+}
+
 export async function audit(e: AuditEvent) {
   try {
     const db = await getDb();
+    let details = e.details ?? {};
+    if (NOISY.has(e.action)) {
+      const source = e.actorUserId ? `user:${e.actorUserId}` : e.ip && e.ip !== "unknown" ? `ip:${e.ip}` : "anonymous";
+      const n = await noiseCount(e.action, source);
+      if (n > NOISE_LIMIT + 1) return;
+      if (n === NOISE_LIMIT + 1) {
+        details = { ...details, suppressed: true };
+        log.warn("audit.suppressed", { action: e.action, limit: NOISE_LIMIT, windowSec: NOISE_WINDOW_SEC });
+      }
+    }
     await db.insert(schema.auditEvents).values({
       action: e.action,
       workspaceId: e.workspaceId ?? null,
@@ -58,7 +91,7 @@ export async function audit(e: AuditEvent) {
       targetId: e.targetId ?? null,
       outcome: e.outcome ?? "success",
       ipHash: e.ip && e.ip !== "unknown" ? keyedHash(`ip:${e.ip}`) : null,
-      details: (redact(e.details ?? {}) as Record<string, unknown>) ?? {},
+      details: (redact(details) as Record<string, unknown>) ?? {},
     });
   } catch (err) {
     log.error("audit.write_failed", { action: e.action, error: err instanceof Error ? err.message : String(err) });
@@ -119,6 +152,23 @@ export type AuditRow = {
   details: Record<string, unknown>;
   createdAt: Date;
 };
+
+/**
+ * Detail fields the Security log may show. Everything else stays on the server (email hashes,
+ * user and platform account ids), whatever a call site stored.
+ */
+const SHOWN_DETAILS = ["from", "to", "role", "plan", "status", "platform", "reason", "needed", "scope", "type", "scopedBrands", "existingUser", "member", "acceptedInvites", "suppressed"] as const;
+export function shownDetails(d: Record<string, unknown> | null | undefined): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of SHOWN_DETAILS) {
+    const v = d?.[k];
+    const scalar = v === null || ["string", "number", "boolean"].includes(typeof v);
+    const ids = Array.isArray(v) && v.every((x) => typeof x === "string"); // brand ids (scope changes)
+    if (v !== undefined && (scalar || ids)) out[k] = v;
+  }
+  if (Array.isArray(d?.accounts)) out.accounts = d.accounts.length; // a count, never platform ids
+  return out;
+}
 
 /** Viewing the log is itself audited, at most once per viewer and workspace per hour. */
 const VIEW_AUDIT_EVERY_MS = 60 * 60 * 1000;
@@ -181,7 +231,7 @@ export async function auditTrailFor(session: import("./auth/session").SessionUse
       targetType: r.targetType,
       targetId: r.targetId,
       brandId: r.brandId,
-      details: r.details,
+      details: shownDetails(r.details),
       createdAt: r.createdAt,
     })),
   };
