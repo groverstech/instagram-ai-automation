@@ -8,7 +8,7 @@ platform APIs after human approval, and analyses real performance.
 **Architecture, schema, agent design and roadmap:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 **Brand Intelligence Agent (Phase 1):** [`docs/BRAND_INTELLIGENCE.md`](docs/BRAND_INTELLIGENCE.md)
 **Production deployment (environments, container roles, migrations, health, backups):** [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
-**Security model:** [`docs/SECURITY.md`](docs/SECURITY.md) · **Architecture decisions:** [`docs/ARCHITECTURE_DECISIONS.md`](docs/ARCHITECTURE_DECISIONS.md) · **Follow-ups:** [`docs/FOLLOW_UPS.md`](docs/FOLLOW_UPS.md)
+**Security model:** [`docs/SECURITY.md`](docs/SECURITY.md) · **Architecture decisions:** [`docs/ARCHITECTURE_DECISIONS.md`](docs/ARCHITECTURE_DECISIONS.md) · **Follow-ups:** [`docs/FOLLOW_UPS.md`](docs/FOLLOW_UPS.md) · **AI providers:** [`docs/AI_PROVIDERS.md`](docs/AI_PROVIDERS.md)
 
 ## Quick start
 

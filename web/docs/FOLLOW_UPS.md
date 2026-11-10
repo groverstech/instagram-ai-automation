@@ -1,7 +1,7 @@
 # Production-readiness follow-ups
 
-Requirements recorded when PR 4.0 (infrastructure baseline) was approved. **None of these is
-implemented by PR 4.0.** The absence of each one is a known gap, documented in
+Requirements recorded when PR 4.0 (infrastructure baseline) was approved, carried forward and
+extended in PR 4.1. **None of these is implemented by PR 4.0 or PR 4.1.** The absence of each one is a known gap, documented in
 [SECURITY.md](SECURITY.md) and [DEPLOYMENT.md](DEPLOYMENT.md), and not evidence that it's done.
 Update the status here only when the work is merged **and** its acceptance checks pass.
 
@@ -13,6 +13,20 @@ Update the status here only when the work is merged **and** its acceptance check
 | F4 | **Audit-log retention and export** | **Not implemented** | PR 4.9 | Configurable retention with scheduled deletion; per-organisation export (CSV or JSON) that keeps the Security log's authorisation and detail allow-list; the export itself is audited; tests |
 | F5 | **Horizontal scaling beyond one instance** | **Requirements documented** ([DEPLOYMENT.md §12](DEPLOYMENT.md#12-scaling-beyond-one-instance)); **not implemented or validated**. Production runs one web instance. | R2 in PR 4.2; edge or Redis rate limits and a load test in PR 4.9 | Every §12 requirement met; a load test at the target instance count passes; the §12 list is kept current as features land |
 | F6 | **Automated deployment pipeline** | **Not implemented.** CI builds and smoke-tests the image; nothing is pushed or deployed. | Production-readiness roadmap, once the hosting platform is chosen | Image pushed to a registry per commit; the migrate step runs before web; rolling deploy gated on `/api/health/ready`; a manual approval gate for production; one-step rollback to the previous image; documented and rehearsed |
+| F7 | **Egress firewall and metadata protection** | **Not implemented** (platform configuration). Application-level SSRF protection exists (`src/server/web.ts`); outbound AI calls go only to the configured provider hosts. | With the hosting platform, before production | Egress allowed only to the hosts in DEPLOYMENT §8 (including `api.anthropic.com`, `api.openai.com`); private ranges and metadata endpoints blocked; verified from a running container |
+| F8 | **Database row-level security and independent tenant-isolation validation** | **Not implemented.** Isolation is enforced in the application and covered by our own tests only. | PR 4.9 (RLS pilot), plus an independent review before launch | RLS policies on tenant tables, tested; an independent party verifies cross-tenant and cross-brand isolation, including the AI usage ledger |
+| F9 | **Penetration test and load test** | **Not done** | PR 4.9, before launch | External penetration test with findings fixed; load test at the target instance count, including AI routes, rate limits and the circuit breaker |
+| F10 | **Real AI provider validation and cost reconciliation (PR 4.1)** | **Pending: no production credentials.** The provider integrations are implemented and tested with intercepted providers only. | As soon as keys are configured | `npm run test:live` passes for Anthropic and OpenAI; manual runs M1–M9 with screenshots; ledger costs reconcile with the providers' usage reports within 5%; reported separately |
+
+## Production deployment is blocked
+
+**Production deployment remains blocked** until these are addressed: F1 (sign-up enumeration), F2
+(strict CSP), F3 (MFA for owners and admins), F5 (R2, or an approved single-instance pilot), F6
+(deployment pipeline), F7 (egress firewall), F8 (RLS and independent isolation validation), F9
+(penetration and load tests) and F10 (real-provider validation). F4 (audit-log retention and export)
+is required before customer launch. The hosting decision and the accounts in
+[DEPLOYMENT.md §10](DEPLOYMENT.md#10-outstanding-production-prerequisites) come first. Lifting the
+block is an explicit decision by the product owner.
 
 Other prerequisites that stay open (hosting decision, managed Postgres and Redis, error tracker,
 email provider, API keys and real-provider validation, egress firewall, penetration test) are in

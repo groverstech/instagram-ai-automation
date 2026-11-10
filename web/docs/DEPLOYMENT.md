@@ -214,13 +214,21 @@ limiter, and are never cached. Responses carry `version` from `APP_VERSION` or `
 
 | Variable | Purpose |
 |---|---|
-| `ANTHROPIC_MODEL` | Override the default `claude-opus-5-5` |
+Full reference, including routing, retries, prices and the usage ledger:
+[AI_PROVIDERS.md](AI_PROVIDERS.md).
+
+| Variable | Purpose |
+|---|---|
+| `ANTHROPIC_MODEL` | Default text model (catalogued models only; default `claude-opus-5-5`) |
 | `STRATEGIST_WEB_SEARCH` | `off` disables web research (findings are then labelled hypotheses) |
-| `AI_PRICE_INPUT_PER_MTOK`, `AI_PRICE_OUTPUT_PER_MTOK`, `AI_PRICE_WEB_SEARCH_PER_1K` | Override the AI cost estimates |
+| `AI_PRICE_INPUT_PER_MTOK`, `AI_PRICE_OUTPUT_PER_MTOK`, `AI_PRICE_WEB_SEARCH_PER_1K` | Override the Anthropic list prices (a negotiated contract) |
 | `VOYAGE_API_KEY` | Semantic embeddings for brand memory (local hashing otherwise) |
 | `IMAGE_PROVIDER`, `OPENAI_API_KEY` | AI images (`IMAGE_PROVIDER=none` disables them; brand-photo and type-led creatives still work) |
-| `OPENAI_IMAGE_MODEL` | Image model (default `gpt-image-1`) |
-| `IMAGE_PRICE_USD`, `IMAGE_PRICE_USD_1024X1024` / `_1024X1536` / `_1536X1024` | Price per image for cost reporting. Unset means images are counted but shown as unpriced, never guessed. |
+| `OPENAI_IMAGE_MODEL`, `OPENAI_IMAGE_QUALITY` | Image model (default `gpt-image-1`) and quality (`high`) |
+| `IMAGE_PRICE_USD`, `IMAGE_PRICE_USD_<SIZE>`, `IMAGE_PRICE_USD_<QUALITY>_<SIZE>`, `OPENAI_IMAGE_PRICE_*_PER_MTOK` | Image prices for cost estimates. Unset means images are counted but shown as unpriced, never guessed. |
+| `AI_TEXT_TIMEOUT_MS`, `AI_IMAGE_TIMEOUT_MS`, `AI_MAX_ATTEMPTS`, `AI_IMAGE_MAX_ATTEMPTS`, `AI_RETRY_BASE_MS`, `AI_RETRY_MAX_WAIT_MS`, `AI_CIRCUIT_THRESHOLD`, `AI_CIRCUIT_OPEN_MS` | Timeouts, retries and the circuit breaker (defaults in AI_PROVIDERS.md) |
+| `AI_MONTHLY_COST_LIMIT_USD`, `AI_MONTHLY_COST_LIMIT_USD_<PLAN>` | Optional monthly AI spending limit per organisation, from estimated cost; unset means none |
+| `LIVE_REPORT_DIR` | Where `npm run test:live` writes its report; Settings shows the result |
 | `CREATIVE_BRAND_CHECK` | `off` skips the Claude vision review (deterministic checks still run) |
 | `AI_PROVIDER=mock` | **Demo mode.** Never in production: boot refuses it there. Elsewhere with `NODE_ENV=production` it needs `AI_ALLOW_MOCK_IN_PRODUCTION=true` (demos and E2E only). |
 
@@ -336,8 +344,8 @@ For large deployments, also put a CDN or WAF rate limit in front.
 | Service | Used for | Required for launch | Configured with | Status |
 |---|---|---|---|---|
 | Postgres 15+ with pgvector | All data | Yes | `DATABASE_URL` | Provider pending |
-| Anthropic (Claude) | Every AI feature | Yes | `ANTHROPIC_API_KEY` | Key pending; validation pending |
-| OpenAI | AI images | No (brand-photo and type-led creatives work without it) | `OPENAI_API_KEY` | Key pending |
+| Anthropic (Claude) | Every AI feature | Yes | `ANTHROPIC_API_KEY` | Integrated (PR 4.1); key pending; **live validation pending** |
+| OpenAI | AI images and variations | No (brand-photo and type-led creatives work without it) | `OPENAI_API_KEY`, image prices | Integrated (PR 4.1); key and prices pending; **live validation pending** |
 | Voyage AI | Semantic brand memory | No (local hashing otherwise) | `VOYAGE_API_KEY` | Optional |
 | Cloudflare R2 | File storage for more than one instance | Yes, for more than one web instance | PR 4.2 | Account pending |
 | Stripe | Billing | For paid plans | `STRIPE_*` | Keys pending |
