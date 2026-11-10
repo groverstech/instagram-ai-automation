@@ -163,6 +163,9 @@ In CI, the full suite also runs against real Postgres 16 with pgvector.
 
 ## Known gaps and accepted risks
 
+Follow-up requirements for these gaps (sign-up privacy, strict CSP, MFA, audit-log retention and
+export) are recorded in [FOLLOW_UPS.md](FOLLOW_UPS.md). **None is implemented yet.**
+
 | Item | Status |
 |---|---|
 | Sign-up reveals whether an email is registered ("account already exists") | Accepted for now (sign-up is rate-limited per IP). The fix needs email verification, which needs an email provider. |

@@ -365,6 +365,10 @@ For large deployments, also put a CDN or WAF rate limit in front.
 
 ## 10. Outstanding production prerequisites
 
+Recorded follow-up requirements (sign-up privacy, strict CSP, MFA, audit-log retention and
+export, horizontal scaling, deployment pipeline) are tracked in [FOLLOW_UPS.md](FOLLOW_UPS.md).
+None is implemented yet.
+
 | Prerequisite | Status | Owner |
 |---|---|---|
 | Hosting platform (container platform, or AWS ECS / Cloud Run) | **Decision pending** | You |
@@ -372,7 +376,7 @@ For large deployments, also put a CDN or WAF rate limit in front.
 | Object storage: Cloudflare R2 account, buckets, token, delivery domain | Pending; adapter in PR 4.2 | You, then PR 4.2 |
 | Error tracker (e.g. Sentry) and a log or trace backend | **Decision pending**; the hook is ready | You, then a follow-up |
 | Email provider | **Decision pending**; the interface is ready | You, then a follow-up |
-| Deploy pipeline (push image, migrate, rolling deploy, approval gate for production) | **Not built**: depends on the hosting choice. CI builds and smoke-tests the image but pushes and deploys nothing. | Follow-up once hosting is chosen |
+| Deploy pipeline (push image, migrate, rolling deploy, approval gate for production) | **Not built**: depends on the hosting choice. CI builds and smoke-tests the image but pushes and deploys nothing. On the production-readiness roadmap (FOLLOW_UPS F6). | Follow-up once hosting is chosen |
 | Anthropic and OpenAI production keys | Pending; real-provider validation stays **pending** until configured | You |
 | Egress firewall and metadata protection | To configure on the platform | You / ops |
 | Load test, penetration test, RLS rollout | Planned in PR 4.9 | — |
