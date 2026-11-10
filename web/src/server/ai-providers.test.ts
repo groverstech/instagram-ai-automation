@@ -472,3 +472,25 @@ describe("demo mode never calls a paid provider", () => {
     }
   });
 });
+
+describe("AI providers & usage view: who may see it", () => {
+  it("only owners and admins with access to every brand; others are refused (and audited)", async () => {
+    const { aiOverviewFor } = await import("./ai/overview");
+    const db = await getDb();
+    const mk = async (email: string) => (await db.insert(schema.users).values({ email, name: email, passwordHash: "x" }).returning())[0];
+    const [owner, client, outsider] = [await mk("own@ai.test"), await mk("cli@ai.test"), await mk("out@ai.test")];
+    await db.insert(schema.workspaceMembers).values([
+      { workspaceId: wsId, userId: owner.id, role: "owner" },
+      { workspaceId: wsId, userId: client.id, role: "editor", brandIds: [brandId] },
+    ]);
+    const sess = (u: { id: string; email: string; name: string | null }) => ({ sessionId: `s-${u.id}`, activeBrandId: null, user: { id: u.id, email: u.email, name: u.name ?? "" } });
+    const view = await aiOverviewFor(sess(owner), wsId);
+    expect(view.providers.map((p) => [p.id, p.configured])).toEqual([["anthropic", true], ["openai", true]]);
+    expect(JSON.stringify(view)).not.toMatch(/sk-ant-test|sk-openai-test/);
+    expect(view.live.status).toBe("pending");
+    expect(view.usage.byBrand.every((b) => b.brandId !== otherBrand)).toBe(true);
+    await expect(aiOverviewFor(sess(client), wsId)).rejects.toThrow();
+    await expect(aiOverviewFor(sess(outsider), wsId)).rejects.toThrow();
+  });
+});
+

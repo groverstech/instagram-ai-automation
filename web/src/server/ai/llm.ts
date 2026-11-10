@@ -18,7 +18,7 @@ import { baseRoute, resolveRoute, type Effort, type ResolvedRoute, type RouteKey
  */
 export { mockActive };
 export { AIConfigError, AIOutputError, AIRefusalError } from "./errors";
-export { isRetryable, isServiceError, friendlyAIError } from "./errors";
+export { isRetryable, isServiceError, isTransient, friendlyAIError } from "./errors";
 export type { Effort } from "./routes";
 
 export type ImageInput = {

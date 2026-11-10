@@ -185,7 +185,7 @@ describe.skipIf(!HAS_ANTHROPIC)("Anthropic vision review and copy (real API)", (
 describe("real error handling with invalid keys (no key needed)", () => {
   it("OpenAI rejects an invalid key: clear message, not retried as transient, no image usage", async () => {
     const { ImageProviderError } = await import("../ai/image");
-    const { isServiceError } = await import("../ai/llm");
+    const { isTransient } = await import("../ai/llm");
     const saved = { key: process.env.OPENAI_API_KEY, provider: process.env.IMAGE_PROVIDER };
     process.env.OPENAI_API_KEY = "sk-invalid-live-test-key";
     process.env.IMAGE_PROVIDER = "openai";
@@ -196,7 +196,7 @@ describe("real error handling with invalid keys (no key needed)", () => {
       expect(err).toBeInstanceOf(ImageProviderError);
       expect((err as InstanceType<typeof ImageProviderError>).status).toBe(401);
       expect(friendlyAIError(err)).toMatch(/rejected the API key/);
-      expect(isServiceError(err)).toBe(false); // a bad key is not retried as a temporary outage
+      expect(isTransient(err)).toBe(false); // a bad key is not retried as a temporary outage
       record("openai.bad_key_handling", { status: "passed", metrics: { httpStatus: 401, message: friendlyAIError(err) } });
     } finally {
       process.env.OPENAI_API_KEY = saved.key;
@@ -218,8 +218,51 @@ describe("real error handling with invalid keys (no key needed)", () => {
 describe("live run preconditions", () => {
   it("reports providers that could not be tested instead of passing them", () => {
     const missing = [!HAS_OPENAI && "OPENAI_API_KEY", !HAS_ANTHROPIC && "ANTHROPIC_API_KEY"].filter(Boolean).join(" and ");
-    if (!HAS_OPENAI || !HAS_ANTHROPIC) for (const k of ["openai.image_generation", "render.all_formats_with_real_image"]) record(k, { status: "not_run", reason: `${missing} not set` });
+    if (!HAS_OPENAI || !HAS_ANTHROPIC) for (const k of ["openai.image_generation", "render.all_formats_with_real_image", "openai.image_variation", "ledger.real_request_ids"]) record(k, { status: "not_run", reason: `${missing} not set` });
     if (!HAS_ANTHROPIC) for (const k of ["anthropic.vision_review", "anthropic.copy_pack"]) record(k, { status: "not_run", reason: "ANTHROPIC_API_KEY not set" });
     expect(mockActive()).toBe(false);
+  });
+});
+
+describe.skipIf(!HAS_OPENAI || !HAS_ANTHROPIC)("PR 4.1: image variations and the usage ledger (real APIs)", () => {
+  it("creates a variation of the real AI image through the edits endpoint", async () => {
+    if (!aiCreative) return record("openai.image_variation", { status: "not_run", reason: "no AI image was generated earlier in this run" });
+    const { aiVariation } = await import("../creative/visuals");
+    const before = aiCreative.imagePath;
+    await aiVariation({ brandId: brand.id, userId: ownerId }, brand, aiCreative, "closer crop, warmer light");
+    const db = await getDb();
+    const [after] = await db.select().from(schema.creatives).where(eq(schema.creatives.id, aiCreative.id));
+    expect(after.imageError).toBeNull();
+    expect(after.imagePath).not.toBe(before);
+    fs.writeFileSync(path.join(OUT, "ai-image-variation.png"), await storage.get(after.imagePath!));
+    const [ev] = await db.select().from(schema.usageEvents).where(eq(schema.usageEvents.route, "image.edit"));
+    expect(ev).toMatchObject({ provider: "openai", outcome: "success" });
+    expect(ev.providerRequestId).toBeTruthy();
+    record("openai.image_variation", { status: "passed", metrics: { model: ev.model, requestId: ev.providerRequestId, latencyMs: ev.latencyMs, units: ev.units, costUsd: ev.costUsd, priceSource: ev.priceSource } });
+  }, 600_000);
+
+  it("records every real request in the usage ledger with the provider's request ID and a price source", async () => {
+    const db = await getDb();
+    const events = await db.select().from(schema.usageEvents);
+    const real = events.filter((e) => e.provider !== "mock");
+    expect(real.length).toBeGreaterThan(0);
+    const ok = real.filter((e) => e.outcome === "success");
+    for (const e of ok) {
+      expect(e.providerRequestId, `${e.route} has no request ID`).toBeTruthy();
+      expect(e.priceSource).toBeTruthy();
+    }
+    // Anthropic successes are priced from the list; reconcile totals against the provider console.
+    const text = ok.filter((e) => e.provider === "anthropic");
+    expect(text.every((e) => e.costUsd !== null)).toBe(true);
+    record("ledger.real_request_ids", {
+      status: "passed",
+      metrics: {
+        requests: real.length,
+        outcomes: Object.fromEntries([...new Set(real.map((e) => e.outcome))].map((o) => [o, real.filter((e) => e.outcome === o).length])),
+        estimatedUsd: real.reduce((s, e) => s + (e.costUsd ?? 0), 0),
+        unpriced: real.filter((e) => e.priceSource === "unpriced").length,
+        requestIds: ok.map((e) => `${e.provider}:${e.providerRequestId}`),
+      },
+    });
   });
 });

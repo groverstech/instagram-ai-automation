@@ -3,7 +3,8 @@ import { and, eq, inArray, lt, lte, or, sql } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
 import type { AiTask, AiTaskStep, Brand } from "../db/schema";
 import { admitBackgroundAi, planOf } from "../ai-guard";
-import { friendlyAIError, isServiceError } from "../ai/llm";
+import { isTransient } from "../ai/llm";
+import { friendlyAIError } from "../ai/llm";
 import { RateLimitError, acquireAiSlot, releaseAiSlot, renewAiSlot } from "../ratelimit";
 import type { BrandAccess } from "../auth/guard";
 import { log } from "../log";
@@ -288,7 +289,8 @@ export async function runJob(taskId: string): Promise<JobOutcome> {
         await save(taskId, token, { steps });
       } catch (e) {
         if (e instanceof LostClaimError) return (outcome = "lost_claim");
-        const retry = isServiceError(e) && !(e instanceof UserFacingError) && t.attempts < t.maxAttempts && !/rejected the API key|not configured/i.test(friendlyAIError(e) ?? "");
+        // Only failures that can clear by themselves are retried later (ai/errors.ts isTransient).
+        const retry = isTransient(e) && !(e instanceof UserFacingError) && t.attempts < t.maxAttempts;
         log.error(`${handler.name}.step_failed`, { taskId, step: step.id, attempt: t.attempts, retry, error: e instanceof Error ? e.message : String(e) });
         if (retry) {
           const delay = RETRY_BASE_MS * 2 ** (t.attempts - 1);

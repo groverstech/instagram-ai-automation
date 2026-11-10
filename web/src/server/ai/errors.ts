@@ -157,6 +157,15 @@ export function isRetryable(e: unknown): boolean {
   return classify(e).retryable;
 }
 
+/**
+ * Failures that may go away on their own (rate limits, overload, server errors, timeouts,
+ * network problems, a paused circuit): the job layer retries these later. Auth, permission,
+ * quota and configuration problems need a person, so retrying them is pointless.
+ */
+export function isTransient(e: unknown): boolean {
+  return ["rate_limit", "overloaded", "server", "timeout", "network", "circuit_open"].includes(classify(e).kind);
+}
+
 /** Errors that mean "the AI service is unavailable", not "this input is bad". Retrying later may work. */
 export function isServiceError(e: unknown): boolean {
   const k = classify(e).kind;

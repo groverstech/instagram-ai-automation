@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { format } from "date-fns";
 import { AlertTriangle, CalendarPlus, Loader2, Check, ChevronLeft, ChevronRight, ClipboardCopy, Download, FileArchive, Info, PenLine, RefreshCw, ShieldAlert, ShieldCheck, Sparkles, Trash2, Wand2, X, XCircle } from "lucide-react";
-import { createDraftPost, deleteCreativeAction, regenerateImageAction, setCreativeStatusAction, updateCreativeAction, variationAction } from "@/app/actions/ai";
+import { createDraftPost, deleteCreativeAction, imageVariationAction, regenerateImageAction, setCreativeStatusAction, updateCreativeAction, variationAction } from "@/app/actions/ai";
 import { brandCheckAction, editCopyAction, setVisualSourceAction, writeCopyAction } from "@/app/actions/creative";
 import { Badge, Button, Field, Input, Modal, Notice, Segmented, Select, Textarea } from "@/components/ui";
 import { toast } from "@/components/ui/toast";
@@ -252,6 +252,7 @@ function DesignTab(p: { brandId: string; creative: StudioCreative; canEdit: bool
   const [logo, setLogo] = useState<LogoPlacementId>(creative.logoPlacement as LogoPlacementId);
   const [slides, setSlides] = useState<SlideDraft[]>(creative.slides.map(({ headline, body, imagePrompt }) => ({ headline, body, imagePrompt })));
   const [source, setSource] = useState<VisualSourceId>(creative.visualSource as VisualSourceId);
+  const [direction, setDirection] = useState("");
   const [asset, setAsset] = useState<string | null>(creative.sourceAssetId);
   const { run, busy } = useRun();
   const origSlides = JSON.stringify(creative.slides.map(({ headline, body, imagePrompt }) => ({ headline, body, imagePrompt })));
@@ -399,6 +400,19 @@ function DesignTab(p: { brandId: string; creative: StudioCreative; canEdit: bool
               </Button>
             ) : null}
           </div>
+          {source === "ai" && !sourceDirty && creative.hasImage ? (
+            <div className="space-y-1.5" aria-label="Image variation">
+              <div className="flex flex-wrap gap-2">
+                <Input value={direction} onChange={(e) => setDirection(e.target.value)} maxLength={300} placeholder="Optional direction, e.g. warmer light, closer crop" aria-label="Direction for the variation" className="min-w-0 flex-1" />
+                <Button variant="secondary" loading={busy("var")} onClick={() => run(() => imageVariationAction(p.brandId, creative.id, direction), { key: "var", success: "Variation created" })}>
+                  <Sparkles /> Create variation
+                </Button>
+              </div>
+              <p className="text-[11px] text-faint">
+                {p.imageProvider.demo ? "Demo mode: shows a labelled placeholder; no image provider is called." : "Keeps the subject and mood of the current image and varies the composition. Replaces the current image."}
+              </p>
+            </div>
+          ) : null}
           {source === "brand_photo" ? (
             <div className="flex gap-2 overflow-x-auto pb-1">
               {p.photos.map((ph) => (
