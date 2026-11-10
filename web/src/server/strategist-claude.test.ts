@@ -6,8 +6,9 @@
  * real model output; that needs a live API key (see docs/STRATEGIST.md).
  */
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 
+process.env.AI_RETRY_BASE_MS = "5";
 process.env.AI_PROVIDER = "";
 process.env.ANTHROPIC_API_KEY = "sk-ant-test-not-a-real-key";
 delete process.env.ANTHROPIC_AUTH_TOKEN;
@@ -231,11 +232,20 @@ describe("workflow failure handling on the real provider path", () => {
     // Research ran exactly once across three attempts: no duplicate AI spend.
     const runs = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.taskId, taskId));
     expect(runs.filter((r) => r.agent === "market_research")).toHaveLength(2); // web call + structuring call, once each
-    expect(runs.filter((r) => r.agent === "audience_intelligence").map((r) => [r.status, r.attempts, r.usage])).toEqual([
-      ["failed", 2, null],
-      ["failed", 2, null],
-      ["failed", 2, null],
+    // Each job attempt makes one request: the 500s say x-should-retry: false, which is honoured.
+    // (The job layer still retries the step three times with backoff.)
+    const audience = runs.filter((r) => r.agent === "audience_intelligence");
+    expect(audience.map((r) => [r.status, r.attempts, r.usage])).toEqual([
+      ["failed", 1, null],
+      ["failed", 1, null],
+      ["failed", 1, null],
     ]); // 5xx responses carry no usage: nothing billed, nothing counted
+    const failedEvents = await db.select().from(schema.usageEvents).where(inArray(schema.usageEvents.runId, audience.map((r) => r.id)));
+    expect(failedEvents.map((e) => [e.outcome, e.errorKind, e.httpStatus, e.costUsd])).toEqual([
+      ["failed", "server", 500, null],
+      ["failed", "server", 500, null],
+      ["failed", "server", 500, null],
+    ]);
     expect(t.inputTokens).toBe(20_000);
     expect(t.costUsd).toBeCloseTo(runs.reduce((s, r) => s + (r.costUsd ?? 0), 0), 6);
     const doc = store.docOf((await store.getStrategy(brandId, row.id))!);
@@ -506,7 +516,9 @@ describe("requests whose response never reaches the app", () => {
     respond = ((b: Record<string, unknown>) => {
       if (!isStructured(b) || !schemaKeys(b).includes("personas")) return apiError(400, "invalid_request_error");
       calls++;
-      if (calls <= 3) throw new TypeError("socket hang up"); // first app-level attempt incl. the SDK's own 2 retries
+      // The first request drops mid-flight. SDK retries are off, so every request the app sends
+      // is visible: earlier versions hid two extra SDK retries here and counted only one.
+      if (calls <= 1) throw new TypeError("socket hang up");
       return json(AUD);
     }) as typeof respond;
     const row = await newStrategy();
@@ -520,5 +532,15 @@ describe("requests whose response never reaches the app", () => {
     expect(run.usage).toMatchObject({ inputTokens: 10_000, outputTokens: 2_000, unknownUsageAttempts: 1 });
     expect(run.costUsd).toBeCloseTo(estimateCost({ inputTokens: 10_000, outputTokens: 2_000, model: "claude-opus-5-5" }), 6);
     expect((await wf.strategyCost(brandId, row.id)).unknownUsageCalls).toBe(1);
+    expect(calls).toBe(2);
+    // The usage ledger has one row per request: the dropped one (outcome unknown, unpriced) and the
+    // successful retry (priced from the list price).
+    const events = await db.select().from(schema.usageEvents).where(eq(schema.usageEvents.runId, run.id));
+    expect(events.sort((a, b) => a.attempt - b.attempt).map((e) => [e.attempt, e.outcome, e.errorKind, e.costUsd === null])).toEqual([
+      [1, "retried", "network", true],
+      [2, "success", null, false],
+    ]);
+    expect(events[0].units).toEqual({ unknownOutcome: 1 });
+    expect(events[1]).toMatchObject({ route: "strategy.section", provider: "anthropic", model: "claude-opus-5-5", priceSource: "anthropic-list-2026-11-10" });
   }, 30_000);
 });

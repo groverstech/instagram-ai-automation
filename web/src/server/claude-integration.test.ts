@@ -126,7 +126,8 @@ describe("Brand Intelligence on the real Anthropic provider path", () => {
       const fmt = (c.body.output_config as { format: { type: string; schema: { additionalProperties: boolean } } }).format;
       expect(fmt.type).toBe("json_schema");
       expect(fmt.schema.additionalProperties).toBe(false);
-      expect(typeof c.body.system).toBe("string");
+      // The agent's system prompt is one block marked for prompt caching (it repeats across calls).
+      expect(c.body.system).toEqual([{ type: "text", text: expect.any(String), cache_control: { type: "ephemeral" } }]);
     }
     // 1st request: vision analysis of the logo with an image block
     const visionContent = (captured[0].body.messages as { content: { type: string; source?: { media_type: string } }[] }[])[0].content;

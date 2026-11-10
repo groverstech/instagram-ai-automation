@@ -27,7 +27,7 @@ export async function analyzeCompetitor(scope: RunScope, brand: Brand, competito
   const ctx = await buildContext(brand, `competitor ${comp.name} differentiation`);
 
   const research = await runAgent(scope, "competitor_research", `Research ${comp.name}`, { competitorId }, () =>
-    llm().research({
+    llm().research({ route: "competitor.research",
       system: AGENTS.competitor_research.system,
       prompt: `Research the brand "${comp.name}"${comp.url ? ` (${comp.url})` : ""}${comp.handles.length ? `, social handles: ${comp.handles.join(", ")}` : ""}, a competitor of ${brand.name} in ${brand.industry ?? "its industry"} (${brand.geography ?? "global"}).
 Find publicly available information about: positioning and messaging, product focus, content themes and formats on social media, creative style, posting frequency, notable campaigns, and audience reception. Write concise research notes with what you found and where.`,
@@ -49,7 +49,7 @@ ${research.data.text}
 Produce the competitor analysis and 4-6 differentiation moves for ${brand.name}. In confidenceNote, say which parts are observed vs inferred and note any data you couldn't access (e.g. exact engagement figures).`;
 
   const { data } = await runAgent(scope, "competitor_research", `Analyse ${comp.name}`, { competitorId }, () =>
-    llm().structured({
+    llm().structured({ route: "competitor.analysis",
       system: AGENTS.competitor_research.system,
       prompt,
       schema: CompetitorAnalysis,

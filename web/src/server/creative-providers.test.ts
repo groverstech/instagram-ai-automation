@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { eq } from "drizzle-orm";
 
+process.env.AI_RETRY_BASE_MS = "5";
 process.env.AI_PROVIDER = "";
 process.env.ANTHROPIC_API_KEY = "sk-ant-test-not-a-real-key";
 delete process.env.ANTHROPIC_AUTH_TOKEN;
@@ -121,18 +122,46 @@ describe("AI image generation (OpenAI images API)", () => {
     expect(run).toMatchObject({ status: "failed", attempts: 1, usage: null });
   });
 
-  it("records a lost connection as usage-unknown (it may have been billed) and retries once", async () => {
+  it("doesn't retry an image request whose outcome is unknown (it may already be created and charged)", async () => {
     let n = 0;
     openai = () => {
       n++;
-      if (n === 1) throw new TypeError("socket hang up");
+      throw new TypeError("socket hang up");
+    };
+    const c = await newCreative();
+    await expect(generateVisual({ brandId: brand.id, userId }, brand, c)).rejects.toThrow();
+    expect(n).toBe(1); // not retried: a second request could pay for a second image
+    const [run] = await runsFor(c.id);
+    expect(run).toMatchObject({ status: "failed", attempts: 1 });
+    expect(run.usage).toMatchObject({ unknownUsageAttempts: 1 });
+    const db = await getDb();
+    const [after] = await db.select().from(schema.creatives).where(eq(schema.creatives.id, c.id));
+    expect(after.imageError).toMatch(/Couldn't reach the image service/);
+    const events = await db.select().from(schema.usageEvents).where(eq(schema.usageEvents.runId, run.id));
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ route: "image.generate", provider: "openai", outcome: "unknown", errorKind: "network", costUsd: null, priceSource: "unknown" });
+  }, 20_000);
+
+  it("retries a server error (nothing was created) and records both attempts", async () => {
+    let n = 0;
+    openai = () => {
+      n++;
+      if (n === 1) return new Response(JSON.stringify({ error: { message: "boom", type: "server_error" } }), { status: 500, headers: { "content-type": "application/json", "x-request-id": "req_img_500" } });
       return okImage();
     };
     const c = await newCreative();
     await generateVisual({ brandId: brand.id, userId }, brand, c);
+    expect(n).toBe(2);
     const [run] = await runsFor(c.id);
-    expect(run).toMatchObject({ status: "succeeded", attempts: 2 });
-    expect(run.usage).toMatchObject({ images: 1, unknownUsageAttempts: 1 });
+    expect(run).toMatchObject({ status: "succeeded" });
+    expect(run.usage).toMatchObject({ images: 1 });
+    const db = await getDb();
+    const events = await db.select().from(schema.usageEvents).where(eq(schema.usageEvents.runId, run.id));
+    expect(events.map((e) => [e.attempt, e.outcome, e.httpStatus, e.providerRequestId])).toEqual([
+      [1, "retried", 500, "req_img_500"],
+      [2, "success", null, null],
+    ]);
+    expect(events[1].units).toMatchObject({ images: 1, inputTokens: 60, outputTokens: 4160 });
   }, 20_000);
 
   it("generates slide images for carousels when asked, each logged", async () => {

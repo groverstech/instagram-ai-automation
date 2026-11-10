@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq, inArray } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
-import { imagePrice, imageProvider, ImageProviderUnavailable, MOCK_IMAGE_PROVIDER, type ImageSize } from "../ai/image";
+import { imageProvider, ImageProviderUnavailable, MOCK_IMAGE_PROVIDER, type ImageSize } from "../ai/image";
 import { storage } from "../storage";
 import { runAgent, type RunScope } from "../agents/orchestrator";
 import type { CreativeConcept } from "../agents/schemas";
@@ -50,26 +50,55 @@ function imagePromptFor(c: CreativeConcept, styleId: string, override?: string) 
     .join(" ");
 }
 
-/** Generate one AI image through the ledger (agent_runs), store it, return the storage key. */
-async function aiImage(scope: RunScope, brand: Brand, creative: Creative, prompt: string, label: string) {
+/**
+ * Generate one AI image (or, with `source`, a variation of an existing one) through the run
+ * ledger, store it through the storage abstraction, and return the storage key. Retries happen
+ * in the provider executor (ai/call.ts): rate limits and server errors are retried; a timed-out
+ * image request is not, because it may already have been created and charged.
+ */
+async function aiImage(scope: RunScope, brand: Brand, creative: Creative, prompt: string, label: string, source?: { data: Buffer; mime: string }) {
   const provider = imageProvider();
   if (!provider) throw new ImageProviderUnavailable("No image provider is configured.");
   const size = sizeFor(creative.format);
-  // One retry on transient failures (no response, 429, 5xx); refusals and 4xx are not retried.
-  const { data } = await runAgent(scope, "design_generation", label, { creativeId: creative.id, provider: provider.name, size }, async () => {
-    const img = await provider.generate(prompt, size);
+  const { data } = await runAgent(scope, "design_generation", label, { creativeId: creative.id, provider: provider.name, size, variation: Boolean(source) }, async () => {
+    const img = source ? await provider.edit(prompt, source, size) : await provider.generate(prompt, size);
     const key = `brands/${brand.id}/creatives/${creative.id}-${crypto.randomUUID().slice(0, 8)}.png`;
     await storage.put(key, img.data, img.mime);
-    // A demo placeholder costs nothing and isn't an image generation: record no usage.
+    // A demo placeholder costs nothing and isn't an image generation: no billable usage.
     if (provider.name === MOCK_IMAGE_PROVIDER) return { data: { key }, provider: provider.name };
-    const price = imagePrice(size);
-    return {
-      data: { key },
-      provider: provider.name,
-      usage: { images: 1, imageModel: img.model, ...(price === null ? { unpricedImages: 1 } : { imageCostUsd: price }) },
-    };
-  }, { retries: 1 });
+    return { data: { key }, provider: `openai:${img.model}`, usage: img.usage };
+  });
   return data.key;
+}
+
+/**
+ * A variation of a creative's AI image (creative iterations): the current image goes to the
+ * image model with the concept's art direction and an optional new direction, and the result
+ * replaces the cover. Brand colours, logo and text are still composited by our renderer.
+ */
+export async function aiVariation(scope: RunScope, brand: Brand, creative: Creative, direction?: string) {
+  if (creative.visualSource !== "ai" || !creative.imagePath) throw new UserFacingError("Variations are for creatives with an AI-generated image. Generate one first.");
+  const c = creative.concept as CreativeConcept;
+  const before = (await currentRow(creative.id)) ?? creative;
+  const source = await storage.get(creative.imagePath);
+  const prompt = [
+    "Create a fresh variation of this image for the same campaign: keep the subject, mood and quality, vary the composition and framing.",
+    direction?.trim() && `Direction for this variation: ${direction.trim()}`,
+    imagePromptFor(c, creative.style),
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const db = await getDb();
+  try {
+    const key = await aiImage(scope, brand, creative, prompt, `Variation for "${c.title}"`, { data: source, mime: creative.imagePath.endsWith(".jpg") ? "image/jpeg" : "image/png" });
+    await db.update(schema.creatives).set({ imagePath: key, imageProvider: imageProvider()?.name ?? "ai", imageError: null, updatedAt: new Date() }).where(eq(schema.creatives.id, creative.id));
+  } catch (e) {
+    // The current image stays; only the error is shown.
+    await db.update(schema.creatives).set({ imageError: e instanceof Error ? e.message : String(e), updatedAt: new Date() }).where(eq(schema.creatives.id, creative.id));
+    throw e;
+  }
+  const after = await currentRow(creative.id);
+  if (after) await pruneCreativeFiles(before, after);
 }
 
 /** Copy an approved brand photo into the creative's storage (survives asset deletion). */

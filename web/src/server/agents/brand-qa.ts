@@ -59,7 +59,7 @@ Question: ${question}`;
   let result: { runId: string; data: BrandAnswer };
   try {
     result = await runAgent(scope, "brand_intelligence", `Brand Q&A: ${question.slice(0, 60)}`, { question }, () =>
-      llm().structured({
+      llm().structured({ route: "brand.qa",
         system: SYSTEM,
         prompt,
         schema: BrandAnswer,

@@ -260,12 +260,48 @@ describe("migration 0007 on an existing database", () => {
       insert into campaigns (id, brand_id, name, type, objective, start_date, end_date) values ('c1', 'b1', 'Spring', 'launch', 'sales', now(), now());
     `);
     expect((await migrationStatus(db, old)).upToDate).toBe(true);
-    expect((await migrationStatus(db, src)).pending).toBe(1);
+    expect((await migrationStatus(db, src)).pending).toBe(journal.entries.length - 7);
     await migrate(db, { migrationsFolder: src });
     expect((await migrationStatus(db, src)).upToDate).toBe(true);
     const idx = await client.query<{ indexname: string }>("select indexname from pg_indexes where indexname in ('campaigns_brand_idx','competitors_brand_idx','audit_ws_time_idx') order by indexname");
     expect(idx.rows.map((r) => r.indexname)).toEqual(["audit_ws_time_idx", "campaigns_brand_idx", "competitors_brand_idx"]);
     expect((await client.query("select id from campaigns")).rows).toHaveLength(1);
+    await client.close();
+  });
+});
+
+describe("migration 0008 on an existing database", () => {
+  it("adds the usage ledger and route overrides, and backfills each run's organisation", async () => {
+    const { PGlite } = await import("@electric-sql/pglite");
+    const { vector } = await import("@electric-sql/pglite-pgvector");
+    const { drizzle } = await import("drizzle-orm/pglite");
+    const { migrate } = await import("drizzle-orm/pglite/migrator");
+    const src = path.join(process.cwd(), "drizzle");
+    const old = fs.mkdtempSync(path.join(os.tmpdir(), "bp-mig8-"));
+    fs.mkdirSync(path.join(old, "meta"));
+    const journal = JSON.parse(fs.readFileSync(path.join(src, "meta/_journal.json"), "utf8"));
+    const before = journal.entries.filter((e: { idx: number }) => e.idx < 8);
+    for (const e of before) fs.copyFileSync(path.join(src, `${e.tag}.sql`), path.join(old, `${e.tag}.sql`));
+    fs.writeFileSync(path.join(old, "meta/_journal.json"), JSON.stringify({ ...journal, entries: before }));
+    const client = await PGlite.create({ extensions: { vector } });
+    await client.exec("create extension if not exists vector");
+    const db = drizzle(client);
+    await migrate(db, { migrationsFolder: old });
+    await client.exec(`
+      insert into workspaces (id, name) values ('w1', 'Legacy');
+      insert into brands (id, workspace_id, name) values ('b1', 'w1', 'Legacy Co');
+      insert into agent_runs (id, brand_id, agent, task, status, cost_usd) values ('r1', 'b1', 'copywriter', 'Caption', 'succeeded', 0.0123);
+      insert into agent_runs (id, brand_id, agent, task, status) values ('r2', null, 'copywriter', 'Orphan', 'failed');
+    `);
+    await migrate(db, { migrationsFolder: src });
+    expect((await migrationStatus(db, src)).upToDate).toBe(true);
+    const runs = await client.query<{ id: string; workspace_id: string | null; cost_usd: number | null }>("select id, workspace_id, cost_usd from agent_runs order by id");
+    expect(runs.rows).toEqual([
+      { id: "r1", workspace_id: "w1", cost_usd: expect.closeTo(0.0123, 6) },
+      { id: "r2", workspace_id: null, cost_usd: null },
+    ]);
+    const tables = await client.query<{ tablename: string }>("select tablename from pg_tables where tablename in ('usage_events','ai_routes') order by tablename");
+    expect(tables.rows.map((r) => r.tablename)).toEqual(["ai_routes", "usage_events"]);
     await client.close();
   });
 });

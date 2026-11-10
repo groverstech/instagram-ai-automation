@@ -1,4 +1,5 @@
 import "server-only";
+import { IMAGE_MODELS, IMAGE_QUALITIES, TEXT_MODELS } from "./ai/catalog";
 
 /**
  * Deployment configuration checks (ADR-002 in docs/ARCHITECTURE_DECISIONS.md).
@@ -132,6 +133,35 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   if (!["openai", "none"].includes(imageProvider)) err("IMAGE_PROVIDER", "Use `openai`, or `none` to turn AI images off.");
   else if (imageProvider === "openai" && !set(env.OPENAI_API_KEY)) {
     warn("OPENAI_API_KEY", "Not set: AI images are unavailable (brand-photo and type-led creatives still work).");
+  }
+
+  // AI models and routing (docs/AI_PROVIDERS.md): only catalogued models, so costs are known.
+  if (set(env.ANTHROPIC_MODEL) && !Object.hasOwn(TEXT_MODELS, env.ANTHROPIC_MODEL!.trim())) {
+    err("ANTHROPIC_MODEL", `Unknown model. Use one of: ${Object.keys(TEXT_MODELS).join(", ")} (add others to src/server/ai/catalog.ts with their prices first).`);
+  }
+  if (set(env.OPENAI_IMAGE_MODEL) && !(IMAGE_MODELS as readonly string[]).includes(env.OPENAI_IMAGE_MODEL!.trim())) {
+    err("OPENAI_IMAGE_MODEL", `Unknown image model. Use one of: ${IMAGE_MODELS.join(", ")}.`);
+  }
+  if (set(env.OPENAI_IMAGE_QUALITY) && !(IMAGE_QUALITIES as readonly string[]).includes(norm(env.OPENAI_IMAGE_QUALITY))) {
+    err("OPENAI_IMAGE_QUALITY", `Use one of: ${IMAGE_QUALITIES.join(", ")}.`);
+  }
+  if (set(env.OPENAI_BASE_URL) && strict && !/^https:\/\//i.test(env.OPENAI_BASE_URL!)) err("OPENAI_BASE_URL", "Must be https in staging/production.");
+  if (set(env.ANTHROPIC_BASE_URL) && strict && !/^https:\/\//i.test(env.ANTHROPIC_BASE_URL!)) err("ANTHROPIC_BASE_URL", "Must be https in staging/production.");
+  for (const k of ["AI_TEXT_TIMEOUT_MS", "AI_IMAGE_TIMEOUT_MS", "AI_MAX_ATTEMPTS", "AI_IMAGE_MAX_ATTEMPTS", "AI_CIRCUIT_THRESHOLD", "AI_CIRCUIT_OPEN_MS"] as const) {
+    if (set(env[k]) && !/^[1-9]\d*$/.test(env[k]!.trim())) err(k, "Must be a positive whole number.");
+  }
+  for (const k of ["AI_RETRY_BASE_MS", "AI_RETRY_MAX_WAIT_MS"] as const) {
+    if (set(env[k]) && !/^\d+$/.test(env[k]!.trim())) err(k, "Must be a whole number of milliseconds.");
+  }
+  // Prices and spending limits: non-negative numbers only. A typo must not silently zero a cost.
+  for (const [k, v] of Object.entries(env)) {
+    if (!/^(AI_PRICE_|IMAGE_PRICE_USD|OPENAI_IMAGE_PRICE_|AI_MONTHLY_COST_LIMIT_USD)/.test(k) || !set(v)) continue;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0) err(k, "Must be a non-negative number (USD).");
+  }
+  const imagesPriced = Object.keys(env).some((k) => /^(IMAGE_PRICE_USD|OPENAI_IMAGE_PRICE_OUTPUT_PER_MTOK)/.test(k) && set(env[k]));
+  if (imageProvider === "openai" && set(env.OPENAI_API_KEY) && !imagesPriced) {
+    warn("IMAGE_PRICE_USD", "No image prices configured: generated images are counted but recorded as unpriced (no cost estimate). See docs/AI_PROVIDERS.md.");
   }
 
   // Public URL: platforms fetch media from it, OAuth redirects use it.

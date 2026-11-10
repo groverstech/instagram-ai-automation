@@ -69,7 +69,7 @@ async function call<T>(
     task,
     { strategyId: c.strategyId },
     async () => {
-      const out = await llm().structured({ system: AGENTS[agent].system, prompt: req.prompt, schema: req.schema, effort: req.effort ?? AGENTS[agent].effort, maxTokens: req.maxTokens, mock: req.mock });
+      const out = await llm().structured({ route: "strategy.section", system: AGENTS[agent].system, prompt: req.prompt, schema: req.schema, effort: req.effort ?? AGENTS[agent].effort, maxTokens: req.maxTokens, mock: req.mock });
       try {
         return { ...out, data: req.validate ? req.validate(out.data) : out.data };
       } catch (e) {
@@ -240,7 +240,7 @@ export async function runResearch(c: AgentCtx): Promise<AgentOutput<ResearchSect
         "Web research",
         { strategyId: c.strategyId },
         async () => {
-          const out = await llm().research({
+          const out = await llm().research({ route: "strategy.research",
             system: AGENTS.market_research.system,
             maxSearches: 8,
             prompt: `${block}

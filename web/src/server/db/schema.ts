@@ -494,6 +494,8 @@ export const agentRuns = pgTable(
     id: id(),
     brandId: text("brand_id").references(() => brands.id, { onDelete: "cascade" }),
     userId: text("user_id"),
+    /** Organisation the run belongs to (backfilled from the brand), for organisation-level usage. */
+    workspaceId: text("workspace_id"),
     parentId: text("parent_id"),
     /** The ai_tasks row this call ran for (strategist workflows); task totals are summed from here. */
     taskId: text("task_id"),
@@ -511,7 +513,70 @@ export const agentRuns = pgTable(
     startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp("finished_at", { withTimezone: true }),
   },
-  (t) => [index("runs_brand_idx").on(t.brandId, t.startedAt), index("runs_task_idx").on(t.taskId)],
+  (t) => [index("runs_brand_idx").on(t.brandId, t.startedAt), index("runs_task_idx").on(t.taskId), index("runs_ws_idx").on(t.workspaceId, t.startedAt)],
+);
+
+/**
+ * AI usage ledger (docs/AI_PROVIDERS.md): one row per provider attempt, written whatever the
+ * outcome. Append-only; rows survive brand and run deletion (no foreign keys), like the audit log.
+ *   outcome: success · failed (the provider answered with an error) · retried (failed, then
+ *   retried) · refused (the provider declined; billed) · unknown (sent, no response: the
+ *   provider may have processed and billed it) · blocked (not sent: circuit open, not configured)
+ */
+export type UsageOutcome = "success" | "failed" | "retried" | "refused" | "unknown" | "blocked";
+export const usageEvents = pgTable(
+  "usage_events",
+  {
+    id: id(),
+    workspaceId: text("workspace_id"),
+    brandId: text("brand_id"),
+    userId: text("user_id"),
+    taskId: text("task_id"),
+    runId: text("run_id"),
+    route: text("route").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model"),
+    kind: text("kind").$type<"text" | "research" | "image">().notNull(),
+    attempt: integer("attempt").notNull().default(1),
+    outcome: text("outcome").$type<UsageOutcome>().notNull(),
+    /** Error class when not successful (auth, rate_limit, overloaded, timeout, network, ...). */
+    errorKind: text("error_kind"),
+    httpStatus: integer("http_status"),
+    /** Units as reported by the provider: tokens (input, output, cache), web searches, images. */
+    units: jsonb("units").$type<Record<string, number>>().notNull().default({}),
+    /** Estimated cost in USD; null when the units can't be priced (see priceSource). */
+    costUsd: real("cost_usd"),
+    /** Where the price came from: provider list (dated), configuration, or "unpriced". */
+    priceSource: text("price_source"),
+    providerRequestId: text("provider_request_id"),
+    latencyMs: integer("latency_ms"),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index("usage_ws_time_idx").on(t.workspaceId, t.createdAt),
+    index("usage_brand_time_idx").on(t.brandId, t.createdAt),
+    index("usage_run_idx").on(t.runId),
+  ],
+);
+
+/**
+ * Route overrides (routes.ts): pick a different model or parameters for one AI job, globally
+ * (scope_id ""), for a plan, or for a brand. Validated against the model catalog when applied.
+ */
+export const aiRoutes = pgTable(
+  "ai_routes",
+  {
+    id: id(),
+    key: text("key").notNull(),
+    scopeType: text("scope_type").$type<"global" | "plan" | "brand">().notNull(),
+    scopeId: text("scope_id").notNull().default(""),
+    model: text("model"),
+    params: jsonb("params").$type<{ effort?: "low" | "medium" | "high" | "xhigh" | "max"; quality?: "low" | "medium" | "high"; timeoutMs?: number; maxAttempts?: number }>(),
+    active: boolean("active").notNull().default(true),
+    updatedBy: text("updated_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("ai_routes_scope_key").on(t.key, t.scopeType, t.scopeId)],
 );
 
 export const jobs = pgTable(

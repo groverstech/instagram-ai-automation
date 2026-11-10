@@ -49,7 +49,7 @@ Brief from the user: ${req.brief}
 - name: short and ownable.`;
 
   const { runId, data } = await runAgent(scope, "campaign_manager", `Campaign: ${req.brief.slice(0, 60)}`, { ...req, days }, () =>
-    llm().structured({ system: AGENTS.campaign_manager.system, prompt, schema: CampaignPlan, effort: AGENTS.campaign_manager.effort, mock: () => mockPlan(req, days, platforms) }),
+    llm().structured({ route: "campaign.plan", system: AGENTS.campaign_manager.system, prompt, schema: CampaignPlan, effort: AGENTS.campaign_manager.effort, mock: () => mockPlan(req, days, platforms) }),
   );
 
   const db = await getDb();
