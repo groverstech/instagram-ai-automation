@@ -134,6 +134,14 @@ jobs:
           docker logs worker 2>&1 | grep '"worker.stopped"'
           test "$(docker inspect -f '{{.State.ExitCode}}' worker)" = "0"
 
+      - name: Demo mode with the image's default data folder (embedded database, local storage)
+        run: |
+          docker run -d --name demo --network host -e PORT=3002 -e DEPLOY_ENV=demo -e APP_SECRET="$(openssl rand -hex 32)" \
+            -e AI_PROVIDER=mock -e AI_ALLOW_MOCK_IN_PRODUCTION=true brandpilot:ci
+          for i in $(seq 1 60); do curl -fs -o /dev/null localhost:3002/api/health/live && break; sleep 2; done
+          curl -fsS localhost:3002/api/health/ready
+          docker stop -t 30 demo
+
       - name: Production refuses unsafe or missing configuration
         run: |
           refused() {

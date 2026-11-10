@@ -122,6 +122,11 @@ docker build -t brandpilot:$(git rev-parse --short HEAD) web
 ```
 Pass `--build-arg BASE_IMAGE=<mirror>/node:22-bookworm-slim` to build from a registry mirror.
 
+The image's data folder is `/app/.data` (owned by the unprivileged `app` user and declared as a
+volume). It holds the embedded database in demo mode and local-disk files for a single-instance
+pilot (`STORAGE_DIR` defaults to `/app/.data/files`). For a pilot, mount a persistent, backed-up
+volume there, or point `STORAGE_DIR` at one. Production uses Postgres and, from PR 4.2, R2.
+
 | Role | Command | Notes |
 |---|---|---|
 | Web | `docker run … brandpilot` (default `web`) | Listens on `$PORT` (3000). `GET /api/health/live` and `/api/health/ready`. |

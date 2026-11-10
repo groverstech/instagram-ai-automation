@@ -28,7 +28,11 @@ ENV NODE_ENV=production \
     DEPLOY_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
     PORT=3000
-RUN groupadd --system app && useradd --system --gid app --home-dir /app app
+RUN groupadd --system app && useradd --system --gid app --home-dir /app app \
+    && mkdir -p /app/.data && chown app:app /app/.data
+# Default data folder for PGlite (demos) and local-disk storage (single-instance pilots): mount a
+# persistent volume here, or set STORAGE_DIR / PGLITE_DIR to one. Production uses Postgres and R2.
+VOLUME ["/app/.data"]
 COPY --from=build --chown=app:app /app/package.json /app/package-lock.json /app/next.config.mjs /app/tsconfig.json ./
 COPY --from=build --chown=app:app /app/node_modules ./node_modules
 COPY --from=build --chown=app:app /app/.next ./.next
