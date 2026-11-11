@@ -2,7 +2,7 @@
 import { useState } from "react";
 import { format } from "date-fns";
 import { AlertTriangle, CalendarPlus, Loader2, Check, ChevronLeft, ChevronRight, ClipboardCopy, Download, FileArchive, Info, PenLine, RefreshCw, ShieldAlert, ShieldCheck, Sparkles, Trash2, Wand2, X, XCircle } from "lucide-react";
-import { createDraftPost, deleteCreativeAction, regenerateImageAction, setCreativeStatusAction, updateCreativeAction, variationAction } from "@/app/actions/ai";
+import { createDraftPost, deleteCreativeAction, imageEditAction, imageVariationAction, regenerateImageAction, setCreativeStatusAction, updateCreativeAction, variationAction } from "@/app/actions/ai";
 import { brandCheckAction, editCopyAction, setVisualSourceAction, writeCopyAction } from "@/app/actions/creative";
 import { Badge, Button, Field, Input, Modal, Notice, Segmented, Select, Textarea } from "@/components/ui";
 import { toast } from "@/components/ui/toast";
@@ -252,6 +252,8 @@ function DesignTab(p: { brandId: string; creative: StudioCreative; canEdit: bool
   const [logo, setLogo] = useState<LogoPlacementId>(creative.logoPlacement as LogoPlacementId);
   const [slides, setSlides] = useState<SlideDraft[]>(creative.slides.map(({ headline, body, imagePrompt }) => ({ headline, body, imagePrompt })));
   const [source, setSource] = useState<VisualSourceId>(creative.visualSource as VisualSourceId);
+  const [direction, setDirection] = useState("");
+  const [instruction, setInstruction] = useState("");
   const [asset, setAsset] = useState<string | null>(creative.sourceAssetId);
   const { run, busy } = useRun();
   const origSlides = JSON.stringify(creative.slides.map(({ headline, body, imagePrompt }) => ({ headline, body, imagePrompt })));
@@ -399,6 +401,34 @@ function DesignTab(p: { brandId: string; creative: StudioCreative; canEdit: bool
               </Button>
             ) : null}
           </div>
+          {source === "ai" && !sourceDirty && creative.hasImage ? (
+            <>
+              <div className="space-y-1.5 border-t border-line pt-2.5" aria-label="Image variation">
+                <p className="text-[12px] font-medium">Create a variation</p>
+                <div className="flex flex-wrap gap-2">
+                  <Input value={direction} onChange={(e) => setDirection(e.target.value)} maxLength={300} placeholder="Optional direction, e.g. warmer light, closer crop" aria-label="Direction for the variation" className="min-w-0 flex-1" />
+                  <Button variant="secondary" loading={busy("var")} onClick={() => run(() => imageVariationAction(p.brandId, creative.id, direction), { key: "var", success: "Variation created" })}>
+                    <Sparkles /> Create variation
+                  </Button>
+                </div>
+                <p className="text-[11px] text-faint">
+                  {p.imageProvider.demo ? "Demo mode: shows a labelled placeholder; no image provider is called." : `Same subject and mood, fresh composition. Uses ${p.imageProvider.modelLabel ?? "the image model"}. Replaces the current image.`}
+                </p>
+              </div>
+              <div className="space-y-1.5 border-t border-line pt-2.5" aria-label="Image edit">
+                <p className="text-[12px] font-medium">Edit this image</p>
+                <div className="flex flex-wrap gap-2">
+                  <Input value={instruction} onChange={(e) => setInstruction(e.target.value)} maxLength={300} placeholder="What to change, e.g. make the tablecloth terracotta" aria-label="Edit instruction" className="min-w-0 flex-1" />
+                  <Button variant="secondary" disabled={instruction.trim().length < 3} loading={busy("edit")} onClick={() => run(() => imageEditAction(p.brandId, creative.id, instruction), { key: "edit", success: "Image edited" })}>
+                    <Wand2 /> Edit image
+                  </Button>
+                </div>
+                <p className="text-[11px] text-faint">
+                  {p.imageProvider.demo ? "Demo mode: shows a labelled placeholder; no image provider is called." : `Changes only what you describe and keeps everything else. Uses ${p.imageProvider.editModelLabel ?? "the image model"} for precise edits. Replaces the current image.`}
+                </p>
+              </div>
+            </>
+          ) : null}
           {source === "brand_photo" ? (
             <div className="flex gap-2 overflow-x-auto pb-1">
               {p.photos.map((ph) => (
@@ -409,7 +439,7 @@ function DesignTab(p: { brandId: string; creative: StudioCreative; canEdit: bool
               ))}
             </div>
           ) : null}
-          {source === "ai" && !p.imageProvider.priced && !p.imageProvider.demo ? <p className="text-[11px] text-faint">Image generations are counted in usage; no price is configured (IMAGE_PRICE_USD), so they show as unpriced.</p> : null}
+          {source === "ai" && !p.imageProvider.priced && !p.imageProvider.demo ? <p className="text-[11px] text-faint">Image generations are counted in usage; no rates are known for this image model, so they show as unpriced.</p> : null}
         </div>
       ) : null}
 

@@ -10,7 +10,7 @@ check. Nothing is published automatically. Every creative is a draft until someo
 |---|---|
 | Background creative jobs (recovery, retries, no duplicates) | Done; tested |
 | Visual sources: brand photo, type-led | Done; verified end to end in the browser |
-| Visual source: AI image (OpenAI `gpt-image-1`) | Built. **Real generation not yet verified**: no OpenAI key was available. See [Real-provider status](#real-provider-integration-status). |
+| Visual source: AI image (OpenAI GPT Image 2.6) | Built. **Real generation not yet verified**: no OpenAI key was available. See [Real-provider status](#real-provider-integration-status). |
 | Carousels, logo placement, 12 formats, PNG/ZIP download | Done; verified in the browser and by tests |
 | Copy pack with originality guard | Built. Verified in demo mode; **real Claude output not yet verified** |
 | Brand check: deterministic checks | Done; verified |
@@ -71,7 +71,7 @@ Tests: `src/server/ai-modes.test.ts`.
 
 | Source | What it does | When available |
 |---|---|---|
-| AI image | Generates an image from the concept's art direction (`gpt-image-1`) | `OPENAI_API_KEY` set and `IMAGE_PROVIDER` not `none` (demo mode: placeholder) |
+| AI image | Generates an image from the concept's art direction (GPT Image 2.6 Flare); then **Create variation** (Flare) or **Edit image** (precision edit, GPT Image 2.6 Sunburst) | `OPENAI_API_KEY` set and `IMAGE_PROVIDER` not `none` (demo mode: placeholder) |
 | Brand photo | Uses the brand's **approved** product/reference/creative/post photos (PNG, JPEG, WebP), chosen or rotated | At least one approved photo in My Brand → Assets |
 | Type-led | Brand colours and typography, no photo | Always |
 
@@ -189,10 +189,11 @@ preferred over a draft.
 AI calls are recorded per agent run, including failed and retried attempts that the provider
 reports usage for.
 - **Text:** token usage, priced from `src/server/ai/pricing.ts`.
-- **Images:** counted per generation (`images`, `imageModel`). Their price comes from
-  configuration, never from a guess: `IMAGE_PRICE_USD_1024X1024`, `_1024X1536` and `_1536X1024`,
-  or `IMAGE_PRICE_USD` for every size.
-- **Unpriced images:** without a configured price, images are counted as `unpricedImages`.
+- **Images:** counted per generation (`images`, `imageModel`) and priced per token from the usage
+  OpenAI reports (text input, image input, image output), at the rates in effect: the `ai_prices`
+  table, configuration, or OpenAI's list prices ([AI_PROVIDERS.md](AI_PROVIDERS.md#how-costs-are-calculated)).
+  There's no flat per-image price.
+- **Unpriced images:** a response without usage, or a model without rates, is counted as `unpricedImages`.
 - **Rejected keys:** a rejected key (401) records no image usage.
 - **Job cost:** the job panel shows the cost so far, summed from that job's runs.
 
@@ -217,7 +218,7 @@ Last run: 8 Nov 2026. The full plan is in `docs/CREATIVE_STUDIO_REAL_AI_TEST_PLA
 |---|---|---|
 | OpenAI rejects an invalid key: clear message, not retried as an outage, no image usage | **Verified against the real API** | `npm run test:live`: HTTP 401 → "The image service rejected the API key. Check OPENAI_API_KEY on the server." |
 | Anthropic rejects an invalid key: clear message | **Verified against the real API** | `npm run test:live`: HTTP 401 → "The AI service rejected the API key. Check ANTHROPIC_API_KEY on the server." |
-| OpenAI request format and response handling (`gpt-image-1`) | Verified with an intercepted request only | `creative-providers.test.ts` |
+| OpenAI request format and response handling (GPT Image 2.6) | Verified with an intercepted request only | `creative-providers.test.ts` |
 | Anthropic request format (vision review, copy) | Verified with an intercepted request only | `creative-providers.test.ts` |
 | Real image generation from brand identity | **Not verified**: no OpenAI key | `test:live` reports `not_run` |
 | Real image quality and brand consistency | **Not verified**: no OpenAI key | — |
@@ -237,10 +238,10 @@ Demo-mode results are never reported as real-provider results. The live suite re
 
 **For AI images:**
 - `OPENAI_API_KEY` (server-only).
-- An OpenAI organisation with access to `gpt-image-1` (OpenAI may require organisation verification for it).
+- An OpenAI organisation with access to `gpt-image-2.6-flare` and `gpt-image-2.6-sunburst` (OpenAI may require organisation verification).
 - Outbound HTTPS to `api.openai.com`.
-- Set `IMAGE_PRICE_USD_<SIZE>` from your OpenAI price sheet, so image costs aren't shown as
-  unpriced.
+- Nothing to set for prices: list prices are built in. For contract rates, use `ai_prices` or
+  `OPENAI_IMAGE_PRICE_*_PER_MTOK`.
 
 **Must not be set:** `AI_PROVIDER=mock` and `AI_ALLOW_MOCK_IN_PRODUCTION`. The app ignores the
 mock in production without the second one.
@@ -274,8 +275,8 @@ a few Claude calls), and keep its `report.json`.
 | `AI_PROVIDER` | `mock` = demo mode (ignored in production without `AI_ALLOW_MOCK_IN_PRODUCTION=true`) |
 | `IMAGE_PROVIDER` | `openai` (default) or `none` |
 | `OPENAI_API_KEY` | Enables AI images (server-only) |
-| `OPENAI_IMAGE_MODEL` | Image model, default `gpt-image-1` |
-| `IMAGE_PRICE_USD`, `IMAGE_PRICE_USD_<SIZE>` | Price per image, used for cost reporting |
+| `OPENAI_IMAGE_MODEL`, `OPENAI_IMAGE_EDIT_MODEL` | Image models, default `gpt-image-2.6-flare` and `gpt-image-2.6-sunburst` (edits) |
+| `OPENAI_IMAGE_PRICE_*_PER_MTOK` | Optional contract rates per 1M tokens (default: OpenAI list prices) |
 | `CREATIVE_BRAND_CHECK` | `off` runs deterministic checks only |
 
 ## Tests

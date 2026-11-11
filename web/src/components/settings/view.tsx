@@ -15,6 +15,8 @@ import { cn } from "@/lib/utils";
 
 type Member = { id: string; role: Role; brandIds: string[] | null; status: string; invitedEmail: string | null; userId: string | null; name: string | null; email: string | null };
 import type { AuditRow, AuditScope } from "@/server/audit";
+import type { AiOverview } from "@/server/ai/overview";
+import { AiUsageCard } from "./ai-usage";
 type BrandRow = { id: string; name: string; createdAt: Date; active: boolean; colors: string[]; access: { all: number; scoped: number } };
 
 export function SettingsView(props: {
@@ -38,6 +40,7 @@ export function SettingsView(props: {
   brands: BrandRow[];
   /** Owners/admins with access to every brand only; null for everyone else. */
   auditLog?: { rows: AuditRow[]; scope: AuditScope } | null;
+  aiOverview?: AiOverview | null;
   integrations: { ai: { provider: string; ready: boolean; model: string }; image: { ready: boolean; provider: string }; embeddings: string; database: string } | null;
 }) {
   const isAdmin = roleAtLeast(props.role, "admin") && !props.scoped;
@@ -57,7 +60,7 @@ export function SettingsView(props: {
     <div>
       <PageHeader eyebrow="Settings" title="Workspace" description="Team, roles, brands, plan and integrations." />
       <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           <Card>
             <CardHeader title="Workspace details" />
             <CardBody className="flex flex-wrap items-end gap-3">
@@ -167,10 +170,12 @@ export function SettingsView(props: {
             </CardBody>
           </Card>
 
+          {props.aiOverview ? <AiUsageCard data={props.aiOverview} /> : null}
+
           {props.auditLog ? <SecurityLog rows={props.auditLog.rows} scope={props.auditLog.scope} brandName={brandName} /> : null}
         </div>
 
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           {props.usage ? (
           <Card>
             <CardHeader title="Plan & usage" action={<Badge tone="accent">{plan.label}</Badge>} />

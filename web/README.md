@@ -8,7 +8,7 @@ platform APIs after human approval, and analyses real performance.
 **Architecture, schema, agent design and roadmap:** [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 **Brand Intelligence Agent (Phase 1):** [`docs/BRAND_INTELLIGENCE.md`](docs/BRAND_INTELLIGENCE.md)
 **Production deployment (environments, container roles, migrations, health, backups):** [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)
-**Security model:** [`docs/SECURITY.md`](docs/SECURITY.md) · **Architecture decisions:** [`docs/ARCHITECTURE_DECISIONS.md`](docs/ARCHITECTURE_DECISIONS.md) · **Follow-ups:** [`docs/FOLLOW_UPS.md`](docs/FOLLOW_UPS.md)
+**Security model:** [`docs/SECURITY.md`](docs/SECURITY.md) · **Architecture decisions:** [`docs/ARCHITECTURE_DECISIONS.md`](docs/ARCHITECTURE_DECISIONS.md) · **Follow-ups:** [`docs/FOLLOW_UPS.md`](docs/FOLLOW_UPS.md) · **AI providers:** [`docs/AI_PROVIDERS.md`](docs/AI_PROVIDERS.md)
 
 ## Quick start
 
@@ -28,9 +28,11 @@ Sign up, complete onboarding, and the Brand Intelligence agent builds your profi
 ### Without API keys
 
 - `AI_PROVIDER=mock` runs every agent with deterministic stand-in output, for UI work and
-  tests. A banner in the app marks mock mode.
+  tests. A **Demo mode** bar on every page marks it; with real keys the bar reads **Live AI**.
 - Without an image provider, creatives use approved brand photos or type-led layouts. Set
-  `OPENAI_API_KEY` to generate imagery (`gpt-image-1`).
+  `OPENAI_API_KEY` to generate imagery (GPT Image 2.6 Flare; precision edits use Sunburst).
+
+**Demo walkthrough and staging validation:** [`docs/DEMO.md`](docs/DEMO.md)
 
 ## What's in the box
 

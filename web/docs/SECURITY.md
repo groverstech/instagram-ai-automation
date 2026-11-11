@@ -116,6 +116,27 @@ An append-only `audit_events` table records:
 - **Bounded volume:** refused access and failed sign-ins record at most 20 events per source per
   10 minutes, then one marker; the request itself is still refused.
 
+## AI providers (PR 4.1)
+
+- **Keys:** `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are server environment variables only. They're
+  never logged, sent to the browser (Settings shows only "key configured") or included in error
+  messages; client bundles are scanned in CI.
+- **Outbound:** AI calls go only to the configured provider hosts (public APIs by default;
+  `*_BASE_URL` overrides must be https in staging and production).
+- **OpenAI** requests carry a keyed hash of the organisation as `safety_identifier`, never our raw
+  IDs or user details.
+- **Usage and cost data** is organisation-wide: only owners and admins with access to every brand
+  see it, re-checked on the server, with refusals audited. The usage ledger is attributed per
+  organisation and brand, and summaries never mix organisations (tested).
+- **Spend protection:**
+  - per-user and per-organisation AI rate limits and concurrency leases;
+  - the plan's monthly run limit;
+  - an optional monthly spending limit;
+  - images with an unknown outcome are never retried automatically.
+- **Prompt injection:** brand material is passed to models as labelled data, never as instructions
+  (existing agent prompts).
+- **Real-provider validation is pending** (FOLLOW_UPS F10).
+
 ## Background jobs and publishing
 
 - **One publish per post:** the move to "publishing" is atomic, so concurrent attempts (scheduler

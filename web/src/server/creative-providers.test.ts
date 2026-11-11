@@ -11,13 +11,14 @@ import os from "node:os";
 import path from "node:path";
 import { eq } from "drizzle-orm";
 
+process.env.AI_RETRY_BASE_MS = "5";
 process.env.AI_PROVIDER = "";
 process.env.ANTHROPIC_API_KEY = "sk-ant-test-not-a-real-key";
 delete process.env.ANTHROPIC_AUTH_TOKEN;
 delete process.env.ANTHROPIC_BASE_URL;
 process.env.IMAGE_PROVIDER = "openai";
 process.env.OPENAI_API_KEY = "sk-openai-test-not-a-real-key";
-delete process.env.IMAGE_PRICE_USD;
+delete process.env.OPENAI_IMAGE_MODEL;
 process.env.PGLITE_DIR = "memory://";
 process.env.STORAGE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bp-cprov-"));
 
@@ -32,7 +33,8 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   if (!url.startsWith("https://api.openai.com/") && !url.startsWith("https://api.anthropic.com/")) return realFetch(input, init);
   const headers: Record<string, string> = {};
   new Headers(init?.headers).forEach((v, k) => (headers[k] = v));
-  const body = JSON.parse(String(init?.body ?? "{}"));
+  const body: Record<string, unknown> =
+    init?.body instanceof FormData ? Object.fromEntries([...init.body.entries()].map(([k, v]) => [k, typeof v === "string" ? v : `file:${(v as File).type}:${(v as File).size}`])) : JSON.parse(String(init?.body ?? "{}"));
   calls.push({ url, headers, body });
   return url.startsWith("https://api.openai.com/") ? openai(body) : anthropic(body);
 }) as typeof fetch;
@@ -45,7 +47,7 @@ const claude = (obj: unknown) =>
   });
 
 const { getDb, schema } = await import("./db/client");
-const { generateVisual } = await import("./creative/visuals");
+const { aiEdit, aiVariation, generateVisual } = await import("./creative/visuals");
 const { runBrandCheck } = await import("./creative/brand-check");
 const { storage } = await import("./storage");
 type Brand = import("./db/schema").Brand;
@@ -72,12 +74,11 @@ beforeAll(async () => {
 });
 beforeEach(() => {
   calls.length = 0;
-  delete process.env.IMAGE_PRICE_USD;
-  delete process.env.IMAGE_PRICE_USD_1024X1536;
+  delete process.env.OPENAI_IMAGE_PRICE_OUTPUT_PER_MTOK;
 });
 
 describe("AI image generation (OpenAI images API)", () => {
-  it("sends a well-formed request, stores the image and records an unpriced image when no price is configured", async () => {
+  it("sends a well-formed request with GPT Image 2.6 Flare, stores the image and estimates the cost from reported usage at list prices", async () => {
     openai = () => okImage();
     const c = await newCreative();
     await generateVisual({ brandId: brand.id, userId }, brand, c);
@@ -85,28 +86,62 @@ describe("AI image generation (OpenAI images API)", () => {
     const call = calls[0];
     expect(call.url).toBe("https://api.openai.com/v1/images/generations");
     expect(call.headers.authorization).toBe("Bearer sk-openai-test-not-a-real-key");
-    expect(call.body).toMatchObject({ model: "gpt-image-1", size: "1024x1536", quality: "high", n: 1 }); // portrait 1080×1350
+    expect(call.body).toMatchObject({ model: "gpt-image-2.6-flare", size: "1024x1536", quality: "high", n: 1 }); // portrait 1080×1350
     expect(String(call.body.prompt)).toContain("Deep-blue stoneware mug");
     expect(String(call.body.prompt)).toMatch(/no text, letters, numbers, logos or watermarks/);
     const db = await getDb();
     const [after] = await db.select().from(schema.creatives).where(eq(schema.creatives.id, c.id));
     expect(after.imagePath).toMatch(new RegExp(`^brands/${brand.id}/creatives/${c.id}-`));
     expect((await storage.get(after.imagePath!)).subarray(1, 4).toString()).toBe("PNG");
-    expect(after.imageProvider).toBe("openai:gpt-image-1");
+    expect(after.imageProvider).toBe("openai:gpt-image-2.6-flare");
     const [run] = await runsFor(c.id);
-    expect(run).toMatchObject({ agent: "design_generation", status: "succeeded", costUsd: 0 });
-    expect(run.usage).toMatchObject({ images: 1, unpricedImages: 1, imageModel: "gpt-image-1" });
+    // OpenAI list prices (per 1M tokens): text input $5, image output $30.
+    const est = (60 * 5 + 4160 * 30) / 1e6;
+    expect(run).toMatchObject({ agent: "design_generation", status: "succeeded" });
+    expect(run.costUsd).toBeCloseTo(est, 9);
+    expect(run.usage).toMatchObject({ images: 1, imageModel: "gpt-image-2.6-flare" });
+    expect((run.usage as { imageCostUsd: number }).imageCostUsd).toBeCloseTo(est, 9);
+    expect(run.usage).not.toHaveProperty("unpricedImages");
   });
 
-  it("prices images from configuration", async () => {
-    process.env.IMAGE_PRICE_USD_1024X1536 = "0.25";
+  it("negotiated rates from configuration replace list prices; no reported usage means unpriced, never a flat guess", async () => {
+    process.env.OPENAI_IMAGE_PRICE_OUTPUT_PER_MTOK = "20";
     openai = () => okImage();
     const c = await newCreative();
     await generateVisual({ brandId: brand.id, userId }, brand, c);
     const [run] = await runsFor(c.id);
-    expect(run.usage).toMatchObject({ images: 1, imageCostUsd: 0.25 });
-    expect(run.usage).not.toHaveProperty("unpricedImages");
-    expect(run.costUsd).toBe(0.25);
+    expect(run.costUsd).toBeCloseTo((60 * 5 + 4160 * 20) / 1e6, 9);
+    openai = () => new Response(JSON.stringify({ created: 1, data: [{ b64_json: PNG_1x1 }] }), { status: 200, headers: { "content-type": "application/json" } });
+    const c2 = await newCreative();
+    await generateVisual({ brandId: brand.id, userId }, brand, c2);
+    const [run2] = await runsFor(c2.id);
+    expect(run2.usage).toMatchObject({ images: 1, unpricedImages: 1 });
+    expect(run2.costUsd).toBe(0);
+  });
+
+  it("variation (Flare) and precision edit (Sunburst) send the current image to the edits endpoint and replace it", async () => {
+    openai = () => okImage();
+    const c = await newCreative();
+    await generateVisual({ brandId: brand.id, userId }, brand, c);
+    const db = await getDb();
+    const row = async () => (await db.select().from(schema.creatives).where(eq(schema.creatives.id, c.id)))[0];
+    const first = (await row()).imagePath!;
+    calls.length = 0;
+    await aiVariation({ brandId: brand.id, userId }, brand, await row(), "warmer light");
+    expect(calls[0].url).toBe("https://api.openai.com/v1/images/edits");
+    expect(calls[0].body).toMatchObject({ model: "gpt-image-2.6-flare", image: expect.stringMatching(/^file:image\/png:/) });
+    const second = (await row()).imagePath!;
+    expect(second).not.toBe(first);
+    await expect(storage.get(first)).rejects.toThrow(); // the replaced file is pruned
+    calls.length = 0;
+    await aiEdit({ brandId: brand.id, userId }, brand, await row(), "make the mug terracotta");
+    expect(calls[0].url).toBe("https://api.openai.com/v1/images/edits");
+    expect(calls[0].body).toMatchObject({ model: "gpt-image-2.6-sunburst" });
+    expect(String(calls[0].body.prompt)).toMatch(/^Edit this image: make the mug terracotta\. Change only what the instruction asks/);
+    const after = await row();
+    expect(after).toMatchObject({ imageProvider: "openai:gpt-image-2.6-sunburst", imageError: null });
+    expect(after.imagePath).not.toBe(second);
+    await expect(aiEdit({ brandId: brand.id, userId }, brand, await row(), "   ")).rejects.toThrow(/Describe the change/);
   });
 
   it("turns a content-policy refusal into a friendly error without retrying", async () => {
@@ -121,18 +156,46 @@ describe("AI image generation (OpenAI images API)", () => {
     expect(run).toMatchObject({ status: "failed", attempts: 1, usage: null });
   });
 
-  it("records a lost connection as usage-unknown (it may have been billed) and retries once", async () => {
+  it("doesn't retry an image request whose outcome is unknown (it may already be created and charged)", async () => {
     let n = 0;
     openai = () => {
       n++;
-      if (n === 1) throw new TypeError("socket hang up");
+      throw new TypeError("socket hang up");
+    };
+    const c = await newCreative();
+    await expect(generateVisual({ brandId: brand.id, userId }, brand, c)).rejects.toThrow();
+    expect(n).toBe(1); // not retried: a second request could pay for a second image
+    const [run] = await runsFor(c.id);
+    expect(run).toMatchObject({ status: "failed", attempts: 1 });
+    expect(run.usage).toMatchObject({ unknownUsageAttempts: 1 });
+    const db = await getDb();
+    const [after] = await db.select().from(schema.creatives).where(eq(schema.creatives.id, c.id));
+    expect(after.imageError).toMatch(/Couldn't reach the image service/);
+    const events = await db.select().from(schema.usageEvents).where(eq(schema.usageEvents.runId, run.id));
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ route: "image.generate", provider: "openai", outcome: "unknown", errorKind: "network", costUsd: null, priceSource: "unknown" });
+  }, 20_000);
+
+  it("retries a server error (nothing was created) and records both attempts", async () => {
+    let n = 0;
+    openai = () => {
+      n++;
+      if (n === 1) return new Response(JSON.stringify({ error: { message: "boom", type: "server_error" } }), { status: 500, headers: { "content-type": "application/json", "x-request-id": "req_img_500" } });
       return okImage();
     };
     const c = await newCreative();
     await generateVisual({ brandId: brand.id, userId }, brand, c);
+    expect(n).toBe(2);
     const [run] = await runsFor(c.id);
-    expect(run).toMatchObject({ status: "succeeded", attempts: 2 });
-    expect(run.usage).toMatchObject({ images: 1, unknownUsageAttempts: 1 });
+    expect(run).toMatchObject({ status: "succeeded" });
+    expect(run.usage).toMatchObject({ images: 1 });
+    const db = await getDb();
+    const events = await db.select().from(schema.usageEvents).where(eq(schema.usageEvents.runId, run.id));
+    expect(events.map((e) => [e.attempt, e.outcome, e.httpStatus, e.providerRequestId])).toEqual([
+      [1, "retried", 500, "req_img_500"],
+      [2, "success", null, null],
+    ]);
+    expect(events[1].units).toMatchObject({ images: 1, inputTokens: 60, outputTokens: 4160 });
   }, 20_000);
 
   it("generates slide images for carousels when asked, each logged", async () => {

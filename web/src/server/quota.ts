@@ -28,11 +28,34 @@ export async function usage(workspaceId: string) {
   return { brands: ids.length, seats: seats.n, aiRuns: runs.n, socialAccounts: accts.n };
 }
 
+/**
+ * Optional monthly AI spending limit per organisation, in USD of *estimated* provider cost
+ * (usage ledger). AI_MONTHLY_COST_LIMIT_USD_<PLAN> (e.g. _STARTER) overrides
+ * AI_MONTHLY_COST_LIMIT_USD for that plan. Unset means no spending limit: nothing is assumed.
+ * Credits (PRs 4.5–4.6) build on the same ledger.
+ */
+export function monthlyCostLimitUsd(plan: string, env: Record<string, string | undefined> = process.env): number | null {
+  for (const v of [env[`AI_MONTHLY_COST_LIMIT_USD_${plan.toUpperCase()}`], env.AI_MONTHLY_COST_LIMIT_USD]) {
+    if (v !== undefined && v.trim() !== "") {
+      const n = Number(v);
+      if (Number.isFinite(n) && n >= 0) return n;
+    }
+  }
+  return null;
+}
+
 export async function assertAiQuota(brandId: string) {
   const ws = await workspaceOf(brandId);
   const plan = PLANS[ws.plan as PlanId] ?? PLANS.starter;
   const u = await usage(ws.id);
   if (u.aiRuns >= plan.aiRunsPerMonth) throw new QuotaError(`Your ${plan.label} plan includes ${plan.aiRunsPerMonth} AI runs per month. Upgrade in Settings to keep going.`);
+  const limit = monthlyCostLimitUsd(ws.plan);
+  if (limit !== null) {
+    const { monthlyCostUsd } = await import("./ai/usage");
+    if ((await monthlyCostUsd(ws.id)) >= limit) {
+      throw new QuotaError("This organisation has reached its monthly AI spending limit. It resets at the start of next month; an owner can ask to raise it.");
+    }
+  }
 }
 
 export async function assertCanAdd(workspaceId: string, what: "brands" | "seats" | "socialAccounts") {
