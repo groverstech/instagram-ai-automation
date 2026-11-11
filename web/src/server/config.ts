@@ -1,5 +1,5 @@
 import "server-only";
-import { IMAGE_MODELS, IMAGE_QUALITIES, TEXT_MODELS } from "./ai/catalog";
+import { IMAGE_COMPLEXITIES, IMAGE_MODELS, IMAGE_QUALITIES, TEXT_MODELS } from "./ai/catalog";
 
 /**
  * Deployment configuration checks (ADR-002 in docs/ARCHITECTURE_DECISIONS.md).
@@ -139,8 +139,13 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   if (set(env.ANTHROPIC_MODEL) && !Object.hasOwn(TEXT_MODELS, env.ANTHROPIC_MODEL!.trim())) {
     err("ANTHROPIC_MODEL", `Unknown model. Use one of: ${Object.keys(TEXT_MODELS).join(", ")} (add others to src/server/ai/catalog.ts with their prices first).`);
   }
-  if (set(env.OPENAI_IMAGE_MODEL) && !(IMAGE_MODELS as readonly string[]).includes(env.OPENAI_IMAGE_MODEL!.trim())) {
-    err("OPENAI_IMAGE_MODEL", `Unknown image model. Use one of: ${IMAGE_MODELS.join(", ")}.`);
+  for (const k of ["OPENAI_IMAGE_MODEL", "OPENAI_IMAGE_EDIT_MODEL"] as const) {
+    if (set(env[k]) && !(IMAGE_MODELS as readonly string[]).includes(env[k]!.trim())) {
+      err(k, `Unknown image model. Use one of: ${IMAGE_MODELS.join(", ")} (gpt-image-1 was shut down on 2026-10-23).`);
+    }
+  }
+  if (set(env.OPENAI_IMAGE_COMPLEXITY) && !(IMAGE_COMPLEXITIES as readonly string[]).includes(norm(env.OPENAI_IMAGE_COMPLEXITY))) {
+    err("OPENAI_IMAGE_COMPLEXITY", `Use one of: ${IMAGE_COMPLEXITIES.join(", ")}.`);
   }
   if (set(env.OPENAI_IMAGE_QUALITY) && !(IMAGE_QUALITIES as readonly string[]).includes(norm(env.OPENAI_IMAGE_QUALITY))) {
     err("OPENAI_IMAGE_QUALITY", `Use one of: ${IMAGE_QUALITIES.join(", ")}.`);
@@ -155,13 +160,13 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   }
   // Prices and spending limits: non-negative numbers only. A typo must not silently zero a cost.
   for (const [k, v] of Object.entries(env)) {
-    if (!/^(AI_PRICE_|IMAGE_PRICE_USD|OPENAI_IMAGE_PRICE_|AI_MONTHLY_COST_LIMIT_USD)/.test(k) || !set(v)) continue;
+    if (!/^(AI_PRICE_|OPENAI_IMAGE_PRICE_|AI_MONTHLY_COST_LIMIT_USD)/.test(k) || !set(v)) continue;
     const n = Number(v);
     if (!Number.isFinite(n) || n < 0) err(k, "Must be a non-negative number (USD).");
   }
-  const imagesPriced = Object.keys(env).some((k) => /^(IMAGE_PRICE_USD|OPENAI_IMAGE_PRICE_OUTPUT_PER_MTOK)/.test(k) && set(env[k]));
-  if (imageProvider === "openai" && set(env.OPENAI_API_KEY) && !imagesPriced) {
-    warn("IMAGE_PRICE_USD", "No image prices configured: generated images are counted but recorded as unpriced (no cost estimate). See docs/AI_PROVIDERS.md.");
+  // Images are priced per token from reported usage; a flat per-image price is no longer used.
+  for (const k of Object.keys(env)) {
+    if (/^IMAGE_PRICE_USD/.test(k) && set(env[k])) warn(k, "No longer used: image costs are calculated per token from the usage OpenAI reports (docs/AI_PROVIDERS.md). Use OPENAI_IMAGE_PRICE_*_PER_MTOK or the ai_prices table for other rates.");
   }
 
   // Public URL: platforms fetch media from it, OAuth redirects use it.

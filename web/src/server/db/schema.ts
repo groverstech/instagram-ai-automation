@@ -544,7 +544,12 @@ export const usageEvents = pgTable(
     httpStatus: integer("http_status"),
     /** Units as reported by the provider: tokens (input, output, cache), web searches, images. */
     units: jsonb("units").$type<Record<string, number>>().notNull().default({}),
-    /** Estimated cost in USD; null when the units can't be priced (see priceSource). */
+    /** Request parameters that drive cost: image quality, resolution, complexity; text effort. */
+    params: jsonb("params").$type<Record<string, string>>().notNull().default({}),
+    /**
+     * **Estimated** cost in USD from the reported units and the rates in effect; null when the
+     * units can't be priced (see priceSource). Provider-confirmed amounts live in `ai_billing`.
+     */
     costUsd: real("cost_usd"),
     /** Where the price came from: provider list (dated), configuration, or "unpriced". */
     priceSource: text("price_source"),
@@ -560,6 +565,54 @@ export const usageEvents = pgTable(
 );
 
 /**
+ * Per-model rates (pricing.ts) that override the catalog's list prices without a code change: a
+ * negotiated contract or a list-price change. The latest row with effective_from <= now applies.
+ * `rates` are USD per million tokens (text models: input, output, cacheRead, cacheWrite5m,
+ * cacheWrite1h, webSearchPer1k; image models: textInput, textCachedInput, imageInput,
+ * imageCachedInput, imageOutput).
+ */
+export const aiPrices = pgTable(
+  "ai_prices",
+  {
+    id: id(),
+    provider: text("provider").$type<"anthropic" | "openai">().notNull(),
+    model: text("model").notNull(),
+    rates: jsonb("rates").$type<Record<string, number>>().notNull(),
+    /** Where the rates come from, e.g. "openai-list-2026-12-01" or "contract-2027". */
+    source: text("source").notNull(),
+    effectiveFrom: timestamp("effective_from", { withTimezone: true }).notNull(),
+    createdBy: text("created_by"),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("ai_prices_model_from").on(t.model, t.effectiveFrom)],
+);
+
+/**
+ * Provider-**confirmed** billing (billing.ts), imported by an operator from the providers' cost
+ * reports or invoices. Platform-level: providers bill the BrandPilot account as a whole, so these
+ * amounts are compared with the ledger's estimates for all organisations together and are never
+ * shown to a customer organisation.
+ */
+export const aiBilling = pgTable(
+  "ai_billing",
+  {
+    id: id(),
+    provider: text("provider").$type<"anthropic" | "openai">().notNull(),
+    /** Model the line is for; "" for a provider-wide amount. */
+    model: text("model").notNull().default(""),
+    periodStart: timestamp("period_start", { withTimezone: true }).notNull(),
+    periodEnd: timestamp("period_end", { withTimezone: true }).notNull(),
+    confirmedUsd: real("confirmed_usd").notNull(),
+    /** e.g. "openai-costs-report", "anthropic-cost-report", "invoice". */
+    source: text("source").notNull(),
+    reference: text("reference"),
+    importedBy: text("imported_by"),
+    importedAt: timestamp("imported_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("ai_billing_line").on(t.provider, t.model, t.periodStart, t.periodEnd, t.source)],
+);
+
+/**
  * Route overrides (routes.ts): pick a different model or parameters for one AI job, globally
  * (scope_id ""), for a plan, or for a brand. Validated against the model catalog when applied.
  */
@@ -571,7 +624,7 @@ export const aiRoutes = pgTable(
     scopeType: text("scope_type").$type<"global" | "plan" | "brand">().notNull(),
     scopeId: text("scope_id").notNull().default(""),
     model: text("model"),
-    params: jsonb("params").$type<{ effort?: "low" | "medium" | "high" | "xhigh" | "max"; quality?: "low" | "medium" | "high"; timeoutMs?: number; maxAttempts?: number }>(),
+    params: jsonb("params").$type<{ effort?: "low" | "medium" | "high" | "xhigh" | "max"; quality?: "low" | "medium" | "high" | "xhigh" | "max"; complexity?: "low" | "medium" | "high"; timeoutMs?: number; maxAttempts?: number }>(),
     active: boolean("active").notNull().default(true),
     updatedBy: text("updated_by"),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),

@@ -38,6 +38,8 @@ export type AttemptResult<T> = { value: T; usage: Usage; requestId?: string | nu
 export type Pricing = {
   price: (u: Usage) => Priced;
   units: (u: Usage) => Record<string, number>;
+  /** Request parameters that drive cost (quality, resolution, complexity, effort), recorded per attempt. */
+  params?: Record<string, string | undefined>;
 };
 
 const num = (v: string | undefined, d: number) => (v && /^\d+$/.test(v.trim()) ? Number(v.trim()) : d);
@@ -52,12 +54,15 @@ export function backoffMs(attempt: number, retryAfterMs?: number, env: Record<st
 
 export async function execute<T>(route: ResolvedRoute, pricing: Pricing, fn: (attempt: number) => Promise<AttemptResult<T>>): Promise<AttemptResult<T>> {
   const maxWait = num(process.env.AI_RETRY_MAX_WAIT_MS, 60_000);
+  const { refreshPriceOverrides } = await import("./pricing");
+  await refreshPriceOverrides();
+  const params = Object.fromEntries(Object.entries(pricing.params ?? {}).filter((e): e is [string, string] => typeof e[1] === "string" && e[1] !== ""));
   let total: Usage = {};
   let billed = false;
   for (let attempt = 1; ; attempt++) {
     const gate = circuitAllows(route.provider);
     if (!gate.ok) {
-      await recordAttempt({ route: route.key, provider: route.provider, model: route.model, kind: route.kind, attempt, outcome: "blocked", errorKind: "circuit_open" });
+      await recordAttempt({ route: route.key, provider: route.provider, model: route.model, kind: route.kind, params, attempt, outcome: "blocked", errorKind: "circuit_open" });
       throw markHandled(withTotal(new AIUnavailableError(route.provider, gate.retryInMs), total, billed));
     }
     const counter = aiContext().attempts;
@@ -72,6 +77,7 @@ export async function execute<T>(route: ResolvedRoute, pricing: Pricing, fn: (at
         provider: route.provider,
         model: r.usage.model ?? r.usage.imageModel ?? route.model,
         kind: route.kind,
+        params,
         attempt,
         outcome: "success",
         units: pricing.units(r.usage),
@@ -103,6 +109,7 @@ export async function execute<T>(route: ResolvedRoute, pricing: Pricing, fn: (at
         provider: route.provider,
         model: own.model ?? own.imageModel ?? route.model,
         kind: route.kind,
+        params,
         attempt,
         outcome: retry ? "retried" : c.kind === "refusal" || c.kind === "content_policy" ? "refused" : c.outcomeUnknown ? "unknown" : c.kind === "not_configured" ? "blocked" : "failed",
         errorKind: c.kind,

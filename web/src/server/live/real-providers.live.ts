@@ -6,7 +6,11 @@
  * as NOT RUN, never as passed. Keys are read from the server environment only and are never
  * written to output: the report is scanned for them before the run ends.
  *
- *   ANTHROPIC_API_KEY=… OPENAI_API_KEY=… IMAGE_PRICE_USD_1024X1536=… npm run test:live
+ *   ANTHROPIC_API_KEY=… OPENAI_API_KEY=… npm run test:live
+ *
+ * Each provider can be validated on its own: with only OPENAI_API_KEY, the image tests use a fixed
+ * creative concept instead of one written by Claude; with only ANTHROPIC_API_KEY, the text and
+ * vision tests run and the image tests are reported as not run.
  *
  * Behind an HTTPS proxy (e.g. a sandbox without direct DNS), also set NODE_USE_ENV_PROXY=1 so
  * Node's fetch uses HTTPS_PROXY.
@@ -94,29 +98,41 @@ afterAll(() => {
   for (const [k, v] of Object.entries(report)) console.log(`  ${v.status.toUpperCase().padEnd(8)} ${k}${v.reason ? ` (${v.reason})` : ""}`);
 });
 
-describe.skipIf(!HAS_OPENAI || !HAS_ANTHROPIC)("OpenAI image generation (real API; concepts come from Claude)", () => {
+/** A fixed concept, for validating OpenAI without Anthropic (normally Claude writes it). */
+const FIXED_CONCEPT = { title: "Winter glaze", headline: "Made for slow mornings", subline: "Small-batch stoneware", cta: "Shop the collection", layout: "hero_overlay", palette: { background: "#F3EDE4", foreground: "#2E4A3A", accent: "#B5643C" }, imagePrompt: "Deep forest-green stoneware mugs on a linen table, soft morning window light, negative space at the top", imageTreatment: "Warm, natural", rationale: "Fixed concept for provider validation" };
+
+describe.skipIf(!HAS_OPENAI)("OpenAI image generation (real API; concepts from Claude, or a fixed concept without an Anthropic key)", () => {
   it("generates an on-brand AI visual, stores it, and records image usage and cost", async () => {
-    const acc = await requireBrandForUser(sess(ownerId), brand.id, "editor");
     const t0 = Date.now();
-    const taskId = await jobs.startCreativeBatch(
-      acc,
-      [{ brief: "Winter glaze collection launch: deep forest-green stoneware mugs on a linen table, soft morning window light, cosy weekend hosting.", format: "instagram_post", style: "premium_editorial", count: 1, objective: "sales", visualSource: "ai" }],
-      { inline: true },
-    );
     const db = await getDb();
-    const [task] = await db.select().from(schema.aiTasks).where(eq(schema.aiTasks.id, taskId));
-    [aiCreative] = await db.select().from(schema.creatives).where(eq(schema.creatives.taskId, taskId));
-    expect(task.status, task.error ?? "").toBe("succeeded");
-    expect(aiCreative.imageError).toBeNull();
-    expect(aiCreative.imageProvider).toMatch(/^openai:/);
-    const raw = await storage.get(aiCreative.imagePath!);
+    let task: { status: string; error: string | null; costUsd: number | null } | null = null;
+    let taskId: string | null = null;
+    if (HAS_ANTHROPIC) {
+      const acc = await requireBrandForUser(sess(ownerId), brand.id, "editor");
+      taskId = await jobs.startCreativeBatch(
+        acc,
+        [{ brief: "Winter glaze collection launch: deep forest-green stoneware mugs on a linen table, soft morning window light, cosy weekend hosting.", format: "instagram_post", style: "premium_editorial", count: 1, objective: "sales", visualSource: "ai" }],
+        { inline: true },
+      );
+      [task] = await db.select().from(schema.aiTasks).where(eq(schema.aiTasks.id, taskId));
+      [aiCreative] = await db.select().from(schema.creatives).where(eq(schema.creatives.taskId, taskId));
+      expect(task!.status, task!.error ?? "").toBe("succeeded");
+    } else {
+      const { generateVisual } = await import("../creative/visuals");
+      const [c] = await db.insert(schema.creatives).values({ brandId: brand.id, format: "instagram_post", style: "premium_editorial", concept: FIXED_CONCEPT, visualSource: "ai" }).returning();
+      await generateVisual({ brandId: brand.id, userId: ownerId }, brand, c);
+      [aiCreative] = await db.select().from(schema.creatives).where(eq(schema.creatives.id, c.id));
+    }
+    expect(aiCreative!.imageError).toBeNull();
+    expect(aiCreative!.imageProvider).toMatch(/^openai:/);
+    const raw = await storage.get(aiCreative!.imagePath!);
     fs.writeFileSync(path.join(OUT, "ai-image-raw.png"), raw);
     const sharp = await sharpLib();
     const meta = await sharp(raw).metadata();
     expect([meta.width, meta.height]).toEqual([1024, 1536]); // portrait size for a 4:5 post
 
-    const runs = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.taskId, taskId));
-    const img = runs.filter((r) => r.agent === "design_generation");
+    const runs = await db.select().from(schema.agentRuns).where(eq(schema.agentRuns.brandId, brand.id));
+    const img = runs.filter((r) => r.agent === "design_generation" && (r.input as { creativeId?: string } | null)?.creativeId === aiCreative!.id);
     const usage = img.map((r) => r.usage as { images?: number; imageModel?: string; imageCostUsd?: number; unpricedImages?: number });
     expect(usage.reduce((n, u) => n + (u.images ?? 0), 0)).toBeGreaterThanOrEqual(1);
     expect(usage[0].imageModel).toBeTruthy();
@@ -127,7 +143,7 @@ describe.skipIf(!HAS_OPENAI || !HAS_ANTHROPIC)("OpenAI image generation (real AP
     const deltaE = paletteDistance(hex, brand.colors);
     record("openai.image_generation", {
       status: "passed",
-      metrics: { seconds: Math.round((Date.now() - t0) / 1000), size: `${meta.width}x${meta.height}`, model: usage[0].imageModel, images: usage.reduce((n, u) => n + (u.images ?? 0), 0), imageCostUsd: usage.reduce((n, u) => n + (u.imageCostUsd ?? 0), 0), unpricedImages: usage.reduce((n, u) => n + (u.unpricedImages ?? 0), 0), taskCostUsd: task.costUsd, dominantColour: hex, dominantDeltaEToPalette: deltaE },
+      metrics: { seconds: Math.round((Date.now() - t0) / 1000), size: `${meta.width}x${meta.height}`, model: usage[0].imageModel, images: usage.reduce((n, u) => n + (u.images ?? 0), 0), imageCostUsd: usage.reduce((n, u) => n + (u.imageCostUsd ?? 0), 0), unpricedImages: usage.reduce((n, u) => n + (u.unpricedImages ?? 0), 0), taskCostUsd: task?.costUsd ?? null, conceptFrom: HAS_ANTHROPIC ? "claude" : "fixed", dominantColour: hex, dominantDeltaEToPalette: deltaE },
     });
   }, 300_000);
 
@@ -218,13 +234,14 @@ describe("real error handling with invalid keys (no key needed)", () => {
 describe("live run preconditions", () => {
   it("reports providers that could not be tested instead of passing them", () => {
     const missing = [!HAS_OPENAI && "OPENAI_API_KEY", !HAS_ANTHROPIC && "ANTHROPIC_API_KEY"].filter(Boolean).join(" and ");
-    if (!HAS_OPENAI || !HAS_ANTHROPIC) for (const k of ["openai.image_generation", "render.all_formats_with_real_image", "openai.image_variation", "ledger.real_request_ids"]) record(k, { status: "not_run", reason: `${missing} not set` });
+    if (!HAS_OPENAI) for (const k of ["openai.image_generation", "render.all_formats_with_real_image", "openai.image_variation", "openai.image_edit"]) record(k, { status: "not_run", reason: "OPENAI_API_KEY not set" });
+    if (!HAS_OPENAI && !HAS_ANTHROPIC) record("ledger.real_request_ids", { status: "not_run", reason: `${missing} not set` });
     if (!HAS_ANTHROPIC) for (const k of ["anthropic.vision_review", "anthropic.copy_pack"]) record(k, { status: "not_run", reason: "ANTHROPIC_API_KEY not set" });
     expect(mockActive()).toBe(false);
   });
 });
 
-describe.skipIf(!HAS_OPENAI || !HAS_ANTHROPIC)("PR 4.1: image variations and the usage ledger (real APIs)", () => {
+describe.skipIf(!HAS_OPENAI)("PR 4.1: image variations and precision edits (real API)", () => {
   it("creates a variation of the real AI image through the edits endpoint", async () => {
     if (!aiCreative) return record("openai.image_variation", { status: "not_run", reason: "no AI image was generated earlier in this run" });
     const { aiVariation } = await import("../creative/visuals");
@@ -235,12 +252,32 @@ describe.skipIf(!HAS_OPENAI || !HAS_ANTHROPIC)("PR 4.1: image variations and the
     expect(after.imageError).toBeNull();
     expect(after.imagePath).not.toBe(before);
     fs.writeFileSync(path.join(OUT, "ai-image-variation.png"), await storage.get(after.imagePath!));
-    const [ev] = await db.select().from(schema.usageEvents).where(eq(schema.usageEvents.route, "image.edit"));
+    const [ev] = await db.select().from(schema.usageEvents).where(eq(schema.usageEvents.route, "image.variation"));
     expect(ev).toMatchObject({ provider: "openai", outcome: "success" });
     expect(ev.providerRequestId).toBeTruthy();
-    record("openai.image_variation", { status: "passed", metrics: { model: ev.model, requestId: ev.providerRequestId, latencyMs: ev.latencyMs, units: ev.units, costUsd: ev.costUsd, priceSource: ev.priceSource } });
+    expect(ev.costUsd).not.toBeNull(); // priced from the token usage OpenAI reported
+    record("openai.image_variation", { status: "passed", metrics: { model: ev.model, params: ev.params, requestId: ev.providerRequestId, latencyMs: ev.latencyMs, units: ev.units, costUsd: ev.costUsd, priceSource: ev.priceSource } });
+    aiCreative = after;
   }, 600_000);
 
+  it("makes a precision edit of the real AI image (GPT Image 2.6 Sunburst by default)", async () => {
+    if (!aiCreative?.imagePath) return record("openai.image_edit", { status: "not_run", reason: "no AI image was generated earlier in this run" });
+    const { aiEdit } = await import("../creative/visuals");
+    const before = aiCreative.imagePath;
+    await aiEdit({ brandId: brand.id, userId: ownerId }, brand, aiCreative, "make the linen tablecloth a warm terracotta colour");
+    const db = await getDb();
+    const [after] = await db.select().from(schema.creatives).where(eq(schema.creatives.id, aiCreative.id));
+    expect(after.imageError).toBeNull();
+    expect(after.imagePath).not.toBe(before);
+    fs.writeFileSync(path.join(OUT, "ai-image-edit.png"), await storage.get(after.imagePath!));
+    const [ev] = await db.select().from(schema.usageEvents).where(eq(schema.usageEvents.route, "image.edit"));
+    expect(ev).toMatchObject({ provider: "openai", outcome: "success" });
+    expect(ev.costUsd).not.toBeNull();
+    record("openai.image_edit", { status: "passed", metrics: { model: ev.model, params: ev.params, requestId: ev.providerRequestId, latencyMs: ev.latencyMs, units: ev.units, costUsd: ev.costUsd, priceSource: ev.priceSource } });
+  }, 600_000);
+});
+
+describe.skipIf(!HAS_OPENAI && !HAS_ANTHROPIC)("PR 4.1: the usage ledger (real APIs)", () => {
   it("records every real request in the usage ledger with the provider's request ID and a price source", async () => {
     const db = await getDb();
     const events = await db.select().from(schema.usageEvents);

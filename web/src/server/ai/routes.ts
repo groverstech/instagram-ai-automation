@@ -2,15 +2,28 @@ import "server-only";
 import { and, eq, inArray, or } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
 import { log } from "../log";
-import { DEFAULT_IMAGE_MODEL, DEFAULT_IMAGE_QUALITY, DEFAULT_TEXT_MODEL, IMAGE_QUALITIES, isImageModel, isTextModel, TEXT_MODELS, type ImageQuality } from "./catalog";
+import {
+  DEFAULT_IMAGE_EDIT_MODEL,
+  DEFAULT_IMAGE_MODEL,
+  DEFAULT_IMAGE_QUALITY,
+  DEFAULT_TEXT_MODEL,
+  IMAGE_COMPLEXITIES,
+  IMAGE_QUALITIES,
+  isImageModel,
+  isTextModel,
+  TEXT_MODELS,
+  type ImageComplexity,
+  type ImageQuality,
+} from "./catalog";
 
 /**
  * Named AI routes (docs/AI_PROVIDERS.md). Every AI call names the job it does; the route decides
  * provider, model and limits. Resolution, highest priority first:
  *   1. a database override for the brand, then for the workspace's plan, then global
  *      (`ai_routes` table; model and params validated against the catalog, invalid ones ignored);
- *   2. environment configuration (ANTHROPIC_MODEL, OPENAI_IMAGE_MODEL, OPENAI_IMAGE_QUALITY,
- *      AI_*_TIMEOUT_MS, AI_*_MAX_ATTEMPTS);
+ *   2. environment configuration (ANTHROPIC_MODEL; OPENAI_IMAGE_MODEL for generation and
+ *      variations, OPENAI_IMAGE_EDIT_MODEL for precision edits; OPENAI_IMAGE_QUALITY,
+ *      OPENAI_IMAGE_COMPLEXITY; AI_*_TIMEOUT_MS, AI_*_MAX_ATTEMPTS);
  *   3. the defaults below.
  * The agent's own effort is used unless an override sets one.
  */
@@ -37,13 +50,14 @@ export const ROUTES = {
   "competitor.analysis": { kind: "text", label: "Competitor analysis" },
   "analytics.insights": { kind: "text", label: "Analytics insights" },
   "image.generate": { kind: "image", label: "Image generation" },
-  "image.edit": { kind: "image", label: "Image variations" },
+  "image.variation": { kind: "image", label: "Image variations" },
+  "image.edit": { kind: "image", label: "Precision image edits" },
 } as const satisfies Record<string, RouteDef>;
 
 export type RouteKey = keyof typeof ROUTES;
 export const ROUTE_KEYS = Object.keys(ROUTES) as RouteKey[];
 
-export type RouteOverrideParams = { effort?: Effort; quality?: ImageQuality; timeoutMs?: number; maxAttempts?: number };
+export type RouteOverrideParams = { effort?: Effort; quality?: ImageQuality; complexity?: ImageComplexity; timeoutMs?: number; maxAttempts?: number };
 
 export type ResolvedRoute = {
   key: RouteKey;
@@ -52,6 +66,8 @@ export type ResolvedRoute = {
   model: string;
   effort?: Effort;
   quality?: ImageQuality;
+  /** Image planning effort; unset = the API default (high). */
+  complexity?: ImageComplexity;
   timeoutMs: number;
   /** Attempts in the call, including the first. Retries are for transient failures only. */
   maxAttempts: number;
@@ -73,14 +89,18 @@ const posInt = (v: string | undefined, fallback: number) => (v && /^[1-9]\d*$/.t
 export function baseRoute(key: RouteKey, env: Env = process.env): ResolvedRoute {
   const def: RouteDef = ROUTES[key];
   if (def.kind === "image") {
-    const envModel = env.OPENAI_IMAGE_MODEL?.trim();
+    // Precision edits default to Sunburst; generation and variations to Flare.
+    const precise = key === "image.edit";
+    const envModel = (precise ? env.OPENAI_IMAGE_EDIT_MODEL : env.OPENAI_IMAGE_MODEL)?.trim();
     const envQuality = env.OPENAI_IMAGE_QUALITY?.trim().toLowerCase();
+    const envComplexity = env.OPENAI_IMAGE_COMPLEXITY?.trim().toLowerCase();
     return {
       key,
       kind: "image",
       provider: "openai",
-      model: envModel && isImageModel(envModel) ? envModel : DEFAULT_IMAGE_MODEL,
+      model: envModel && isImageModel(envModel) ? envModel : precise ? DEFAULT_IMAGE_EDIT_MODEL : DEFAULT_IMAGE_MODEL,
       quality: envQuality && (IMAGE_QUALITIES as readonly string[]).includes(envQuality) ? (envQuality as ImageQuality) : DEFAULT_IMAGE_QUALITY,
+      ...(envComplexity && (IMAGE_COMPLEXITIES as readonly string[]).includes(envComplexity) ? { complexity: envComplexity as ImageComplexity } : {}),
       timeoutMs: posInt(env.AI_IMAGE_TIMEOUT_MS, 180_000),
       maxAttempts: posInt(env.AI_IMAGE_MAX_ATTEMPTS, 2),
       retryUnknown: false,
@@ -121,6 +141,10 @@ export function applyOverride(r: ResolvedRoute, o: { model?: string | null; para
   if (p.quality !== undefined) {
     if (r.kind === "image" && (IMAGE_QUALITIES as readonly string[]).includes(p.quality)) out.quality = p.quality;
     else bad.push("quality");
+  }
+  if (p.complexity !== undefined) {
+    if (r.kind === "image" && (IMAGE_COMPLEXITIES as readonly string[]).includes(p.complexity)) out.complexity = p.complexity;
+    else bad.push("complexity");
   }
   if (p.timeoutMs !== undefined) {
     if (Number.isInteger(p.timeoutMs) && p.timeoutMs >= 5_000 && p.timeoutMs <= 3_600_000) out.timeoutMs = p.timeoutMs;

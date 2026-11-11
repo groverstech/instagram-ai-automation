@@ -224,8 +224,9 @@ Full reference, including routing, retries, prices and the usage ledger:
 | `AI_PRICE_INPUT_PER_MTOK`, `AI_PRICE_OUTPUT_PER_MTOK`, `AI_PRICE_WEB_SEARCH_PER_1K` | Override the Anthropic list prices (a negotiated contract) |
 | `VOYAGE_API_KEY` | Semantic embeddings for brand memory (local hashing otherwise) |
 | `IMAGE_PROVIDER`, `OPENAI_API_KEY` | AI images (`IMAGE_PROVIDER=none` disables them; brand-photo and type-led creatives still work) |
-| `OPENAI_IMAGE_MODEL`, `OPENAI_IMAGE_QUALITY` | Image model (default `gpt-image-1`) and quality (`high`) |
-| `IMAGE_PRICE_USD`, `IMAGE_PRICE_USD_<SIZE>`, `IMAGE_PRICE_USD_<QUALITY>_<SIZE>`, `OPENAI_IMAGE_PRICE_*_PER_MTOK` | Image prices for cost estimates. Unset means images are counted but shown as unpriced, never guessed. |
+| `OPENAI_IMAGE_MODEL`, `OPENAI_IMAGE_EDIT_MODEL` | Image models: `gpt-image-2.6-flare` (default, generation and variations), `gpt-image-2.6-sunburst` (default, precision edits) |
+| `OPENAI_IMAGE_QUALITY`, `OPENAI_IMAGE_COMPLEXITY` | Quality (default `high`) and optional complexity |
+| `OPENAI_IMAGE_PRICE_*_PER_MTOK` | Contract rates per 1M tokens. Unset: OpenAI list prices from the catalog. Rates can also be changed without a redeploy in the `ai_prices` table ([AI_PROVIDERS.md](AI_PROVIDERS.md#how-costs-are-calculated)). `IMAGE_PRICE_USD*` is retired and ignored. |
 | `AI_TEXT_TIMEOUT_MS`, `AI_IMAGE_TIMEOUT_MS`, `AI_MAX_ATTEMPTS`, `AI_IMAGE_MAX_ATTEMPTS`, `AI_RETRY_BASE_MS`, `AI_RETRY_MAX_WAIT_MS`, `AI_CIRCUIT_THRESHOLD`, `AI_CIRCUIT_OPEN_MS` | Timeouts, retries and the circuit breaker (defaults in AI_PROVIDERS.md) |
 | `AI_MONTHLY_COST_LIMIT_USD`, `AI_MONTHLY_COST_LIMIT_USD_<PLAN>` | Optional monthly AI spending limit per organisation, from estimated cost; unset means none |
 | `LIVE_REPORT_DIR` | Where `npm run test:live` writes its report; Settings shows the result |

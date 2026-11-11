@@ -8,7 +8,7 @@ Introduced in PR 4.1. Status of real-provider validation is at the end.
 | Provider | Used for | Routes |
 |---|---|---|
 | **Anthropic Claude** | Brand intelligence and Brand DNA, strategy, personas and pillars, campaigns and calendars, copy, the marketing advisor, web research, visual brand review | every text and research route |
-| **OpenAI GPT image models** | Creative Studio images, campaign visuals, image variations | `image.generate`, `image.edit` |
+| **OpenAI GPT Image 2.6** | Creative Studio images and campaign visuals (Flare), image variations (Flare), precision edits (Sunburst) | `image.generate`, `image.variation`, `image.edit` |
 
 Brand colours, fonts, logo and text are always composited by our renderer, never drawn by the image
 model. Generated images are stored through the storage abstraction (`src/server/storage`), so they
@@ -30,20 +30,23 @@ agent  ──llm().structured({ route, … })──▶  routes.ts  (model, effor
 | Module | Role |
 |---|---|
 | `src/server/ai/catalog.ts` | **The only place models and prices live.** Text models with Anthropic list prices (dated), their capabilities (server-side refusal fallbacks, web search tool), and the image models the OpenAI adapter may use. |
-| `src/server/ai/routes.ts` | Named jobs (17 routes) and how each resolves to a provider, model, effort or quality, timeout and attempts. |
+| `src/server/ai/routes.ts` | Named jobs (18 routes) and how each resolves to a provider, model, effort or quality, timeout and attempts. |
 | `src/server/ai/call.ts` | The executor: circuit breaker, attempts, retries, the per-attempt usage ledger. |
 | `src/server/ai/errors.ts` | One error classification for both providers, driving retries, the circuit and user messages. |
 | `src/server/ai/llm.ts` | Anthropic adapter (official SDK) and the demo-mode stand-ins. |
-| `src/server/ai/image.ts` | OpenAI images adapter (generation and edits) and the demo placeholder. |
-| `src/server/ai/pricing.ts` | Cost estimates from the catalog and configuration; anything unknown is unpriced. |
+| `src/server/ai/image.ts` | OpenAI images adapter (generation, variations, edits) and the demo placeholder. |
+| `src/server/ai/pricing.ts` | Cost estimates from reported usage at the rates in effect (price table, configuration, catalog list prices); anything unknown is unpriced. |
+| `src/server/ai/billing.ts` | Provider-confirmed billing (imported by operators) and its reconciliation with the estimates. |
 | `src/server/ai/usage.ts` | The usage ledger and monthly summaries per organisation and brand. |
 | `src/server/ai/context.ts` | Attributes each attempt to its organisation, brand, user, task and run (set by `runAgent`). |
 | `src/server/ai/overview.ts` | Settings → AI providers & usage. |
 
 ### Routes
 
-Every AI call names its job. Text routes default to **Claude Opus 5.5** (the approved plan); images
-default to `gpt-image-1` at `high` quality.
+Every AI call names its job. Text routes default to **Claude Opus 5.5** (the approved plan). Images
+default to **GPT Image 2.6 Flare** for generation and variations, and **GPT Image 2.6 Sunburst** for
+precision edits, at `high` quality. (`gpt-image-1` was shut down on 2026-10-23 and is no longer
+accepted.)
 
 | Route | Job |
 |---|---|
@@ -52,11 +55,13 @@ default to `gpt-image-1` at `high` quality.
 | `campaign.plan`, `content.calendar`, `content.copy`, `content.ideas` | Campaigns, calendars, captions, ideas |
 | `creative.concepts`, `creative.review` | Creative concepts; Claude vision review of the rendered creative |
 | `competitor.research`, `competitor.analysis`, `analytics.insights` | Competitor research and analysis, analytics insights |
-| `image.generate`, `image.edit` | Image generation and variations |
+| `image.generate`, `image.variation` | Image generation; variations of an existing image (rapid creative iteration) |
+| `image.edit` | Precision edits: change only what the instruction names |
 
 **Resolution, highest priority first:**
 1. A database override in `ai_routes`: for the brand, then for the organisation's plan, then global.
-2. Environment: `ANTHROPIC_MODEL`, `OPENAI_IMAGE_MODEL`, `OPENAI_IMAGE_QUALITY`, `AI_TEXT_TIMEOUT_MS`,
+2. Environment: `ANTHROPIC_MODEL`, `OPENAI_IMAGE_MODEL` (generation and variations),
+   `OPENAI_IMAGE_EDIT_MODEL` (edits), `OPENAI_IMAGE_QUALITY`, `OPENAI_IMAGE_COMPLEXITY`, `AI_TEXT_TIMEOUT_MS`,
    `AI_IMAGE_TIMEOUT_MS`, `AI_MAX_ATTEMPTS`, `AI_IMAGE_MAX_ATTEMPTS`.
 3. Code defaults.
 
@@ -119,22 +124,73 @@ records:
 `agent_runs` keeps one row per agent call with the total over all attempts, and now records its
 organisation (`workspace_id`, backfilled by the migration).
 
-**Prices**, all from `catalog.ts` or configuration, never guessed:
+### Image models (verified)
+
+Verified against OpenAI's official documentation (developers.openai.com: model pages, pricing page and
+image generation guide) on **2026-11-11**:
+
+| Model ID | OpenAI's description | Used for here |
+|---|---|---|
+| `gpt-image-2.6-flare` (default) | Image generation and editing for fast iteration | `image.generate`, `image.variation` |
+| `gpt-image-2.6-sunburst` (default for edits) | For detailed visual work | `image.edit` |
+| `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst` | Previous generation, same rates | Available by configuration |
+
+Both 2.6 models are served by the Images API endpoints we call: `v1/images/generations` and
+`v1/images/edits` (variations and edits send the current image there). Quality is `low`, `medium`,
+`high`, `xhigh` or `max` (default `high`). `complexity` (`low`, `medium`, `high`, default `high`) is sent
+only when configured and has no separate fee.
+
+### How costs are calculated
+
+Every cost is calculated **from the usage the provider reports in each response**, at the rates in
+effect. There is **no universal per-image price**: a GPT Image call costs
+text input tokens + image input tokens (edits and variations) + image output tokens, and the number of
+output tokens depends on the quality, size and content. Each `usage_events` row records:
+- the units: text input, image input, image output and any text output tokens;
+- the parameters: quality, size and complexity (`params`);
+- the model, the provider's request ID and the price source.
+
+If a response reports no usage, the attempt is recorded as **unpriced** rather than guessed.
+
+**Rates, highest priority first:**
 
 | Source | Covers | `price_source` |
 |---|---|---|
-| Anthropic list prices, retrieved 2026-11-10 from the pricing page | Opus 5.5, Sonnet 5.5, Haiku 5.5 (including its higher rate above 100k prompt tokens): input, output, cache reads, 5-minute and 1-hour cache writes; web search $10 per 1,000 | `anthropic-list-2026-11-10` |
-| `AI_PRICE_INPUT_PER_MTOK`, `AI_PRICE_OUTPUT_PER_MTOK`, `AI_PRICE_WEB_SEARCH_PER_1K` | A negotiated Anthropic contract | `config` |
-| `OPENAI_IMAGE_PRICE_TEXT_INPUT_PER_MTOK`, `_IMAGE_INPUT_PER_MTOK`, `_OUTPUT_PER_MTOK` | OpenAI image tokens, as reported per response | `config:tokens` |
-| `IMAGE_PRICE_USD_<QUALITY>_<SIZE>`, `IMAGE_PRICE_USD_<SIZE>`, `IMAGE_PRICE_USD` | OpenAI per image | `config:per-image` |
-| none of the above, a fallback model not in the catalog, or a demo call | — | `unpriced`, `unknown`, `demo` |
+| **Price table** `ai_prices` (migration 0009): one row per model with the rates and the date they take effect | Any catalogued model, e.g. negotiated contract rates. Changes apply within a minute, **without a code change or redeploy**. | `ai_prices:<source>` |
+| Environment: `AI_PRICE_INPUT_PER_MTOK`, `AI_PRICE_OUTPUT_PER_MTOK`, `AI_PRICE_WEB_SEARCH_PER_1K`; `OPENAI_IMAGE_PRICE_TEXT_INPUT_PER_MTOK`, `_IMAGE_INPUT_PER_MTOK`, `_OUTPUT_PER_MTOK` | Contract rates set per deployment | `config` |
+| **Anthropic list prices**, retrieved 2026-11-10 | Opus 5.5, Sonnet 5.5, Haiku 5.5 (including its higher rate above 100k prompt tokens): input, output, cache reads, 5-minute and 1-hour cache writes; web search $10 per 1,000 | `anthropic-list-2026-11-10` |
+| **OpenAI list prices**, retrieved 2026-11-11 from the official pricing page | GPT Image 2.6 and 2.5 Flare and Sunburst, per 1M tokens: text input $5, image input $8, image output $30 | `openai-list-2026-11-11` |
+| none of the above, a fallback model not in the catalog, or no usage reported | — | `unpriced` |
 
-No OpenAI prices are built in: OpenAI's pricing couldn't be verified when this was written. Until
-image prices are configured, images are counted and shown as **unpriced**.
+Notes:
+- OpenAI publishes cached-input rates (text $1.25, image $2), but they apply only through the Responses
+  API, not to direct Images API calls, so they're not used here.
+- OpenAI publishes no rate for image-model text output. If a response reports any, it's recorded and
+  the price source says `; text output unpriced`.
+- A price-table row example (rates in USD per 1M tokens; `textInput`, `imageInput`, `imageOutput` for
+  images; `input`, `output`, `cacheRead`, `cacheWrite5m`, `cacheWrite1h`, `webSearchPer1k` for text):
+  ```sql
+  insert into ai_prices (id, provider, model, rates, source, effective_from)
+  values (gen_random_uuid()::text, 'openai', 'gpt-image-2.6-flare',
+          '{"textInput": 4, "imageInput": 6.4, "imageOutput": 24}', 'contract-2027', '2027-01-01');
+  ```
+  Rows are never edited in place: a new row with a later `effective_from` supersedes the previous one,
+  so past estimates stay explainable.
 
-**These are estimates for budgets and dashboards.** The providers' invoices are the source of truth.
-Reconciling the ledger against the providers' usage and cost reports (by request ID and totals) is
-part of real-provider validation; their admin APIs need separate admin keys.
+### Estimated versus confirmed costs
+
+- **Estimated:** the ledger cost above. It's shown in Settings and drives the optional spending limit.
+- **Confirmed:** what the provider actually billed, imported by an operator from the providers' cost
+  reports or invoices into `ai_billing`:
+  ```
+  npm run ai:billing -- import billing-2026-11.json   # [{ provider, model?, periodStart, periodEnd, usd, source, reference? }]
+  npm run ai:billing -- report 2026-11                # estimated vs confirmed per provider and model
+  ```
+  The report also lists unpriced attempts and attempts with an unknown outcome (they may be billed).
+  Providers bill the BrandPilot account as a whole, so confirmed amounts are **platform-level**: they're
+  compared with the estimates of all organisations together, for operators only, and never shown to a
+  customer organisation. Re-importing a line (same provider, model, period and source) updates it.
+  Fetching cost reports automatically needs provider admin keys (follow-up F11).
 
 **Limits and entitlements:**
 - The existing plan limit (AI runs per month) still applies.
@@ -148,7 +204,7 @@ part of real-provider validation; their admin APIs need separate admin keys.
 - the mode (live or demo) and whether each provider's key is configured, never the value;
 - each provider's model and degraded state;
 - the live-validation status;
-- this month's requests by outcome, estimated cost and unpriced counts;
+- this month's requests by outcome, **estimated** cost and unpriced counts;
 - usage by model and by brand;
 - the spending limit;
 - which model each job uses.
@@ -164,14 +220,16 @@ repository, logs or the browser. `npm run check:secrets` scans client bundles.
 | `ANTHROPIC_MODEL` | `claude-opus-5-5` | Default text model (catalogued models only) |
 | `OPENAI_API_KEY` | — | Images. Without it, AI images are unavailable; brand-photo and type-led creatives still work. |
 | `IMAGE_PROVIDER` | `openai` | `none` turns AI images off |
-| `OPENAI_IMAGE_MODEL` | `gpt-image-1` | `gpt-image-1`, `gpt-image-1-mini`, `gpt-image-1.5`, `gpt-image-2` |
-| `OPENAI_IMAGE_QUALITY` | `high` | `low`, `medium`, `high` |
+| `OPENAI_IMAGE_MODEL` | `gpt-image-2.6-flare` | Generation and variations: `gpt-image-2.6-flare`, `gpt-image-2.6-sunburst`, `gpt-image-2.5-flare`, `gpt-image-2.5-sunburst` |
+| `OPENAI_IMAGE_EDIT_MODEL` | `gpt-image-2.6-sunburst` | Precision edits (same choices) |
+| `OPENAI_IMAGE_QUALITY` | `high` | `low`, `medium`, `high`, `xhigh`, `max` |
+| `OPENAI_IMAGE_COMPLEXITY` | (not sent: OpenAI's default, `high`) | `low`, `medium`, `high` |
 | `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL` | public APIs | Gateways or proxies; https in staging and production |
 | `AI_TEXT_TIMEOUT_MS` / `AI_IMAGE_TIMEOUT_MS` | 600000 / 180000 | Per attempt |
 | `AI_MAX_ATTEMPTS` / `AI_IMAGE_MAX_ATTEMPTS` | 3 / 2 | Attempts per call |
 | `AI_RETRY_BASE_MS` / `AI_RETRY_MAX_WAIT_MS` | 1000 / 60000 | Backoff base; longest `retry-after` honoured in-call |
 | `AI_CIRCUIT_THRESHOLD` / `AI_CIRCUIT_OPEN_MS` | 5 / 30000 | Circuit breaker |
-| Price variables | — | See the table above |
+| Price variables | — | See "How costs are calculated". The retired `IMAGE_PRICE_USD*` variables are ignored, with a warning at boot. |
 | `AI_MONTHLY_COST_LIMIT_USD`, `AI_MONTHLY_COST_LIMIT_USD_<PLAN>` | — | Optional spending limit |
 | `LIVE_REPORT_DIR` | — | Where `test:live` writes `report.json`; Settings shows it |
 | `AI_PROVIDER=mock` | — | Demo mode (refused in production) |
@@ -191,19 +249,20 @@ repository, logs or the browser. `npm run check:secrets` scans client bundles.
 
 | Suite | What it proves | Status |
 |---|---|---|
-| `ai-providers.test.ts` (25 tests) | The real adapters with the network intercepted: success, usage and cost recording, request IDs, cache pricing, invalid credentials, rate limits with `retry-after`, too-long waits, quota, overload, timeouts, refusals, invalid output, circuit breaker, routing and overrides, Haiku without fallbacks, image pricing sources, image generation and variations, OpenAI errors, usage isolation between organisations, spending limits, demo mode never calling a provider, who may see the usage view | Passing, in CI |
+| `ai-providers.test.ts` (31 tests) | The real adapters with the network intercepted: success, usage and cost recording, request IDs, cache pricing, invalid credentials, rate limits with `retry-after`, too-long waits, quota, overload, timeouts, refusals, invalid output, circuit breaker, routing and overrides, Haiku without fallbacks, default image models, per-token image pricing (list, configuration, price table by effective date), image generation, variations (Flare) and edits (Sunburst), OpenAI errors, estimated vs confirmed billing reconciliation, usage isolation between organisations, spending limits, demo mode never calling a provider, who may see the usage view | Passing, in CI |
 | `claude-integration`, `strategist-claude`, `creative-providers` tests | Request shapes and accounting through real agent flows (intercepted) | Passing, in CI |
-| `npm run test:live` | **Real** calls: image generation and all formats, image variations, vision review, copy, invalid keys, ledger request IDs | **Pending: no production credentials yet.** Never runs in CI. |
+| `npm run test:live` | **Real** calls: image generation and all formats, image variations, precision edits, vision review, copy, invalid keys, ledger request IDs | **Pending: no production credentials yet.** Never runs in CI. |
 
 ## Real-provider validation: pending
 
-No Anthropic or OpenAI production keys have been configured, so **no real generation has been
-run**. Every result above comes from intercepted providers or demo mode, and none of it is
+No Anthropic or OpenAI keys have been configured yet (staging first, then production), so **no real
+generation has been run**. Every result above comes from intercepted providers or demo mode, and none of it is
 evidence of real output quality. When keys are configured on a server:
-1. `LIVE_REPORT_DIR=/path npm run test:live` (real, paid calls: about one image, one variation and a
-   few Claude calls).
+1. `LIVE_REPORT_DIR=/path npm run test:live` (real, paid calls: about one image, one variation, one
+   edit and a few Claude calls). Each provider can be validated on its own: see `docs/DEMO.md`.
 2. Manual runs of the creative and strategist flows (M1–M9 in `CREATIVE_STUDIO_REAL_AI_TEST_PLAN.md`),
    with screenshots.
-3. Reconcile the ledger against the providers' usage reports (target: within 5%).
+3. Import the providers' cost reports for the period and run `npm run ai:billing -- report <YYYY-MM>`
+   (target: estimates within 5% of confirmed).
 
 Report these separately from PR 4.1's automated results.

@@ -16,6 +16,7 @@ export type AttemptRecord = {
   provider: string;
   model?: string | null;
   kind: "text" | "research" | "image";
+  params?: Record<string, string>;
   attempt: number;
   outcome: UsageOutcome;
   errorKind?: string | null;
@@ -41,6 +42,7 @@ export async function recordAttempt(r: AttemptRecord) {
       provider: r.provider,
       model: r.model ?? null,
       kind: r.kind,
+      params: r.params ?? {},
       attempt: r.attempt,
       outcome: r.outcome,
       errorKind: r.errorKind ?? null,

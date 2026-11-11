@@ -64,6 +64,8 @@ export type Usage = {
   imageTextInputTokens?: number;
   imageImageInputTokens?: number;
   imageOutputTokens?: number;
+  imageOutputImageTokens?: number;
+  imageOutputTextTokens?: number;
   /** Estimated image cost in USD (from configured prices); absent when unpriced. */
   imageCostUsd?: number;
   /** Images generated without a configured price: counted, not priced. */

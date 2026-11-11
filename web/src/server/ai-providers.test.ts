@@ -93,10 +93,11 @@ const { runAgent } = await import("./agents/orchestrator");
 const { resetCircuits, circuitStatus } = await import("./ai/circuit");
 const { usageSummary, monthlyCostUsd } = await import("./ai/usage");
 const { resolveRoute, baseRoute, ROUTE_KEYS } = await import("./ai/routes");
-const { textCost, imageCost } = await import("./ai/pricing");
+const { textCost, imageCost, setPriceOverrides, refreshPriceOverrides } = await import("./ai/pricing");
 const { TEXT_MODELS, IMAGE_MODELS } = await import("./ai/catalog");
 const { assertAiQuota, QuotaError } = await import("./quota");
 const { keyedHash } = await import("./crypto");
+const { importConfirmedBilling, reconcile } = await import("./ai/billing");
 
 const Out = z.object({ answer: z.string() });
 let wsId = "";
@@ -120,7 +121,7 @@ beforeEach(() => {
   delete process.env.AI_IMAGE_TIMEOUT_MS;
   delete process.env.AI_CIRCUIT_THRESHOLD;
   delete process.env.AI_CIRCUIT_OPEN_MS;
-  for (const k of Object.keys(process.env)) if (/^(IMAGE_PRICE_USD|OPENAI_IMAGE_PRICE_|AI_MONTHLY_COST_LIMIT_USD|AI_PRICE_)/.test(k)) delete process.env[k];
+  for (const k of Object.keys(process.env)) if (/^(OPENAI_IMAGE_PRICE_|OPENAI_IMAGE_MODEL|OPENAI_IMAGE_EDIT_MODEL|OPENAI_IMAGE_COMPLEXITY|AI_MONTHLY_COST_LIMIT_USD|AI_PRICE_)/.test(k)) delete process.env[k];
 });
 afterEach(() => resetCircuits());
 
@@ -325,7 +326,7 @@ describe("routing: models and parameters from configuration, not code", () => {
     expect(baseRoute("brand.qa", { ANTHROPIC_MODEL: "claude-unknown-9" })).toMatchObject({ model: "claude-opus-5-5", source: "default" });
     // Research needs the web search tool: Haiku isn't used for it.
     expect(baseRoute("strategy.research", { ANTHROPIC_MODEL: "claude-haiku-5-5" }).model).toBe("claude-opus-5-5");
-    expect(baseRoute("image.generate", { OPENAI_IMAGE_MODEL: "gpt-image-1.5", OPENAI_IMAGE_QUALITY: "medium" })).toMatchObject({ model: "gpt-image-1.5", quality: "medium" });
+    expect(baseRoute("image.generate", { OPENAI_IMAGE_MODEL: "gpt-image-2.5-flare", OPENAI_IMAGE_QUALITY: "medium" })).toMatchObject({ model: "gpt-image-2.5-flare", quality: "medium" });
   });
 
   it("database overrides: brand beats plan beats global; invalid values are ignored", async () => {
@@ -353,44 +354,101 @@ describe("routing: models and parameters from configuration, not code", () => {
 });
 
 describe("OpenAI images", () => {
-  const gen = (route: "generate" | "edit" = "generate") =>
+  const SRC = { data: Buffer.from(PNG, "base64"), mime: "image/png" };
+  const gen = (mode: "generate" | "variation" | "edit" = "generate") =>
     runAgent({ brandId, userId }, "design_generation", "image", null, async () => {
       const p = imageProvider()!;
-      const img = route === "edit" ? await p.edit("Same, warmer light", { data: Buffer.from(PNG, "base64"), mime: "image/png" }, "1024x1536") : await p.generate("A ceramic mug", "1024x1536");
+      const img = mode === "edit" ? await p.edit("Make the mug terracotta", SRC, "1024x1536") : mode === "variation" ? await p.variation("Same, warmer light", SRC, "1024x1536") : await p.generate("A ceramic mug", "1024x1536");
       return { data: img, usage: img.usage, provider: `openai:${img.model}` };
     });
+  // OpenAI list prices for GPT Image 2.6 (per 1M tokens, retrieved 2026-11-11): text in $5, image in $8, image out $30.
+  const listCost = (textIn: number, imageIn: number, imageOut: number) => (textIn * 5 + imageIn * 8 + imageOut * 30) / 1e6;
 
-  it("generates with the routed model and quality, and a hashed organisation identifier", async () => {
+  it("the default image models are GPT Image 2.6 Flare (generation) and Sunburst (edits); gpt-image-1 is gone", () => {
+    expect(baseRoute("image.generate", {}).model).toBe("gpt-image-2.6-flare");
+    expect(baseRoute("image.variation", {}).model).toBe("gpt-image-2.6-flare");
+    expect(baseRoute("image.edit", {}).model).toBe("gpt-image-2.6-sunburst");
+    expect(IMAGE_MODELS).not.toContain("gpt-image-1");
+    expect(baseRoute("image.generate", { OPENAI_IMAGE_MODEL: "gpt-image-1" }).model).toBe("gpt-image-2.6-flare");
+    expect(baseRoute("image.edit", { OPENAI_IMAGE_EDIT_MODEL: "gpt-image-2.6-flare", OPENAI_IMAGE_COMPLEXITY: "medium" })).toMatchObject({ model: "gpt-image-2.6-flare", complexity: "medium", source: "env" });
+  });
+
+  it("generates with the routed model and quality, a hashed organisation identifier, and a per-token cost from reported usage", async () => {
     openai = () => okImage();
     const out = await gen();
     expect(openaiCalls[0].url).toBe("https://api.openai.com/v1/images/generations");
-    expect(openaiCalls[0].body).toMatchObject({ model: "gpt-image-1", size: "1024x1536", quality: "high", n: 1, safety_identifier: keyedHash(`org:${wsId}`, 32) });
+    expect(openaiCalls[0].body).toMatchObject({ model: "gpt-image-2.6-flare", size: "1024x1536", quality: "high", n: 1, safety_identifier: keyedHash(`org:${wsId}`, 32) });
     expect(JSON.stringify(openaiCalls[0].body)).not.toContain(wsId);
     expect(openaiCalls[0].headers.authorization).toBe("Bearer sk-openai-test-not-a-real-key");
     const [ev] = await eventsOf(out.runId);
-    expect(ev).toMatchObject({ route: "image.generate", provider: "openai", model: "gpt-image-1", outcome: "success", providerRequestId: "req_img_ok", costUsd: null, priceSource: "unpriced" });
+    expect(ev).toMatchObject({ route: "image.generate", provider: "openai", model: "gpt-image-2.6-flare", outcome: "success", providerRequestId: "req_img_ok", priceSource: "openai-list-2026-11-11" });
+    expect(ev.costUsd).toBeCloseTo(listCost(50, 0, 4000), 9);
     expect(ev.units).toMatchObject({ images: 1, inputTokens: 50, textInputTokens: 50, outputTokens: 4000 });
-    expect((await runOf(out.runId)).usage).toMatchObject({ images: 1, unpricedImages: 1 });
+    expect(ev.params).toMatchObject({ quality: "high", size: "1024x1536" });
+    expect((await runOf(out.runId)).costUsd).toBeCloseTo(listCost(50, 0, 4000), 9);
   });
 
-  it("prices images only from configuration: per token, then per image by quality and size", async () => {
-    expect(imageCost({ size: "1024x1536", quality: "high", units: { images: 1, inputTokens: 50, outputTokens: 4000 } }, {}).source).toBe("unpriced");
-    expect(imageCost({ size: "1024x1536", quality: "high", units: { images: 1 } }, { IMAGE_PRICE_USD_HIGH_1024X1536: "0.25", IMAGE_PRICE_USD: "0.1" })).toEqual({ usd: 0.25, source: "config:per-image" });
-    expect(imageCost({ size: "1024x1536", quality: "high", units: { images: 1, inputTokens: 50, textInputTokens: 50, outputTokens: 4000 } }, { OPENAI_IMAGE_PRICE_TEXT_INPUT_PER_MTOK: "5", OPENAI_IMAGE_PRICE_OUTPUT_PER_MTOK: "40" })).toEqual({ usd: (50 * 5 + 4000 * 40) / 1e6, source: "config:tokens" });
-    process.env.IMAGE_PRICE_USD_1024X1536 = "0.2";
-    openai = () => okImage();
-    const out = await gen();
-    const [ev] = await eventsOf(out.runId);
-    expect(ev).toMatchObject({ costUsd: 0.2, priceSource: "config:per-image" });
-    expect((await runOf(out.runId)).costUsd).toBeCloseTo(0.2, 6);
+  it("pricing: from reported usage only, no universal per-image cost; configuration and the price table override list prices", () => {
+    const units = { images: 1, inputTokens: 300, textInputTokens: 60, imageInputTokens: 240, outputTokens: 4000 };
+    expect(imageCost({ model: "gpt-image-2.6-sunburst", units }, {})).toEqual({ usd: listCost(60, 240, 4000), source: "openai-list-2026-11-11" });
+    // No usage reported: unpriced rather than a guessed flat price.
+    expect(imageCost({ model: "gpt-image-2.6-flare", units: { images: 1 } }, {}).source).toBe("unpriced");
+    // Unknown model: unpriced.
+    expect(imageCost({ model: "gpt-image-9", units }, {}).source).toBe("unpriced");
+    // Negotiated rates in the environment.
+    expect(imageCost({ model: "gpt-image-2.6-flare", units }, { OPENAI_IMAGE_PRICE_OUTPUT_PER_MTOK: "24" })).toEqual({ usd: (60 * 5 + 240 * 8 + 4000 * 24) / 1e6, source: "config" });
+    // A reported text output is recorded and flagged (OpenAI publishes no rate for it).
+    expect(imageCost({ model: "gpt-image-2.6-flare", units: { ...units, textOutputTokens: 10 } }, {}).source).toBe("openai-list-2026-11-11; text output unpriced");
+    // The price table (ai_prices) beats everything, without a code change.
+    setPriceOverrides([{ model: "gpt-image-2.6-flare", rates: { textInput: 4, imageInput: 6, imageOutput: 20 }, source: "ai_prices:contract-2027" }]);
+    try {
+      expect(imageCost({ model: "gpt-image-2.6-flare", units }, { OPENAI_IMAGE_PRICE_OUTPUT_PER_MTOK: "24" })).toEqual({ usd: (60 * 4 + 240 * 6 + 4000 * 20) / 1e6, source: "ai_prices:contract-2027" });
+      expect(imageCost({ model: "gpt-image-2.6-sunburst", units }, {}).source).toBe("openai-list-2026-11-11");
+    } finally {
+      setPriceOverrides([]);
+    }
   });
 
-  it("variations go to the edits endpoint with the source image", async () => {
+  it("price table rows take effect from their date, read from the database", async () => {
+    const db = await getDb();
+    const now = new Date();
+    await db.insert(schema.aiPrices).values([
+      { provider: "openai", model: "gpt-image-2.6-flare", rates: { textInput: 4, imageInput: 6, imageOutput: 21 }, source: "past", effectiveFrom: new Date(now.getTime() - 86400_000) },
+      { provider: "openai", model: "gpt-image-2.6-flare", rates: { textInput: 1, imageInput: 1, imageOutput: 1 }, source: "future", effectiveFrom: new Date(now.getTime() + 86400_000) },
+    ]);
+    try {
+      await refreshPriceOverrides({ force: true });
+      openai = () => okImage();
+      const [ev] = await eventsOf((await gen()).runId);
+      expect(ev).toMatchObject({ priceSource: "ai_prices:past" });
+      expect(ev.costUsd).toBeCloseTo((50 * 4 + 4000 * 21) / 1e6, 9);
+    } finally {
+      await db.delete(schema.aiPrices);
+      await refreshPriceOverrides({ force: true });
+    }
+  });
+
+  it("variations: Flare on the edits endpoint with the source image, recorded as image.variation", async () => {
     openai = () => okImage();
+    const out = await gen("variation");
+    expect(openaiCalls[0].url).toBe("https://api.openai.com/v1/images/edits");
+    expect(openaiCalls[0].body).toMatchObject({ model: "gpt-image-2.6-flare", prompt: "Same, warmer light", size: "1024x1536", quality: "high", image: expect.stringMatching(/^file:image\/png:\d+$/) });
+    expect((await eventsOf(out.runId))[0]).toMatchObject({ route: "image.variation", model: "gpt-image-2.6-flare", outcome: "success" });
+  });
+
+  it("precision edits: Sunburst on the edits endpoint; image input tokens are priced at the image input rate", async () => {
+    openai = () =>
+      new Response(JSON.stringify({ created: 1, data: [{ b64_json: PNG }], usage: { input_tokens: 1100, input_tokens_details: { text_tokens: 100, image_tokens: 1000 }, output_tokens: 5000, output_tokens_details: { image_tokens: 5000, text_tokens: 0 } } }), {
+        status: 200,
+        headers: { "content-type": "application/json", "x-request-id": "req_img_edit" },
+      });
     const out = await gen("edit");
     expect(openaiCalls[0].url).toBe("https://api.openai.com/v1/images/edits");
-    expect(openaiCalls[0].body).toMatchObject({ model: "gpt-image-1", prompt: "Same, warmer light", size: "1024x1536", quality: "high", image: expect.stringMatching(/^file:image\/png:\d+$/) });
-    expect((await eventsOf(out.runId))[0]).toMatchObject({ route: "image.edit", outcome: "success" });
+    expect(openaiCalls[0].body).toMatchObject({ model: "gpt-image-2.6-sunburst", prompt: "Make the mug terracotta", image: expect.stringMatching(/^file:image\/png:\d+$/) });
+    const [ev] = await eventsOf(out.runId);
+    expect(ev).toMatchObject({ route: "image.edit", model: "gpt-image-2.6-sunburst", providerRequestId: "req_img_edit", priceSource: "openai-list-2026-11-11" });
+    expect(ev.units).toMatchObject({ textInputTokens: 100, imageInputTokens: 1000, imageOutputTokens: 5000 });
+    expect(ev.costUsd).toBeCloseTo(listCost(100, 1000, 5000), 9);
   });
 
   it("invalid key, exhausted quota and content policy are not retried; each is explained", async () => {
@@ -494,3 +552,47 @@ describe("AI providers & usage view: who may see it", () => {
   });
 });
 
+
+describe("estimated versus provider-confirmed billing (operators, platform-level)", () => {
+  const start = new Date("2030-01-01T00:00:00Z");
+  const end = new Date("2030-02-01T00:00:00Z");
+
+  it("compares ledger estimates of every organisation with imported confirmed amounts; demo usage is excluded", async () => {
+    const db = await getDb();
+    const at = new Date("2030-01-15T12:00:00Z");
+    const ev = (o: Partial<typeof schema.usageEvents.$inferInsert>) => ({ route: "image.generate", provider: "openai", kind: "image" as const, outcome: "success" as const, createdAt: at, ...o });
+    await db.insert(schema.usageEvents).values([
+      ev({ workspaceId: wsId, model: "gpt-image-2.6-flare", costUsd: 0.6, priceSource: "openai-list-2026-11-11" }),
+      ev({ workspaceId: otherWs, model: "gpt-image-2.6-flare", costUsd: 0.4, priceSource: "openai-list-2026-11-11" }),
+      ev({ workspaceId: wsId, model: "gpt-image-2.6-sunburst", costUsd: null, priceSource: "unpriced", outcome: "unknown", errorKind: "timeout" }),
+      ev({ workspaceId: wsId, route: "brand.qa", provider: "anthropic", kind: "text", model: "claude-opus-5-5", costUsd: 2, priceSource: "anthropic-list-2026-11-10" }),
+      ev({ workspaceId: wsId, provider: "mock", model: "mock-image", costUsd: 0 }),
+    ]);
+    await importConfirmedBilling(
+      [
+        { provider: "openai", model: "gpt-image-2.6-flare", periodStart: "2030-01-01", periodEnd: "2030-02-01", usd: 0.95, source: "openai-costs-api", reference: "inv-1" },
+        { provider: "anthropic", periodStart: "2030-01-01", periodEnd: "2030-02-01", usd: 2.1, source: "invoice" },
+      ],
+      "test",
+    );
+    // Re-importing the same line updates it rather than double counting.
+    await importConfirmedBilling([{ provider: "openai", model: "gpt-image-2.6-flare", periodStart: "2030-01-01", periodEnd: "2030-02-01", usd: 1.0, source: "openai-costs-api" }], "test");
+    const rows = await reconcile(start, end);
+    expect(rows.find((r) => r.provider === "mock")).toBeUndefined();
+    const flare = rows.find((r) => r.model === "gpt-image-2.6-flare")!;
+    expect(flare).toMatchObject({ provider: "openai", confirmedUsd: 1 });
+    expect(flare.estimatedUsd).toBeCloseTo(1, 9); // both organisations
+    expect(flare.difference).toBeCloseTo(0, 9);
+    expect(rows.find((r) => r.model === "gpt-image-2.6-sunburst")).toMatchObject({ estimatedUsd: 0, unpricedAttempts: 1, unknownOutcomeAttempts: 1, confirmedUsd: null });
+    const anthropicTotal = rows.find((r) => r.provider === "anthropic" && r.model === "")!;
+    expect(anthropicTotal.confirmedUsd).toBeCloseTo(2.1, 9);
+    expect(anthropicTotal.estimatedUsd).toBeCloseTo(2, 9);
+    expect(anthropicTotal.difference).toBeCloseTo((2 - 2.1) / 2.1, 9);
+  });
+
+  it("rejects malformed billing lines", async () => {
+    await expect(importConfirmedBilling([{ provider: "openai", periodStart: "2030-01-01", periodEnd: "2029-12-01", usd: 1, source: "x" }], "test")).rejects.toThrow(/periodEnd must be after/);
+    await expect(importConfirmedBilling([{ provider: "stability", periodStart: "2030-01-01", periodEnd: "2030-02-01", usd: 1, source: "x" }], "test")).rejects.toThrow(/Line 1: provider/);
+    await expect(importConfirmedBilling([{ provider: "openai", periodStart: "2030-01-01", periodEnd: "2030-02-01", usd: -1, source: "x" }], "test")).rejects.toThrow(/Line 1: usd/);
+  });
+});

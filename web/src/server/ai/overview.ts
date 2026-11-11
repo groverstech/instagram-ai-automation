@@ -67,8 +67,13 @@ export async function aiOverviewFor(session: SessionUser, workspaceId: string): 
   const demo = mockActive();
   const text = baseRoute("brand.profile");
   const image = baseRoute("image.generate");
+  const imageEdit = baseRoute("image.edit");
   const imageOn = (process.env.IMAGE_PROVIDER ?? "openai").trim().toLowerCase() !== "none";
-  const { imagesPriced } = await import("./pricing");
+  const { imageRates, refreshPriceOverrides, textCost } = await import("./pricing");
+  await refreshPriceOverrides();
+  const { imageModelLabel } = await import("./image");
+  const textSource = textCost({ model: text.model, inputTokens: 1 }).source;
+  const imageSource = imageRates(image.model)?.source ?? "unpriced";
   return {
     mode: demo ? "demo" : "production",
     providers: [
@@ -78,16 +83,16 @@ export async function aiOverviewFor(session: SessionUser, workspaceId: string): 
         purpose: "Brand intelligence, strategy, campaigns, copy, advisor, research and visual review",
         configured: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
         model: TEXT_MODELS[text.model]?.label ?? text.model,
-        detail: "Prices: Anthropic list prices",
+        detail: `Prices: ${priceLabel(textSource)}`,
         circuit: circuitStatus("anthropic").state,
       },
       {
         id: "openai",
         label: "OpenAI images",
-        purpose: "Creative Studio images and variations",
+        purpose: "Creative Studio images, variations and precision edits",
         configured: imageOn && Boolean(process.env.OPENAI_API_KEY),
-        model: imageOn ? image.model : null,
-        detail: !imageOn ? "Turned off (IMAGE_PROVIDER=none)" : `Quality: ${image.quality} · ${imagesPriced() ? "prices configured" : "no prices configured: images are unpriced"}`,
+        model: imageOn ? `${imageModelLabel(image.model)} (generation, variations) · ${imageModelLabel(imageEdit.model)} (edits)` : null,
+        detail: !imageOn ? "Turned off (IMAGE_PROVIDER=none)" : `Quality: ${image.quality} · Prices: ${priceLabel(imageSource)}, per token from reported usage`,
         circuit: circuitStatus("openai").state,
       },
     ],
@@ -100,4 +105,13 @@ export async function aiOverviewFor(session: SessionUser, workspaceId: string): 
     live: liveValidation(),
     pricesRetrieved: ANTHROPIC_PRICES_RETRIEVED,
   };
+}
+
+/** "anthropic-list-2026-11-10" → "Anthropic list prices (retrieved 2026-11-10)", etc. */
+export function priceLabel(source: string): string {
+  const m = /^(anthropic|openai)-list-(\d{4}-\d{2}-\d{2})$/.exec(source);
+  if (m) return `${m[1] === "anthropic" ? "Anthropic" : "OpenAI"} list prices (retrieved ${m[2]})`;
+  if (source.startsWith("ai_prices:")) return `rates from the price table (${source.slice(10)})`;
+  if (source === "config") return "rates from server configuration";
+  return "not priced";
 }

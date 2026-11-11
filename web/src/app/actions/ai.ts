@@ -1,6 +1,6 @@
 "use server";
 import { audit } from "@/server/audit";
-import { aiVariation, pruneCreativeFiles } from "@/server/creative/visuals";
+import { aiEdit, aiVariation, pruneCreativeFiles } from "@/server/creative/visuals";
 import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
@@ -119,6 +119,18 @@ export async function imageVariationAction(brandId: string, creativeId: string, 
   const dir = z.string().max(300, "Keep the direction under 300 characters.").parse(direction ?? "");
   return aiAction(brandId, "ai_heavy", async ({ brand, scope }) => {
     await aiVariation(scope, brand, await ownCreative(brandId, creativeId), dir);
+    revalidatePath("/creative-studio");
+  });
+}
+
+/**
+ * A precise edit of the creative's AI image (OpenAI image edits, GPT Image 2.6 Sunburst by
+ * default): changes what the instruction names, keeps everything else. Editors only; heavy AI.
+ */
+export async function imageEditAction(brandId: string, creativeId: string, instruction: string) {
+  const what = z.string().trim().min(3, "Describe the change you want.").max(300, "Keep the instruction under 300 characters.").parse(instruction ?? "");
+  return aiAction(brandId, "ai_heavy", async ({ brand, scope }) => {
+    await aiEdit(scope, brand, await ownCreative(brandId, creativeId), what);
     revalidatePath("/creative-studio");
   });
 }

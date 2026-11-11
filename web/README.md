@@ -28,9 +28,11 @@ Sign up, complete onboarding, and the Brand Intelligence agent builds your profi
 ### Without API keys
 
 - `AI_PROVIDER=mock` runs every agent with deterministic stand-in output, for UI work and
-  tests. A banner in the app marks mock mode.
+  tests. A **Demo mode** bar on every page marks it; with real keys the bar reads **Live AI**.
 - Without an image provider, creatives use approved brand photos or type-led layouts. Set
-  `OPENAI_API_KEY` to generate imagery (`gpt-image-1`).
+  `OPENAI_API_KEY` to generate imagery (GPT Image 2.6 Flare; precision edits use Sunburst).
+
+**Demo walkthrough and staging validation:** [`docs/DEMO.md`](docs/DEMO.md)
 
 ## What's in the box
 

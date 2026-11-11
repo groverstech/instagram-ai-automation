@@ -97,7 +97,7 @@ export function AiUsageCard({ data }: { data: AiOverview }) {
                   <th className="py-1.5 pr-3 text-right font-medium">Tokens in / out</th>
                   <th className="py-1.5 pr-3 text-right font-medium">Cached reads</th>
                   <th className="py-1.5 pr-3 text-right font-medium">Images</th>
-                  <th className="py-1.5 text-right font-medium">Est. cost</th>
+                  <th className="py-1.5 text-right font-medium">Estimated cost</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-line">
@@ -108,7 +108,7 @@ export function AiUsageCard({ data }: { data: AiOverview }) {
                       {r.provider === "mock" ? <span className="text-faint"> · {r.kind === "image" ? "images" : "text"}</span> : r.model ? <span className="text-faint"> · {r.model}</span> : null}
                     </td>
                     <td className="py-1.5 pr-3 text-right tabular-nums">{r.attempts}</td>
-                    <td className="py-1.5 pr-3 text-right tabular-nums">{r.kind === "image" ? "—" : `${compact(r.inputTokens)} / ${compact(r.outputTokens)}`}</td>
+                    <td className="py-1.5 pr-3 text-right tabular-nums">{r.provider === "mock" ? "—" : `${compact(r.inputTokens)} / ${compact(r.outputTokens)}`}</td>
                     <td className="py-1.5 pr-3 text-right tabular-nums">{r.kind === "image" ? "—" : compact(r.cacheReadTokens)}</td>
                     <td className="py-1.5 pr-3 text-right tabular-nums">{r.kind === "image" ? r.images : "—"}</td>
                     <td className="py-1.5 text-right tabular-nums">{r.provider === "mock" ? "no cost" : r.unpricedAttempts && !r.costUsd ? "unpriced" : usd(r.costUsd)}</td>
@@ -158,7 +158,7 @@ export function AiUsageCard({ data }: { data: AiOverview }) {
 
         <p className="flex gap-1.5 text-[11px] text-faint">
           <ShieldAlert className="mt-px size-3.5 shrink-0" />
-          Costs are estimates: Anthropic list prices (retrieved {data.pricesRetrieved}) and your configured image prices. Provider invoices are the source of truth; every request stores the provider&apos;s request ID for reconciliation. Keys stay on the server.
+          Costs here are <strong className="font-medium">estimates</strong>, calculated from the token usage each provider reports, at the rates shown above. Provider invoices are the source of truth: confirmed billing is reconciled for the whole platform from the providers&apos; cost reports, and every request stores the provider&apos;s request ID. Keys stay on the server.
         </p>
       </CardBody>
     </Card>

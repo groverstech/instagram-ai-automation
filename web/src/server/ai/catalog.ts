@@ -9,9 +9,12 @@
  *
  * - **Anthropic:** list prices from https://platform.claude.com/docs/en/about-claude/pricing,
  *   retrieved 2026-11-10. Update the table (and ANTHROPIC_PRICES_RETRIEVED) when they change.
- * - **OpenAI images:** no prices are built in. OpenAI's pricing page couldn't be verified when
- *   this was written, so image costs come only from configuration (IMAGE_PRICE_* variables, see
- *   pricing.ts). Without it, images are counted and recorded as **unpriced**, never guessed.
+ * - **OpenAI images:** per-token list prices from https://developers.openai.com/api/docs/pricing
+ *   (Images, standard), retrieved 2026-11-11; the rates for GPT Image 2.5 are the same per the image
+ *   generation guide. Image cost = text input + image input (edits) + image output tokens, from
+ *   the usage each response reports. There is no per-image price.
+ * - **Updating prices needs no code change:** rows in the `ai_prices` table (a negotiated
+ *   contract or a list-price change) take precedence over these defaults (pricing.ts).
  *
  * No server-only import: also used by tests and the configuration check.
  */
@@ -75,18 +78,48 @@ export const ANTHROPIC_WEB_SEARCH_PER_1K = 10;
  */
 export const DEFAULT_TEXT_MODEL = "claude-opus-5-5";
 
-/**
- * Image models the OpenAI adapter may be routed to (names from the official `openai` SDK's
- * `ImageModel` type, v7.55.0). The default stays `gpt-image-1`, as in the approved plan; newer
- * models are a configuration choice (OPENAI_IMAGE_MODEL or a route override).
- */
-export const IMAGE_MODELS = ["gpt-image-1", "gpt-image-1-mini", "gpt-image-1.5", "gpt-image-2"] as const;
-export type ImageModelId = (typeof IMAGE_MODELS)[number];
-export const DEFAULT_IMAGE_MODEL: ImageModelId = "gpt-image-1";
+/** USD per million tokens for an OpenAI GPT image model. */
+export type ImagePrice = {
+  textInput: number;
+  textCachedInput: number;
+  imageInput: number;
+  imageCachedInput: number;
+  imageOutput: number;
+};
 
-export const IMAGE_QUALITIES = ["low", "medium", "high"] as const;
+export const OPENAI_PRICES_RETRIEVED = "2026-11-11";
+export const OPENAI_PRICE_SOURCE = `openai-list-${OPENAI_PRICES_RETRIEVED}`;
+const GPT_IMAGE_2X_PRICE: ImagePrice = { textInput: 5, textCachedInput: 1.25, imageInput: 8, imageCachedInput: 2, imageOutput: 30 };
+
+/**
+ * Image models the OpenAI adapter may be routed to (identifiers from the official `openai` SDK's
+ * `ImageModel` type v7.55.0 and OpenAI's model pages; all support v1/images/generations and
+ * v1/images/edits). `gpt-image-1` was shut down on 2026-10-23 and isn't listed.
+ *   - Flare: "image generation and editing for fast iteration": the default for generation and
+ *     variations.
+ *   - Sunburst: "image generation and editing for detailed visual work": the default for
+ *     precision edits.
+ * GPT Image 2.5 stays available as a configured fallback. Choosing a model is configuration
+ * (OPENAI_IMAGE_MODEL, OPENAI_IMAGE_EDIT_MODEL or a route override), never a code change.
+ */
+export const IMAGE_MODELS = ["gpt-image-2.6-flare", "gpt-image-2.6-sunburst", "gpt-image-2.5-flare", "gpt-image-2.5-sunburst"] as const;
+export type ImageModelId = (typeof IMAGE_MODELS)[number];
+export const IMAGE_MODEL_INFO: Record<ImageModelId, { label: string; price: ImagePrice }> = {
+  "gpt-image-2.6-flare": { label: "GPT Image 2.6 Flare", price: GPT_IMAGE_2X_PRICE },
+  "gpt-image-2.6-sunburst": { label: "GPT Image 2.6 Sunburst", price: GPT_IMAGE_2X_PRICE },
+  "gpt-image-2.5-flare": { label: "GPT Image 2.5 Flare", price: GPT_IMAGE_2X_PRICE },
+  "gpt-image-2.5-sunburst": { label: "GPT Image 2.5 Sunburst", price: GPT_IMAGE_2X_PRICE },
+};
+export const DEFAULT_IMAGE_MODEL: ImageModelId = "gpt-image-2.6-flare";
+export const DEFAULT_IMAGE_EDIT_MODEL: ImageModelId = "gpt-image-2.6-sunburst";
+
+/** Rendering quality (all listed models support these five). */
+export const IMAGE_QUALITIES = ["low", "medium", "high", "xhigh", "max"] as const;
 export type ImageQuality = (typeof IMAGE_QUALITIES)[number];
 export const DEFAULT_IMAGE_QUALITY: ImageQuality = "high";
+/** How much the model plans before rendering (no separate fee; the API defaults to high). */
+export const IMAGE_COMPLEXITIES = ["low", "medium", "high"] as const;
+export type ImageComplexity = (typeof IMAGE_COMPLEXITIES)[number];
 
 export const IMAGE_SIZES = ["1024x1024", "1024x1536", "1536x1024"] as const;
 export type ImageSize = (typeof IMAGE_SIZES)[number];

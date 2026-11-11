@@ -63,6 +63,14 @@ describe("production configuration validation", () => {
     expect(keys({ ...goodProd, TRUSTED_PROXY_HOPS: "two" })).toContain("TRUSTED_PROXY_HOPS");
   });
 
+  it("image models: only catalogued ones (gpt-image-1 was shut down); per-image price settings are retired", () => {
+    expect(keys({ ...goodProd, OPENAI_IMAGE_MODEL: "gpt-image-1" })).toContain("OPENAI_IMAGE_MODEL");
+    expect(keys({ ...goodProd, OPENAI_IMAGE_EDIT_MODEL: "gpt-image-2.6-sunburst", OPENAI_IMAGE_MODEL: "gpt-image-2.6-flare", OPENAI_IMAGE_COMPLEXITY: "medium", OPENAI_IMAGE_PRICE_OUTPUT_PER_MTOK: "30" })).toEqual([]);
+    expect(keys({ ...goodProd, OPENAI_IMAGE_COMPLEXITY: "extreme" })).toContain("OPENAI_IMAGE_COMPLEXITY");
+    expect(keys({ ...goodProd, OPENAI_IMAGE_PRICE_OUTPUT_PER_MTOK: "lots" })).toContain("OPENAI_IMAGE_PRICE_OUTPUT_PER_MTOK");
+    expect(checkConfig({ ...goodProd, IMAGE_PRICE_USD: "0.2" }).filter((i) => i.level === "warning").map((i) => i.key)).toContain("IMAGE_PRICE_USD");
+  });
+
   it("only stops the process in staging/production; local `next start`, demos and E2E keep working", () => {
     let exited: number | null = null;
     const exit = ((code: number) => {

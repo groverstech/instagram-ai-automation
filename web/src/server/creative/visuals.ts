@@ -56,19 +56,20 @@ function imagePromptFor(c: CreativeConcept, styleId: string, override?: string) 
  * in the provider executor (ai/call.ts): rate limits and server errors are retried; a timed-out
  * image request is not, because it may already have been created and charged.
  */
-async function aiImage(scope: RunScope, brand: Brand, creative: Creative, prompt: string, label: string, source?: { data: Buffer; mime: string }) {
+async function aiImage(scope: RunScope, brand: Brand, creative: Creative, prompt: string, label: string, source?: { data: Buffer; mime: string; mode: "variation" | "edit" }) {
   const provider = imageProvider();
   if (!provider) throw new ImageProviderUnavailable("No image provider is configured.");
   const size = sizeFor(creative.format);
-  const { data } = await runAgent(scope, "design_generation", label, { creativeId: creative.id, provider: provider.name, size, variation: Boolean(source) }, async () => {
-    const img = source ? await provider.edit(prompt, source, size) : await provider.generate(prompt, size);
+  const { data } = await runAgent(scope, "design_generation", label, { creativeId: creative.id, provider: provider.name, size, mode: source?.mode ?? "generate" }, async () => {
+    const img = !source ? await provider.generate(prompt, size) : source.mode === "edit" ? await provider.edit(prompt, source, size) : await provider.variation(prompt, source, size);
     const key = `brands/${brand.id}/creatives/${creative.id}-${crypto.randomUUID().slice(0, 8)}.png`;
     await storage.put(key, img.data, img.mime);
     // A demo placeholder costs nothing and isn't an image generation: no billable usage.
-    if (provider.name === MOCK_IMAGE_PROVIDER) return { data: { key }, provider: provider.name };
-    return { data: { key }, provider: `openai:${img.model}`, usage: img.usage };
+    if (provider.name === MOCK_IMAGE_PROVIDER) return { data: { key, by: provider.name }, provider: provider.name };
+    return { data: { key, by: `openai:${img.model}` }, provider: `openai:${img.model}`, usage: img.usage };
   });
-  return data.key;
+  /** The stored file and the model that made it (e.g. "openai:gpt-image-2.6-sunburst" after an edit). */
+  return data;
 }
 
 /**
@@ -90,8 +91,8 @@ export async function aiVariation(scope: RunScope, brand: Brand, creative: Creat
     .join(" ");
   const db = await getDb();
   try {
-    const key = await aiImage(scope, brand, creative, prompt, `Variation for "${c.title}"`, { data: source, mime: creative.imagePath.endsWith(".jpg") ? "image/jpeg" : "image/png" });
-    await db.update(schema.creatives).set({ imagePath: key, imageProvider: imageProvider()?.name ?? "ai", imageError: null, updatedAt: new Date() }).where(eq(schema.creatives.id, creative.id));
+    const { key, by } = await aiImage(scope, brand, creative, prompt, `Variation for "${c.title}"`, { data: source, mime: creative.imagePath.endsWith(".jpg") ? "image/jpeg" : "image/png", mode: "variation" });
+    await db.update(schema.creatives).set({ imagePath: key, imageProvider: by, imageError: null, updatedAt: new Date() }).where(eq(schema.creatives.id, creative.id));
   } catch (e) {
     // The current image stays; only the error is shown.
     await db.update(schema.creatives).set({ imageError: e instanceof Error ? e.message : String(e), updatedAt: new Date() }).where(eq(schema.creatives.id, creative.id));
@@ -114,6 +115,35 @@ async function photoCopy(brand: Brand, creative: Creative, assetId: string) {
   const key = `brands/${brand.id}/creatives/${creative.id}-photo-${assetId.slice(0, 8)}.${jpeg ? "jpg" : "png"}`;
   await storage.put(key, buf, jpeg ? "image/jpeg" : "image/png");
   return key;
+}
+
+/**
+ * A precise edit of a creative's AI image (GPT Image 2.6 Sunburst by default): the instruction
+ * changes what it names and keeps everything else. The result replaces the cover; the current
+ * image stays if the edit fails.
+ */
+export async function aiEdit(scope: RunScope, brand: Brand, creative: Creative, instruction: string) {
+  const what = instruction.trim();
+  if (!what) throw new UserFacingError("Describe the change, for example \"remove the spoon on the left\".");
+  if (creative.visualSource !== "ai" || !creative.imagePath) throw new UserFacingError("Edits are for creatives with an AI-generated image. Generate one first.");
+  const c = creative.concept as CreativeConcept;
+  const before = (await currentRow(creative.id)) ?? creative;
+  const source = await storage.get(creative.imagePath);
+  const prompt = [
+    `Edit this image: ${what}.`,
+    "Change only what the instruction asks; keep the composition, subject, lighting, colours and everything else exactly as they are.",
+    "Absolutely no text, letters, numbers, logos or watermarks.",
+  ].join(" ");
+  const db = await getDb();
+  try {
+    const { key, by } = await aiImage(scope, brand, creative, prompt, `Edit for "${c.title}"`, { data: source, mime: creative.imagePath.endsWith(".jpg") ? "image/jpeg" : "image/png", mode: "edit" });
+    await db.update(schema.creatives).set({ imagePath: key, imageProvider: by, imageError: null, updatedAt: new Date() }).where(eq(schema.creatives.id, creative.id));
+  } catch (e) {
+    await db.update(schema.creatives).set({ imageError: e instanceof Error ? e.message : String(e), updatedAt: new Date() }).where(eq(schema.creatives.id, creative.id));
+    throw e;
+  }
+  const after = await currentRow(creative.id);
+  if (after) await pruneCreativeFiles(before, after);
 }
 
 type FileRefs = { id: string; brandId: string; imagePath: string | null; slides: CreativeSlide[] | unknown };
@@ -179,8 +209,8 @@ async function produceVisual(scope: RunScope, brand: Brand, creative: Creative, 
   }
   // AI imagery
   try {
-    const cover = await aiImage(scope, brand, creative, imagePromptFor(c, creative.style), `Image for "${c.title}"`);
-    await db.update(schema.creatives).set({ imagePath: cover, imageProvider: imageProvider()?.name ?? "ai", imageError: null, updatedAt: new Date() }).where(eq(schema.creatives.id, creative.id));
+    const { key: cover, by } = await aiImage(scope, brand, creative, imagePromptFor(c, creative.style), `Image for "${c.title}"`);
+    await db.update(schema.creatives).set({ imagePath: cover, imageProvider: by, imageError: null, updatedAt: new Date() }).where(eq(schema.creatives.id, creative.id));
     if (opts.slideVisuals) {
       const next: CreativeSlide[] = [];
       for (const [i, s] of slides.entries()) {
@@ -188,7 +218,7 @@ async function produceVisual(scope: RunScope, brand: Brand, creative: Creative, 
           next.push(s);
           continue;
         }
-        const key = await aiImage(scope, brand, creative, imagePromptFor(c, creative.style, s.imagePrompt), `Slide ${i + 2} image for "${c.title}"`);
+        const { key } = await aiImage(scope, brand, creative, imagePromptFor(c, creative.style, s.imagePrompt), `Slide ${i + 2} image for "${c.title}"`);
         next.push({ ...s, imagePath: key, imageError: null });
         await db.update(schema.creatives).set({ slides: [...next, ...slides.slice(i + 1)], updatedAt: new Date() }).where(eq(schema.creatives.id, creative.id));
       }
