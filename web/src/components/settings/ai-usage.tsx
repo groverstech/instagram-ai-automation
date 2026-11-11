@@ -158,7 +158,9 @@ export function AiUsageCard({ data }: { data: AiOverview }) {
 
         <p className="flex gap-1.5 text-[11px] text-faint">
           <ShieldAlert className="mt-px size-3.5 shrink-0" />
-          Costs here are <strong className="font-medium">estimates</strong>, calculated from the token usage each provider reports, at the rates shown above. Provider invoices are the source of truth: confirmed billing is reconciled for the whole platform from the providers&apos; cost reports, and every request stores the provider&apos;s request ID. Keys stay on the server.
+          <span>
+            Costs here are <strong className="font-medium">estimates</strong>, calculated from the token usage each provider reports, at the rates shown above. Provider invoices are the source of truth: confirmed billing is reconciled for the whole platform from the providers&apos; cost reports, and every request stores the provider&apos;s request ID. Keys stay on the server.
+          </span>
         </p>
       </CardBody>
     </Card>
