@@ -118,3 +118,59 @@ export async function removeConfirmedBilling(id: string) {
   const db = await getDb();
   await db.delete(schema.aiBilling).where(eq(schema.aiBilling.id, id));
 }
+
+export type RequestLogRow = {
+  at: string;
+  provider: string;
+  route: string;
+  model: string;
+  attempt: number;
+  outcome: string;
+  errorKind: string | null;
+  httpStatus: number | null;
+  requestId: string | null;
+  units: Record<string, number>;
+  params: Record<string, string>;
+  latencyMs: number | null;
+  estimatedUsd: number | null;
+  priceSource: string | null;
+  cumulativeUsd: number;
+  remainingUsd: number | null;
+};
+
+/**
+ * Every real (non-demo) provider attempt in a period, oldest first, with the running estimated
+ * total and, given a budget, what remains. Operator tool for validation runs; contains no keys or
+ * prompt content (the ledger never stores them).
+ */
+export async function requestLog(since: Date, until: Date | null, budgetUsd: number | null): Promise<RequestLogRow[]> {
+  const db = await getDb();
+  const e = schema.usageEvents;
+  const rows = await db
+    .select()
+    .from(e)
+    .where(and(gte(e.createdAt, since), until ? lt(e.createdAt, until) : undefined, ne(e.provider, "mock")))
+    .orderBy(e.createdAt);
+  let cumulative = 0;
+  return rows.map((r) => {
+    cumulative += r.costUsd ?? 0;
+    return {
+      at: r.createdAt.toISOString(),
+      provider: r.provider,
+      route: r.route,
+      model: r.model ?? "",
+      attempt: r.attempt,
+      outcome: r.outcome,
+      errorKind: r.errorKind ?? null,
+      httpStatus: r.httpStatus ?? null,
+      requestId: r.providerRequestId ?? null,
+      units: r.units ?? {},
+      params: (r.params as Record<string, string>) ?? {},
+      latencyMs: r.latencyMs ?? null,
+      estimatedUsd: r.costUsd ?? null,
+      priceSource: r.priceSource ?? null,
+      cumulativeUsd: Math.round(cumulative * 1e6) / 1e6,
+      remainingUsd: budgetUsd === null ? null : Math.round((budgetUsd - cumulative) * 1e6) / 1e6,
+    };
+  });
+}

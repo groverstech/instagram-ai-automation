@@ -40,6 +40,8 @@ export type Pricing = {
   units: (u: Usage) => Record<string, number>;
   /** Request parameters that drive cost (quality, resolution, complexity, effort), recorded per attempt. */
   params?: Record<string, string | undefined>;
+  /** Worst-case cost of one attempt, for the hard spending cap (spend-cap.ts). null: the kind's fallback reserve. */
+  worstCaseUsd?: number | null;
 };
 
 const num = (v: string | undefined, d: number) => (v && /^\d+$/.test(v.trim()) ? Number(v.trim()) : d);
@@ -65,6 +67,16 @@ export async function execute<T>(route: ResolvedRoute, pricing: Pricing, fn: (at
       await recordAttempt({ route: route.key, provider: route.provider, model: route.model, kind: route.kind, params, attempt, outcome: "blocked", errorKind: "circuit_open" });
       throw markHandled(withTotal(new AIUnavailableError(route.provider, gate.retryInMs), total, billed));
     }
+    let release: () => void;
+    try {
+      const { reserveSpend } = await import("./spend-cap");
+      release = await reserveSpend(route, pricing.worstCaseUsd ?? null);
+    } catch (e) {
+      if (classify(e).kind !== "spend_cap") throw e;
+      await recordAttempt({ route: route.key, provider: route.provider, model: route.model, kind: route.kind, params, attempt, outcome: "blocked", errorKind: "spend_cap" });
+      log.warn("ai.spend_cap", { route: route.key, provider: route.provider });
+      throw markHandled(withTotal(e, total, billed));
+    }
     const counter = aiContext().attempts;
     if (counter) counter.n++;
     const started = Date.now();
@@ -86,6 +98,7 @@ export async function execute<T>(route: ResolvedRoute, pricing: Pricing, fn: (at
         providerRequestId: r.requestId ?? null,
         latencyMs: Date.now() - started,
       });
+      release();
       total = addUsage(total, r.usage);
       return { value: r.value, usage: total, requestId: r.requestId };
     } catch (e) {
@@ -120,6 +133,7 @@ export async function execute<T>(route: ResolvedRoute, pricing: Pricing, fn: (at
         providerRequestId: c.requestId ?? null,
         latencyMs: Date.now() - started,
       });
+      release();
       if (!retry) throw markHandled(withTotal(e, total, billed));
       log.warn("ai.retry", { route: route.key, provider: route.provider, attempt, kind: c.kind, waitMs });
       await sleep(waitMs);

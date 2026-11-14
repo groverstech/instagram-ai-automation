@@ -160,10 +160,11 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   }
   // Prices and spending limits: non-negative numbers only. A typo must not silently zero a cost.
   for (const [k, v] of Object.entries(env)) {
-    if (!/^(AI_PRICE_|OPENAI_IMAGE_PRICE_|AI_MONTHLY_COST_LIMIT_USD)/.test(k) || !set(v)) continue;
+    if (!/^(AI_PRICE_|OPENAI_IMAGE_PRICE_|AI_MONTHLY_COST_LIMIT_USD|AI_SPEND_CAP_(USD|IMAGE_RESERVE_USD|TEXT_RESERVE_USD)$)/.test(k) || !set(v)) continue;
     const n = Number(v);
     if (!Number.isFinite(n) || n < 0) err(k, "Must be a non-negative number (USD).");
   }
+  if (set(env.AI_SPEND_CAP_SINCE) && Number.isNaN(Date.parse(env.AI_SPEND_CAP_SINCE!))) err("AI_SPEND_CAP_SINCE", "Must be a date and time, e.g. 2026-11-14T00:00:00Z.");
   // Images are priced per token from reported usage; a flat per-image price is no longer used.
   for (const k of Object.keys(env)) {
     if (/^IMAGE_PRICE_USD/.test(k) && set(env[k])) warn(k, "No longer used: image costs are calculated per token from the usage OpenAI reports (docs/AI_PROVIDERS.md). Use OPENAI_IMAGE_PRICE_*_PER_MTOK or the ai_prices table for other rates.");

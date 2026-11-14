@@ -87,7 +87,8 @@ const openaiError = (status: number, code: string, headers: Record<string, strin
   new Response(JSON.stringify({ error: { message: `${code} (test)`, type: code, code } }), { status, headers: { "content-type": "application/json", "x-request-id": `req_img_${status}`, ...headers } });
 
 const { getDb, schema } = await import("./db/client");
-const { llm, friendlyAIError } = await import("./ai/llm");
+const llmMod = await import("./ai/llm");
+const { llm, friendlyAIError } = llmMod;
 const { imageProvider } = await import("./ai/image");
 const { runAgent } = await import("./agents/orchestrator");
 const { resetCircuits, circuitStatus } = await import("./ai/circuit");
@@ -121,7 +122,7 @@ beforeEach(() => {
   delete process.env.AI_IMAGE_TIMEOUT_MS;
   delete process.env.AI_CIRCUIT_THRESHOLD;
   delete process.env.AI_CIRCUIT_OPEN_MS;
-  for (const k of Object.keys(process.env)) if (/^(OPENAI_IMAGE_PRICE_|OPENAI_IMAGE_MODEL|OPENAI_IMAGE_EDIT_MODEL|OPENAI_IMAGE_COMPLEXITY|AI_MONTHLY_COST_LIMIT_USD|AI_PRICE_)/.test(k)) delete process.env[k];
+  for (const k of Object.keys(process.env)) if (/^(AI_SPEND_CAP_|OPENAI_IMAGE_PRICE_|OPENAI_IMAGE_MODEL|OPENAI_IMAGE_EDIT_MODEL|OPENAI_IMAGE_COMPLEXITY|AI_MONTHLY_COST_LIMIT_USD|AI_PRICE_)/.test(k)) delete process.env[k];
 });
 afterEach(() => resetCircuits());
 
@@ -478,6 +479,78 @@ describe("OpenAI images", () => {
     const err = await gen().then(() => null, (e: unknown) => e);
     expect(openaiCalls).toHaveLength(1);
     expect(friendlyAIError(err)).toMatch(/didn't answer in time.*may still have created/);
+  });
+});
+
+describe("hard spending cap (validation budgets)", () => {
+  const { textWorstCaseUsd } = llmMod;
+  // Each test counts only its own requests: earlier tests in this file ran moments before.
+  const since = () => new Date().toISOString();
+
+  it("the worst-case reserve of a text request is never below its actual cost", () => {
+    // A sample far above anything the test provider returns: 30k prompt characters, 16k output limit.
+    const worst = textWorstCaseUsd("claude-opus-5-5", { chars: 30_000, maxTokens: 16_000 }, textCost)!;
+    const actual = textCost({ model: "claude-opus-5-5", inputTokens: 10_000, outputTokens: 16_000 }).usd!;
+    expect(worst).toBeGreaterThanOrEqual(actual);
+    expect(worst).toBeCloseTo((10_000 * 8 + 16_000 * 20) / 1e6, 9); // input at the 1-hour cache-write rate, full output limit
+    // Web search: per-search fee and 25k tokens of results each.
+    expect(textWorstCaseUsd("claude-opus-5-5", { chars: 0, maxTokens: 0, searches: 2 }, textCost)).toBeCloseTo((50_000 * 8) / 1e6 + 2 * 0.01, 9);
+  });
+
+  it("refuses a request whose worst case would exceed the cap: nothing is sent, the refusal is recorded", async () => {
+    process.env.AI_SPEND_CAP_SINCE = since();
+    process.env.AI_SPEND_CAP_USD = "0.05"; // below one Opus call's worst case (16k output tokens = $0.32)
+    anthropic = () => message({ answer: "x" });
+    const { err, events } = await failing();
+    expect(anthropicCalls).toHaveLength(0);
+    expect(friendlyAIError(err)).toMatch(/spending cap for this environment \(\$0\.05\) would be exceeded/);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ outcome: "blocked", errorKind: "spend_cap", costUsd: null });
+  });
+
+  it("allows requests while committed spend plus the worst case fits, then stops before the cap", async () => {
+    process.env.AI_SPEND_CAP_SINCE = since();
+    process.env.AI_SPEND_CAP_USD = "0.36"; // one Opus worst case (~$0.32 + input) fits; after one real call it no longer does
+    anthropic = () => message({ answer: "x" }, { usage: { input_tokens: 20_000, output_tokens: 1_000 } });
+    const ok = await ask();
+    expect(anthropicCalls).toHaveLength(1);
+    const [ev] = await eventsOf(ok.runId);
+    expect(ev.costUsd).toBeCloseTo((20_000 * 4 + 1_000 * 20) / 1e6, 9); // $0.10 committed
+    const { events } = await failing();
+    expect(anthropicCalls).toHaveLength(1); // the second call was refused before sending
+    expect(events[0]).toMatchObject({ outcome: "blocked", errorKind: "spend_cap" });
+    const { committedSpendUsd } = await import("./ai/spend-cap");
+    expect((await committedSpendUsd(new Date(process.env.AI_SPEND_CAP_SINCE!))).usd).toBeLessThanOrEqual(0.36);
+  });
+
+  it("images reserve the configured worst case; unpriced or unknown-outcome attempts count at that reserve", async () => {
+    process.env.AI_SPEND_CAP_SINCE = since();
+    process.env.AI_SPEND_CAP_USD = "1.5";
+    process.env.AI_SPEND_CAP_IMAGE_RESERVE_USD = "1";
+    // A timeout: outcome unknown (may be billed), so it counts as $1 committed.
+    process.env.AI_IMAGE_TIMEOUT_MS = "30";
+    openai = () => never();
+    const gen = () =>
+      runAgent({ brandId, userId }, "design_generation", "image", null, async () => {
+        const img = await imageProvider()!.generate("A ceramic mug", "1024x1536");
+        return { data: img, usage: img.usage, provider: `openai:${img.model}` };
+      });
+    await gen().then(() => null, (e: unknown) => e);
+    expect(openaiCalls).toHaveLength(1);
+    const { committedSpendUsd } = await import("./ai/spend-cap");
+    expect((await committedSpendUsd(new Date(process.env.AI_SPEND_CAP_SINCE!))).usd).toBeCloseTo(1, 9);
+    // $1 committed + $1 reserve > $1.50: the next image is refused without a request.
+    const err = await gen().then(() => null, (e: unknown) => e);
+    expect(openaiCalls).toHaveLength(1);
+    expect(friendlyAIError(err)).toMatch(/spending cap/);
+  });
+
+  it("configuration: invalid cap values are refused at boot", async () => {
+    const { checkConfig } = await import("./config");
+    const errs = (env: Record<string, string>) => checkConfig(env).filter((p) => p.level === "error").map((p) => p.key);
+    expect(errs({ AI_SPEND_CAP_USD: "ten" })).toContain("AI_SPEND_CAP_USD");
+    expect(errs({ AI_SPEND_CAP_SINCE: "yesterday-ish" })).toContain("AI_SPEND_CAP_SINCE");
+    expect(errs({ AI_SPEND_CAP_USD: "10", AI_SPEND_CAP_SINCE: "2026-11-14T00:00:00Z" })).not.toContain("AI_SPEND_CAP_USD");
   });
 });
 

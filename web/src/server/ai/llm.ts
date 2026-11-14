@@ -173,9 +173,27 @@ async function routed(key: RouteKey): Promise<ResolvedRoute> {
   return resolveRoute(key, { brandId: aiContext().brandId });
 }
 
-const textPricing = async () => {
+/**
+ * Worst-case cost of one Claude attempt, for the hard spending cap (spend-cap.ts). Deliberately
+ * pessimistic: about 3 characters per input token, every input token at the 1-hour cache-write
+ * rate (the highest input rate), ~1,600 tokens per image and 30,000 per PDF, 25,000 tokens of
+ * search results per allowed web search plus its fee, and the full output-token limit.
+ */
+export function textWorstCaseUsd(
+  model: string,
+  req: { chars: number; images?: ImageInput[]; maxTokens: number; searches?: number },
+  cost: (u: Usage) => { usd: number | null },
+): number | null {
+  const media = (req.images ?? []).reduce((n, i) => n + (i.mime === "application/pdf" ? 30_000 : 1_600), 0);
+  const searches = req.searches ?? 0;
+  const input = Math.ceil(req.chars / 3) + media + searches * 25_000;
+  return cost({ model, cacheWriteTokens: input, cacheWrite1hTokens: input, outputTokens: req.maxTokens, webSearches: searches }).usd;
+}
+
+const textPricing = async (worst?: { model: string; chars: number; images?: ImageInput[]; maxTokens: number; searches?: number }) => {
   const { textCost } = await import("./pricing");
   return {
+    worstCaseUsd: worst ? textWorstCaseUsd(worst.model, worst, textCost) : null,
     price: (u: Usage) => textCost(u),
     units: (u: Usage) => ({
       inputTokens: u.inputTokens ?? 0,
@@ -198,11 +216,13 @@ const anthropicProvider: LLMProvider = {
     // parse exceptions, and the result is re-validated with the same Zod schema.
     const format = betaZodOutputFormat(req.schema) as unknown as { schema: Record<string, unknown> };
     const { effort, ...params } = common(route, req.system, route.effort ?? req.effort ?? "medium");
-    const out = await execute(route, await textPricing(), async () => {
+    const maxTokens = Math.min(req.maxTokens ?? 16000, 16000);
+    const worst = { model: route.model, chars: req.system.length + req.prompt.length + JSON.stringify(format.schema).length, images: req.images, maxTokens };
+    const out = await execute(route, await textPricing(worst), async () => {
       const res = await anthropic().beta.messages.create(
         {
           ...params,
-          max_tokens: Math.min(req.maxTokens ?? 16000, 16000),
+          max_tokens: maxTokens,
           output_config: { effort, format: { type: "json_schema", schema: format.schema } },
           messages: [{ role: "user", content: userContent(req.prompt, req.images) }],
         },
@@ -235,7 +255,8 @@ const anthropicProvider: LLMProvider = {
     const route = await routed(req.route);
     const { execute } = await import("./call");
     const { effort, ...params } = common(route, req.system, route.effort ?? "medium");
-    const out = await execute(route, await textPricing(), async () => {
+    const worst = { model: route.model, chars: req.system.length + req.prompt.length, maxTokens: 16000, searches: req.maxSearches ?? 5 };
+    const out = await execute(route, await textPricing(worst), async () => {
       const res = await anthropic().beta.messages.create(
         {
           ...params,

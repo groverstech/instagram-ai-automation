@@ -23,6 +23,17 @@ export class AIUnavailableError extends Error {
   }
 }
 
+/** A hard spending cap (AI_SPEND_CAP_USD) would be exceeded by this request. Nothing was sent. */
+export class AISpendCapError extends Error {
+  constructor(
+    readonly capUsd: number,
+    readonly committedUsd: number,
+    readonly reserveUsd: number,
+  ) {
+    super(`The AI spending cap for this environment ($${capUsd.toFixed(2)}) would be exceeded, so this request wasn't sent. Spent so far: about $${committedUsd.toFixed(2)}.`);
+  }
+}
+
 export class ImageProviderUnavailable extends Error {}
 /** The image provider refused the prompt (content policy). The message is safe to show. */
 export class ImageRefusedError extends Error {
@@ -47,6 +58,7 @@ export class ImageProviderError extends Error {
 export type ErrorKind =
   | "not_configured"
   | "circuit_open"
+  | "spend_cap"
   | "auth"
   | "permission"
   | "quota"
@@ -119,6 +131,7 @@ export function classify(e: unknown): Classified {
     ...extra,
   });
   if (e instanceof AIUnavailableError) return base("circuit_open", { retryable: false, responded: false, serviceFailure: false });
+  if (e instanceof AISpendCapError) return base("spend_cap", { retryable: false, responded: false, serviceFailure: false });
   if (e instanceof AIConfigError || e instanceof ImageProviderUnavailable) return base("not_configured", { retryable: false, responded: false, serviceFailure: false });
   if (e instanceof AIRefusalError) return base("refusal");
   if (e instanceof AIOutputError) return base("output_invalid");
@@ -169,12 +182,12 @@ export function isTransient(e: unknown): boolean {
 /** Errors that mean "the AI service is unavailable", not "this input is bad". Retrying later may work. */
 export function isServiceError(e: unknown): boolean {
   const k = classify(e).kind;
-  return ["not_configured", "circuit_open", "auth", "permission", "quota", "rate_limit", "overloaded", "server", "timeout", "network"].includes(k);
+  return ["not_configured", "circuit_open", "spend_cap", "auth", "permission", "quota", "rate_limit", "overloaded", "server", "timeout", "network"].includes(k);
 }
 
 /** User-facing message for AI failures; never exposes raw API payloads or keys. */
 export function friendlyAIError(e: unknown): string | null {
-  if (e instanceof AIConfigError || e instanceof AIRefusalError || e instanceof AIOutputError || e instanceof AIUnavailableError) return e.message;
+  if (e instanceof AIConfigError || e instanceof AIRefusalError || e instanceof AIOutputError || e instanceof AIUnavailableError || e instanceof AISpendCapError) return e.message;
   if (e instanceof ImageRefusedError) return e.message;
   if (e instanceof ImageProviderUnavailable) return "No image provider is configured. Choose brand photos or a typographic layout, or set OPENAI_API_KEY on the server.";
   const image = e instanceof ImageProviderError;

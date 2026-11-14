@@ -190,7 +190,61 @@ Notes:
   Providers bill the BrandPilot account as a whole, so confirmed amounts are **platform-level**: they're
   compared with the estimates of all organisations together, for operators only, and never shown to a
   customer organisation. Re-importing a line (same provider, model, period and source) updates it.
-  Fetching cost reports automatically needs provider admin keys (follow-up F11).
+  Fetching cost reports automatically needs provider admin keys (follow-up F11); the
+  console exports below need none.
+
+### Reconciling with provider console exports
+
+Both consoles export usage and cost data as CSV (Anthropic Console: Usage and Cost pages;
+OpenAI dashboard: Usage). **No admin API keys are needed.**
+
+```
+npm run ai:billing -- reconcile anthropic usage-export.csv --since 2026-11-14T10:00:00Z --until 2026-11-14T12:00:00Z
+npm run ai:billing -- reconcile anthropic cost-export.csv  --since … --until … --amount-unit cents   # if amounts are in cents
+npm run ai:billing -- reconcile openai    cost-export.csv  --since … --until … --json result.json
+```
+
+- Columns are recognised by name (e.g. `model`, `uncached_input_tokens`, `cache_read_input_tokens`,
+  `output_tokens`, `images`, `num_model_requests`, `amount`, `line_item`, `description`). The model
+  can come from a line item or description ("Claude Opus 5.5 Usage - Output Tokens"). Any column
+  can be mapped explicitly with `--map field="Column name"`. The report prints the columns it used.
+- **Request level** only when the export has request IDs: each ledger attempt is matched by the
+  provider request ID. **Neither provider's documented usage or cost data includes request IDs**
+  (Anthropic's usage and cost reports and OpenAI's usage and costs reports are aggregated by time
+  bucket and model, verified 2026-11-14), so in practice the comparison is **aggregate**: per
+  model, over the same period. Request-level accuracy is never claimed from aggregate data.
+- **Daily exports** are compared over the same whole UTC days. Any other use of the same API key
+  on those days appears as a difference, so validations use a dedicated key or workspace.
+- **Tokens** are compared exactly (metering). **Costs** are compared with the export's amounts;
+  an export without amounts is priced at the same rates, which checks metering only, and the
+  report says so. OpenAI's images usage report has image and request counts but no tokens.
+- Excluded and listed separately: attempts with an unknown outcome (sent, no response: possibly
+  billed, no usage), unpriced attempts, and blocked attempts (never sent).
+- Usage can take time to appear in the consoles (Anthropic documents up to 24 hours for its
+  analytics data), so exports are taken after that.
+
+### Spending cap and run log (validation budgets)
+
+`AI_SPEND_CAP_USD` sets a hard cap on estimated AI spending for the whole deployment, counted from
+`AI_SPEND_CAP_SINCE` (default: the start of the month). It's checked **before every provider
+request**: a request is sent only if
+
+`committed spend + reserves of requests in flight + this request's worst case ≤ cap`.
+
+- Worst cases: for text, the estimated prompt (about 3 characters per token, all priced at the
+  highest input rate) plus the full output-token limit, plus web-search fees and results; for
+  images, `AI_SPEND_CAP_IMAGE_RESERVE_USD` (default $1.00, far above OpenAI's published per-image
+  output costs).
+- Attempts that may have been billed but have no price (unknown outcome, unpriced) count at their
+  reserve (`AI_SPEND_CAP_TEXT_RESERVE_USD`, default $0.50, or the image reserve).
+- A refused request is recorded as `blocked` (`spend_cap`), and the user sees "The AI spending cap
+  for this environment would be exceeded…". Nothing is sent.
+- The in-flight reserve is per process: run a validation with a single app process.
+
+`npm run ai:billing -- log --since <ISO> --budget 10 [--json run-log.json]` lists every real
+provider request: time, provider, route, model, attempt, outcome, HTTP status, the provider's
+request ID, units, estimated cost, running total and remaining budget. It holds no keys or prompt
+content.
 
 **Limits and entitlements:**
 - The existing plan limit (AI runs per month) still applies.
@@ -231,6 +285,8 @@ repository, logs or the browser. `npm run check:secrets` scans client bundles.
 | `AI_CIRCUIT_THRESHOLD` / `AI_CIRCUIT_OPEN_MS` | 5 / 30000 | Circuit breaker |
 | Price variables | — | See "How costs are calculated". The retired `IMAGE_PRICE_USD*` variables are ignored, with a warning at boot. |
 | `AI_MONTHLY_COST_LIMIT_USD`, `AI_MONTHLY_COST_LIMIT_USD_<PLAN>` | — | Optional spending limit |
+| `AI_SPEND_CAP_USD`, `AI_SPEND_CAP_SINCE` | — | Hard cap for the whole deployment, checked before every request (validation budgets) |
+| `AI_SPEND_CAP_IMAGE_RESERVE_USD`, `AI_SPEND_CAP_TEXT_RESERVE_USD` | 1.00 / 0.50 | Worst-case reserve for an image request; fallback reserve for an unpriced text attempt |
 | `LIVE_REPORT_DIR` | — | Where `test:live` writes `report.json`; Settings shows it |
 | `AI_PROVIDER=mock` | — | Demo mode (refused in production) |
 
