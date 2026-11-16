@@ -151,6 +151,16 @@ async function failing(route?: Parameters<typeof ask>[0]) {
 }
 
 describe("Anthropic: successful generation and usage tracking", () => {
+  it("sends the API key in the x-api-key header with no prefix, and no Authorization header", async () => {
+    anthropic = () => message({ answer: "Hello" });
+    await ask();
+    expect(anthropicCalls[0].headers["x-api-key"]).toBe("sk-ant-test-not-a-real-key");
+    expect(anthropicCalls[0].headers.authorization).toBeUndefined();
+    // Without ANTHROPIC_API_KEY (e.g. a gateway's ANTHROPIC_AUTH_TOKEN), the SDK's own handling applies.
+    expect(llmMod.anthropicAuth({ ANTHROPIC_AUTH_TOKEN: "gateway-token" })).toEqual({});
+    expect(llmMod.anthropicAuth({ ANTHROPIC_API_KEY: " k " })).toEqual({ apiKey: "k", defaultHeaders: { "X-Api-Key": "k", Authorization: null } });
+  });
+
   it("records one priced success with the request ID, cache tokens and organisation", async () => {
     anthropic = () => message({ answer: "Hello" });
     const out = await ask();

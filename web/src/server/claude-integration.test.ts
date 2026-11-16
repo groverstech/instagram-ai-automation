@@ -118,8 +118,9 @@ describe("Brand Intelligence on the real Anthropic provider path", () => {
 
     for (const c of captured) {
       expect(c.url).toBe("https://api.anthropic.com/v1/messages");
-      // SDK v1 sends API keys as a bearer token.
-      expect(c.headers["authorization"]).toBe("Bearer sk-ant-test-not-a-real-key");
+      // The API key goes in x-api-key, with no prefix; no Authorization header (llm.ts anthropicAuth).
+      expect(c.headers["x-api-key"]).toBe("sk-ant-test-not-a-real-key");
+      expect(c.headers["authorization"]).toBeUndefined();
       expect(c.headers["anthropic-version"]).toBeTruthy();
       expect(c.headers["anthropic-beta"]).toContain("server-side-fallback-2026-07-01");
       expect(c.body).toMatchObject({ model: "claude-opus-5-5", fallbacks: "default", thinking: { type: "adaptive" } });

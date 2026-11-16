@@ -292,6 +292,9 @@ repository, logs or the browser. `npm run check:secrets` scans client bundles.
 
 ## Security
 
+- **The Anthropic API key is sent in the `x-api-key` header**, with no prefix and no `Authorization`
+  header (`anthropicAuth` in `llm.ts`; the installed SDK would otherwise send it as a bearer token).
+  `ANTHROPIC_AUTH_TOKEN`, for gateways that take a bearer token, is used only when no API key is set.
 - **Keys stay on the server.** They're read from the environment and never logged (log redaction),
   returned to the browser (Settings shows only "key configured") or included in error messages.
 - **OpenAI requests** carry a keyed hash of the organisation as `safety_identifier`, so abuse reports

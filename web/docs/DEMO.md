@@ -95,6 +95,18 @@ Costs here are estimates. Confirmed provider billing is reconciled by operators 
   `DEPLOY_ENV=staging` vs `production` keeps the configurations apart.
 - Set a monthly spending limit in both provider consoles before testing.
 
+**First, one connectivity request for Anthropic** (about $0.01):
+
+```bash
+AI_SPEND_CAP_USD=10 AI_SPEND_CAP_SINCE=<start of the validation, UTC> npm run ai:check-anthropic -- --json anthropic-check.json
+```
+
+It refuses to run unless `ANTHROPIC_API_KEY` is set (checked by presence only), `ANTHROPIC_AUTH_TOKEN`
+is unset, demo mode is off, the host is `https://api.anthropic.com` and a spending cap is set. It
+sends exactly one request with retries off. A guard at the network layer blocks the request unless
+it carries `x-api-key` and no `Authorization` header. It reports provider, model, HTTP status,
+request ID, token usage, estimated cost and outcome, never the key.
+
 **Validate each provider on its own** (real, paid calls; never in CI). Run on the staging server or a
 machine with the staging keys, with outbound HTTPS to `api.anthropic.com` and `api.openai.com`:
 

@@ -13,7 +13,8 @@ import { baseRoute, resolveRoute, type Effort, type ResolvedRoute, type RouteKey
  * route of the job they do; the route picks the model and limits, and the executor (call.ts)
  * handles retries, the circuit breaker and the per-attempt usage ledger.
  *
- * The API key stays on the server (ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN); it is never logged
+ * The API key stays on the server (ANTHROPIC_API_KEY, sent as x-api-key; or ANTHROPIC_AUTH_TOKEN for
+ * gateways that take a bearer token); it is never logged
  * or sent to the browser.
  */
 export { mockActive };
@@ -113,12 +114,25 @@ export const MODEL = baseRoute("brand.profile").model;
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
 let client: Anthropic | null = null;
+
+/**
+ * How the API key is sent. Anthropic API keys go in the `x-api-key` header, with no prefix. The
+ * installed SDK would otherwise send ANTHROPIC_API_KEY as `Authorization: Bearer <key>`, so the key
+ * is passed explicitly (which also stops the SDK looking for other credentials, e.g. in config
+ * files) and `Authorization` is removed. ANTHROPIC_AUTH_TOKEN, for gateways that take a bearer
+ * token, is left to the SDK as before; the API key wins when both are set.
+ */
+export function anthropicAuth(env: Record<string, string | undefined>): { apiKey: string; defaultHeaders: Record<string, string | null> } | Record<string, never> {
+  const key = env.ANTHROPIC_API_KEY?.trim();
+  return key ? { apiKey: key, defaultHeaders: { "X-Api-Key": key, Authorization: null } } : {};
+}
+
 function anthropic(): Anthropic {
   if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
     throw new AIConfigError("No AI provider is configured. Add ANTHROPIC_API_KEY to your environment (see .env.example).");
   }
   // SDK retries are off: the executor retries, so every attempt is visible and recorded.
-  client ??= new Anthropic({ maxRetries: 0, fetch: (url, init) => globalThis.fetch(url, init) });
+  client ??= new Anthropic({ maxRetries: 0, fetch: (url, init) => globalThis.fetch(url, init), ...anthropicAuth(process.env) });
   return client;
 }
 
