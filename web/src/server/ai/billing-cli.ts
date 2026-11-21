@@ -5,6 +5,8 @@
 //   log --since <ISO> [--until <ISO>] [--budget <USD>] [--json <file>]
 //                            every real provider request: status, request ID, tokens, estimated cost,
 //                            running total and remaining budget.
+//   ledger                   where the spending ledger is stored, whether it is durable, when it began,
+//                            and spending (with pending attempts) since AI_SPEND_CAP_SINCE. No network.
 //   reconcile <anthropic|openai> <export.csv> --since <ISO> --until <ISO> [--amount-unit usd|cents]
 //                            [--map field="Column name" ...] [--json <file>]
 //                            compare a usage or cost report exported from the provider console with the ledger.
@@ -55,6 +57,32 @@ async function main() {
       if (r.unpricedAttempts || r.unknownOutcomeAttempts) console.log(`${"".padEnd(37)}${r.unpricedAttempts} unpriced, ${r.unknownOutcomeAttempts} with unknown outcome (may be billed)`);
     }
     if (!rows.length) console.log("No AI usage recorded in this period.");
+    return;
+  }
+  if (cmd === "ledger") {
+    // Where the spending ledger lives, whether it survives this machine, and what is still pending.
+    const { ledgerInfo } = await import("./paid-run-guard");
+    const { committedSpendUsd, parseSpendCap } = await import("./spend-cap");
+    const info = await ledgerInfo();
+    const cap = parseSpendCap();
+    const since = cap.ok ? cap.since : null;
+    const spent = since ? await committedSpendUsd(since) : null;
+    const out = {
+      storage: info.storage,
+      durable: info.durable,
+      createdAt: info.createdAt?.toISOString() ?? null,
+      capUsd: cap.ok ? cap.capUsd : null,
+      capProblem: cap.ok ? null : cap.reason,
+      since: since?.toISOString() ?? null,
+      committedUsd: spent?.usd ?? null,
+      reservedUsd: spent?.reservedUsd ?? null,
+      pendingAttempts: spent?.pendingAttempts ?? null,
+    };
+    console.log(JSON.stringify(out, null, 2));
+    if (since && info.createdAt && since.getTime() < info.createdAt.getTime()) {
+      console.log(`\nAI_SPEND_CAP_SINCE is earlier than this ledger's start: spending before ${info.createdAt.toISOString()} isn't recorded here, so paid commands refuse to run. Set AI_SPEND_CAP_SINCE to that time or later.`);
+    }
+    if (!info.durable) console.log("\nThis ledger is a local file: it doesn't survive this machine or container. Production and staging need DATABASE_URL (managed Postgres).");
     return;
   }
   if (cmd === "log") {

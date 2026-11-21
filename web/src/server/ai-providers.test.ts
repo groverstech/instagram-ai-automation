@@ -48,6 +48,9 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   }
   return realFetch(input, init);
 }) as typeof fetch;
+// Every provider request in this suite must go through the executor's accounting (a pending usage
+// row written first): the paid-request guard blocks any that doesn't (paid-run-guard.ts).
+await (await import("./ai/paid-run-guard")).installPaidRequestGuard();
 
 /** Respect the caller's abort signal (timeouts), like a real network call. */
 function withAbort(signal: AbortSignal | null | undefined, fn: () => Response | Promise<Response>): Promise<Response> {

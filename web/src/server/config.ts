@@ -67,7 +67,7 @@ export function migrateOnStart(env: Env = process.env): boolean {
 }
 
 const set = (v: string | undefined) => Boolean(v && v.trim());
-const BOOL_KEYS = ["MIGRATE_ON_START", "ALLOW_LOCAL_STORAGE_IN_PRODUCTION", "AI_ALLOW_MOCK_IN_PRODUCTION", "RUN_JOBS_IN_PROCESS"] as const;
+const BOOL_KEYS = ["MIGRATE_ON_START", "ALLOW_LOCAL_STORAGE_IN_PRODUCTION", "AI_ALLOW_MOCK_IN_PRODUCTION", "RUN_JOBS_IN_PROCESS", "AI_SPEND_CAP_REQUIRED", "AI_SPEND_LEDGER_SINGLE_SESSION"] as const;
 
 /** Validate the environment. Pure (takes the env as input) so it's easy to test. */
 export function checkConfig(env: Env = process.env): ConfigProblem[] {
@@ -165,6 +165,17 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
     if (!Number.isFinite(n) || n < 0) err(k, "Must be a non-negative number (USD).");
   }
   if (set(env.AI_SPEND_CAP_SINCE) && Number.isNaN(Date.parse(env.AI_SPEND_CAP_SINCE!))) err("AI_SPEND_CAP_SINCE", "Must be a date and time, e.g. 2026-11-14T00:00:00Z.");
+  // Staging always runs under a hard spending cap (spend-cap.ts treats staging as required-cap mode,
+  // whatever this says; this makes a missing cap stop the web app and the worker at boot instead of
+  // refusing each request). Elsewhere AI_SPEND_CAP_REQUIRED=true opts in, with the same checks.
+  const capRequired = deployEnv(env) === "staging" || norm(env.AI_SPEND_CAP_REQUIRED) === "true";
+  if (capRequired) {
+    if (deployEnv(env) === "staging" && norm(env.AI_SPEND_CAP_REQUIRED) !== "true") err("AI_SPEND_CAP_REQUIRED", "Must be `true` in staging: every provider request is checked against a hard spending cap.");
+    if (!set(env.AI_SPEND_CAP_USD)) err("AI_SPEND_CAP_USD", "Required with AI_SPEND_CAP_REQUIRED (and in staging): the hard spending cap in USD.");
+    if (!set(env.AI_SPEND_CAP_SINCE)) err("AI_SPEND_CAP_SINCE", "Required with AI_SPEND_CAP_REQUIRED (and in staging): when the budget starts, in UTC, e.g. 2026-11-14T00:00:00Z.");
+    else if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(env.AI_SPEND_CAP_SINCE!.trim())) err("AI_SPEND_CAP_SINCE", "Must be UTC in the form 2026-11-14T00:00:00Z.");
+    if (set(env.VOYAGE_API_KEY)) err("VOYAGE_API_KEY", "Voyage embeddings aren't covered by the spending cap, so they're refused while it is required. Unset it (the local embedder is used).");
+  }
   // Images are priced per token from reported usage; a flat per-image price is no longer used.
   for (const k of Object.keys(env)) {
     if (/^IMAGE_PRICE_USD/.test(k) && set(env[k])) warn(k, "No longer used: image costs are calculated per token from the usage OpenAI reports (docs/AI_PROVIDERS.md). Use OPENAI_IMAGE_PRICE_*_PER_MTOK or the ai_prices table for other rates.");

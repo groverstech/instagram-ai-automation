@@ -229,43 +229,117 @@ npm run ai:billing -- reconcile openai    cost-export.csv  --since … --until �
 `AI_SPEND_CAP_SINCE` (default: the start of the month). It's checked **before every provider
 request**: a request is sent only if
 
-`committed spend + reserves of requests in flight + this request's worst case ≤ cap`.
+`committed spend (incl. every pending attempt at its reserve) + this request's worst case ≤ cap`.
 
 - Worst cases: for text, the estimated prompt (about 3 characters per token, all priced at the
-  highest input rate) plus the full output-token limit, plus web-search fees and results; for
-  images, `AI_SPEND_CAP_IMAGE_RESERVE_USD` (default $1.00, far above OpenAI's published per-image
-  output costs).
-- Attempts that may have been billed but have no price (unknown outcome, unpriced) count at their
-  reserve (`AI_SPEND_CAP_TEXT_RESERVE_USD`, default $0.50, or the image reserve).
+  highest input rate) plus the full output-token limit, plus web-search fees and results (raw
+  Messages calls such as the assistant's tool loop are priced at the most expensive catalog text
+  model, since server-side fallbacks may answer); for images, `AI_SPEND_CAP_IMAGE_RESERVE_USD`
+  (default $1.00, far above OpenAI's published per-image output costs).
+- Attempts that may have been billed but have no price (pending, unknown outcome, unpriced) count
+  at their reserve (stored on the row; older rows: `AI_SPEND_CAP_TEXT_RESERVE_USD`, default $0.50,
+  or the image reserve).
 - A refused request is recorded as `blocked` (`spend_cap`), and the user sees "The AI spending cap
   for this environment would be exceeded…". Nothing is sent.
-- The in-flight reserve is per process: run a validation with a single app process.
 - **Fails closed.** A cap that is set but malformed, or an `AI_SPEND_CAP_SINCE` that is set but
   not a date and time, refuses every request (it used to mean "no cap" / "start of month").
   `AI_SPEND_CAP_SINCE` is ISO 8601 in UTC, e.g. `2026-11-14T00:00:00Z`.
 - `AI_SPEND_CAP_REQUIRED=true` refuses every provider request unless a valid cap and start time
-  are set. Paid operator commands turn it on for their own process.
+  are set. It is always on in staging, and paid operator commands turn it on for their own process.
 
-**Paid operator commands** (`npm run test:live`, `npm run ai:check-anthropic`) go through
-`src/server/ai/paid-run-guard.ts`. Before anything can reach a provider they refuse to run unless:
+### Usage accounting (fail closed)
+
+Every paid provider request goes through one executor (`src/server/ai/call.ts`), and the executor
+goes through `src/server/ai/spend-cap.ts`:
+
+1. **Before sending**, in one database transaction under an advisory lock (so concurrent requests,
+   in this process or another sharing the database, are serialised): check the cap, then write the
+   attempt's `usage_events` row with outcome `pending` and its worst-case `reserve_usd`. If the
+   database is unavailable or the row can't be written, the request is **refused and nothing is
+   sent** (`AIAccountingError`, recorded as `blocked`/`accounting` when possible).
+2. **After the attempt**, the same row is settled in place (`success`, `failed`, `retried`, `refused`,
+   `unknown`), with units, estimated cost, the provider's request ID and `settled_at`. A settlement
+   only ever applies to a pending row, so retrying it never changes or double-counts anything.
+3. **If the settlement can't be written**, the result already paid for is still returned, the row
+   stays `pending` (still counted at its reserve), the failure is logged (`ai.usage_write_failed`),
+   and **this process sends no further request** until that settlement has been written; the next
+   request retries it first.
+4. **Interrupted executions** (the process dies mid-request) leave a `pending` row that keeps counting
+   at its reserve, since the request may have been billed. `npm run ai:billing -- log` lists them
+   (`countedUsd` shows what each row counts against the cap), and reconciling with the provider
+   console settles the real amount.
+5. **Retries** are one row per attempt (each a real request); a timeout without a response is
+   `unknown` and counts once, at its reserve.
+
+No provider request can bypass this: the Anthropic client is only used inside `execute()` (in
+`llm.ts`; the assistant's tool loop uses `anthropicMessage()`), OpenAI images only inside `execute()`
+(in `image.ts`). A test (`paid-run-guard.test.ts`) fails if any other file references a provider
+client or endpoint, and the provider test suites run with the network guard below installed, so a
+provider request without a pending ledger row fails them. Voyage embeddings aren't accounted and
+are refused while a cap is required.
+
+### Where the ledger is stored (durability)
+
+The ledger is the `usage_events` table in the app database. `ai_ledger_meta` records when that
+database started keeping it. `npm run ai:billing -- ledger` shows the storage, durability, start
+time, spending since `AI_SPEND_CAP_SINCE` and pending attempts, without any network request.
+
+- **`DATABASE_URL` (managed Postgres): durable.** Survives app restarts, deploys, and container or
+  session replacement. **Staging and production require it** (`checkConfig` refuses to start
+  without it), so the cap there counts all spending recorded by every web and worker process.
+- **Embedded PGlite (`.data/pg` or `PGLITE_DIR`): local only.** Survives restarts of the app on the
+  same machine, but **not** the machine or container: a cloud session's container is discarded with
+  the session. It is for development, demos and single-session validation.
+- **`memory://`: nothing survives.** Refused for paid operator commands.
+
+The cap can only count what the ledger recorded. Paid operator commands therefore refuse to run
+when `AI_SPEND_CAP_SINCE` is earlier than the ledger's start (spending before it isn't recorded),
+and on a local ledger unless the operator acknowledges a **single-session validation** with
+`AI_SPEND_LEDGER_SINGLE_SESSION=true`. They then print what the cap covers:
+"SINGLE-SESSION LEDGER: … Spending from earlier sessions or other containers is NOT counted". For a
+single-session validation, set `AI_SPEND_CAP_SINCE` to the start of that session and lower
+`AI_SPEND_CAP_USD` by anything the provider consoles show was already spent.
+
+### Paid operator commands
+
+`npm run test:live` and `npm run ai:check-anthropic` go through `src/server/ai/paid-run-guard.ts`.
+Before anything can reach a provider they refuse to run unless:
 - not in CI;
 - `AI_SPEND_CAP_USD` is a positive number and `AI_SPEND_CAP_SINCE` a UTC time in the format above,
   not in the future;
-- the usage ledger is persistent (`DATABASE_URL`, `PGLITE_DIR` or the default `.data/pg`; never
-  `memory://`), so spending recorded by earlier runs counts. Both commands share that ledger;
-- the spending already recorded since `AI_SPEND_CAP_SINCE` is below the cap.
+- the ledger database is reachable, has its start record, started no later than
+  `AI_SPEND_CAP_SINCE`, and is durable or acknowledged as single-session (above). Both commands
+  share it;
+- the spending already recorded since `AI_SPEND_CAP_SINCE` (pending attempts at their reserve) is
+  below the cap.
 
 During the run, required-cap mode is on and a network guard blocks any request to a provider host
-(`api.anthropic.com`, `api.openai.com`, or a configured base URL) that doesn't hold a reservation
-under the cap, i.e. that didn't go through the executor's check. Paid APIs with no cap accounting
+(`api.anthropic.com`, `api.openai.com`, or a configured base URL) that doesn't hold an open
+attempt, i.e. that didn't go through the executor's accounting. Paid APIs with no cap accounting
 (embeddings, `api.voyageai.com`) are blocked. `test:live` loads the guard through
 `vitest.live.config.ts` (`setupFiles`) before any live test file, and the live test refuses to start
 if it isn't active.
 
+### Staging and production
+
+- **Staging** (`DEPLOY_ENV=staging`): required-cap mode is always on in code (`spendCapRequired()`),
+  and the web app (`src/instrumentation.ts`) and worker (`src/server/jobs/worker.ts`) both run
+  `enforceConfig()` at boot, which **refuses to start** unless `AI_SPEND_CAP_REQUIRED=true`,
+  `AI_SPEND_CAP_USD` and `AI_SPEND_CAP_SINCE` (UTC) are set and `VOYAGE_API_KEY` is not. Both then
+  install the network guard. With managed Postgres, every process shares one ledger and the advisory
+  lock, so the cap holds across the web app and workers.
+- **Production**: every paid request is accounted fail-closed as above (no request without a durable
+  pending row), the circuit breaker, plan limits and the optional monthly spending limit apply, and
+  `AI_SPEND_CAP_REQUIRED=true` opts into the hard cap with the same boot checks and guard. A hard cap
+  isn't on by default in production, because reaching it stops all AI features for every customer:
+  that is a product decision.
+- This change doesn't enable publishing or autonomous AI actions: the assistant still only creates
+  drafts.
+
 `npm run ai:billing -- log --since <ISO> --budget 10 [--json run-log.json]` lists every real
 provider request: time, provider, route, model, attempt, outcome, HTTP status, the provider's
-request ID, units, estimated cost, running total and remaining budget. It holds no keys or prompt
-content.
+request ID, units, estimated cost, what it counts against the cap, running total and remaining
+budget. It holds no keys or prompt content.
 
 **Limits and entitlements:**
 - The existing plan limit (AI runs per month) still applies.
@@ -307,7 +381,8 @@ repository, logs or the browser. `npm run check:secrets` scans client bundles.
 | Price variables | — | See "How costs are calculated". The retired `IMAGE_PRICE_USD*` variables are ignored, with a warning at boot. |
 | `AI_MONTHLY_COST_LIMIT_USD`, `AI_MONTHLY_COST_LIMIT_USD_<PLAN>` | — | Optional spending limit |
 | `AI_SPEND_CAP_USD`, `AI_SPEND_CAP_SINCE` | — | Hard cap for the whole deployment, checked before every request (validation budgets). Since: UTC, e.g. `2026-11-14T00:00:00Z`. Required by `test:live` and `ai:check-anthropic` |
-| `AI_SPEND_CAP_REQUIRED` | — | `true`: refuse every provider request unless a valid cap is set (paid commands set it themselves) |
+| `AI_SPEND_CAP_REQUIRED` | — | `true`: refuse every provider request unless a valid cap is set (always on in staging; paid commands set it themselves) |
+| `AI_SPEND_LEDGER_SINGLE_SESSION` | — | `true`: lets paid operator commands run on a local (non-durable) ledger, covering only this machine's spending |
 | `AI_SPEND_CAP_IMAGE_RESERVE_USD`, `AI_SPEND_CAP_TEXT_RESERVE_USD` | 1.00 / 0.50 | Worst-case reserve for an image request; fallback reserve for an unpriced text attempt |
 | `LIVE_REPORT_DIR` | — | Where `test:live` writes `report.json`; Settings shows it |
 | `AI_PROVIDER=mock` | — | Demo mode (refused in production) |

@@ -1,25 +1,36 @@
 import "server-only";
-import { and, gte, isNull, ne, sql } from "drizzle-orm";
-import { getDb, schema } from "../db/client";
-import { AISpendCapConfigError, AISpendCapError } from "./errors";
+import { and, eq, gte, isNull, ne, sql } from "drizzle-orm";
+import { getDb, schema, type DB } from "../db/client";
+import type { UsageOutcome } from "../db/schema";
+import { log } from "../log";
+import { aiContext } from "./context";
+import { AIAccountingError, AISpendCapConfigError, AISpendCapError } from "./errors";
 import type { ResolvedRoute } from "./routes";
 
 /**
- * Hard AI spending cap for a whole deployment (docs/AI_PROVIDERS.md), e.g. a staging validation
- * budget. Unlike the monthly limit (checked after the fact), it is checked **before every
- * provider request**: a request is sent only if
+ * Fail-closed usage accounting and the hard AI spending cap (docs/AI_PROVIDERS.md).
  *
- *   committed spend since AI_SPEND_CAP_SINCE + reserves of requests in flight + this request's
- *   worst-case cost  <=  AI_SPEND_CAP_USD
+ * Every paid provider attempt goes through openAttempt() **before** it is sent, and settleAttempt()
+ * after. openAttempt(), in one database transaction under an advisory lock:
+ *   1. if a cap is set (AI_SPEND_CAP_USD), checks
+ *        committed spend since AI_SPEND_CAP_SINCE + this request's worst-case cost <= cap,
+ *      where committed spend includes every attempt still pending (in flight in any process, or
+ *      interrupted) at its reserved worst case;
+ *   2. writes the attempt's usage row with outcome `pending` and its reserve.
+ * If the database is unavailable or the row can't be written, the request is refused and nothing is
+ * sent (AIAccountingError). settleAttempt() then updates that same row in place to the final outcome,
+ * units and estimated cost, so an attempt is never counted twice. If settling fails, the row stays
+ * pending (still counted at its reserve), the failure is logged, and no further request is sent by
+ * this process until the settlement has been written.
  *
- * so the cap is never exceeded by a request we send. Committed spend is the ledger's estimated
- * cost of real (non-demo) attempts; an attempt that may have been billed but has no price
- * (unpriced, or an unknown outcome after a timeout) counts at its kind's fallback reserve.
- * Worst-case costs come from the caller (text: estimated input at the cache-write rate plus the
- * full output-token limit; images: AI_SPEND_CAP_IMAGE_RESERVE_USD, default $1.00, well above
- * OpenAI's published per-image output costs). Unset AI_SPEND_CAP_USD means no cap.
+ * A row left pending by a process that died (an interrupted execution) keeps counting at its
+ * reserve: the request may have been billed. `npm run ai:billing -- log` lists such rows.
  *
- * The in-flight reserve is per process: run validations with one app process (or one worker).
+ * Committed spend = estimated cost of priced attempts + the reserve of attempts that may have been
+ * billed without a price (pending, unknown outcome, unpriced). Worst cases come from the caller
+ * (text: estimated input at the cache-write rate plus the full output limit; images:
+ * AI_SPEND_CAP_IMAGE_RESERVE_USD, default $1.00). Unset AI_SPEND_CAP_USD means no cap, but the
+ * accounting above still applies to every attempt.
  */
 type Env = Record<string, string | undefined>;
 const numOr = (v: string | undefined, d: number | null) => {
@@ -34,10 +45,12 @@ export const SPEND_CAP_SINCE_FORMAT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d
 
 /**
  * When true, a provider request is refused unless a valid cap is configured (AISpendCapConfigError).
- * Paid operator commands (`npm run test:live`, `npm run ai:check-anthropic`) set it for their
- * process (paid-run-guard.ts); a deployment can set it too.
+ * Always on in staging (DEPLOY_ENV=staging), and turned on by paid operator commands
+ * (`npm run test:live`, `npm run ai:check-anthropic`, paid-run-guard.ts). A deployment can set
+ * AI_SPEND_CAP_REQUIRED=true anywhere else.
  */
-export const spendCapRequired = (env: Env = process.env) => /^(1|true|yes)$/i.test(env.AI_SPEND_CAP_REQUIRED?.trim() ?? "");
+export const spendCapRequired = (env: Env = process.env) =>
+  /^(1|true|yes)$/i.test(env.AI_SPEND_CAP_REQUIRED?.trim() ?? "") || (env.DEPLOY_ENV ?? "").trim().toLowerCase() === "staging";
 
 /**
  * Reads and validates the cap. Fails closed: a cap that is set but malformed, or a start time that
@@ -83,73 +96,189 @@ export function spendCapConfig(env: Env = process.env) {
   };
 }
 
-let inFlight = 0;
-let reservations = 0;
+type Executor = Pick<DB, "select">;
 
-/** Committed spend since `since`: priced cost, plus fallback reserves for possibly billed attempts without a price. */
-export async function committedSpendUsd(since: Date, env: Env = process.env): Promise<{ usd: number; pricedUsd: number; unpricedAttempts: number }> {
+/**
+ * Committed spend since `since`: priced cost, plus the reserve of every attempt that may have been
+ * billed without a price (pending — in flight or interrupted —, unknown outcome, or unpriced).
+ */
+export async function committedSpendUsd(
+  since: Date,
+  env: Env = process.env,
+  db?: Executor,
+): Promise<{ usd: number; pricedUsd: number; reservedUsd: number; unpricedAttempts: number; pendingAttempts: number }> {
   const cfg = spendCapConfig(env);
   const e = schema.usageEvents;
-  const db = await getDb();
-  const [priced] = await db
+  const q = db ?? (await getDb());
+  const [priced] = await q
     .select({ usd: sql<number>`coalesce(sum(${e.costUsd}), 0)` })
     .from(e)
     .where(and(gte(e.createdAt, since), ne(e.provider, "mock")));
-  const unpriced = await db
-    .select({ kind: e.kind, n: sql<number>`count(*)` })
+  const fallback = sql`case when ${e.kind} = 'image' then ${cfg.imageReserveUsd}::real else ${cfg.textReserveUsd}::real end`;
+  const [held] = await q
+    .select({
+      usd: sql<number>`coalesce(sum(coalesce(${e.reserveUsd}, ${fallback})), 0)`,
+      n: sql<number>`count(*)`,
+      pending: sql<number>`count(*) filter (where ${e.outcome} = 'pending')`,
+    })
     .from(e)
-    .where(and(gte(e.createdAt, since), ne(e.provider, "mock"), isNull(e.costUsd), sql`(${e.priceSource} = 'unpriced' or ${e.outcome} = 'unknown')`))
-    .groupBy(e.kind);
-  const fallback = unpriced.reduce((s, r) => s + Number(r.n) * (r.kind === "image" ? cfg.imageReserveUsd : cfg.textReserveUsd), 0);
+    .where(and(gte(e.createdAt, since), ne(e.provider, "mock"), isNull(e.costUsd), sql`(${e.outcome} in ('pending', 'unknown') or ${e.priceSource} = 'unpriced')`));
   const pricedUsd = Number(priced?.usd ?? 0);
-  return { usd: pricedUsd + fallback, pricedUsd, unpricedAttempts: unpriced.reduce((s, r) => s + Number(r.n), 0) };
+  const reservedUsd = Number(held?.usd ?? 0);
+  return { usd: pricedUsd + reservedUsd, pricedUsd, reservedUsd, unpricedAttempts: Number(held?.n ?? 0), pendingAttempts: Number(held?.pending ?? 0) };
+}
+
+// ------------------------------------------------------------------ attempts (process state)
+
+/** Settlement data for an attempt: everything the final usage row holds. */
+export type Settlement = {
+  outcome: Exclude<UsageOutcome, "pending">;
+  model?: string | null;
+  errorKind?: string | null;
+  httpStatus?: number | null;
+  units?: Record<string, number>;
+  costUsd?: number | null;
+  priceSource?: string | null;
+  providerRequestId?: string | null;
+  latencyMs?: number | null;
+};
+export type Ticket = { id: string; reserveUsd: number };
+
+// On globalThis: Next.js can load this module in more than one bundle of the same process.
+type State = { reservations: number; unsettled: Map<string, Settlement> };
+const g = globalThis as unknown as { __bpSpendState?: State };
+const state = (): State => (g.__bpSpendState ??= { reservations: 0, unsettled: new Map() });
+
+/** Serialises cap checks and pending-row writes across processes sharing the database. */
+const LEDGER_LOCK = 7_461_287_004;
+
+async function writeSettlement(id: string, s: Settlement): Promise<void> {
+  const db = await getDb();
+  const e = schema.usageEvents;
+  await db
+    .update(e)
+    .set({
+      outcome: s.outcome,
+      model: s.model ?? undefined,
+      errorKind: s.errorKind ?? null,
+      httpStatus: s.httpStatus ?? null,
+      units: Object.fromEntries(Object.entries(s.units ?? {}).filter(([, v]) => typeof v === "number" && Number.isFinite(v) && v !== 0)),
+      costUsd: s.costUsd ?? null,
+      priceSource: s.priceSource ?? null,
+      providerRequestId: s.providerRequestId ?? null,
+      latencyMs: s.latencyMs ?? null,
+      settledAt: new Date(),
+    })
+    // Only a pending row is settled: retrying a settlement never changes or double-counts it.
+    .where(and(eq(e.id, id), eq(e.outcome, "pending")));
+}
+
+/** Retries settlements that failed earlier. True when none are outstanding. */
+async function flushUnsettled(): Promise<boolean> {
+  const st = state();
+  for (const [id, s] of [...st.unsettled]) {
+    try {
+      await writeSettlement(id, s);
+      st.unsettled.delete(id);
+      log.info("ai.usage_settle_recovered", { id });
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
- * Reserve this request's worst-case cost under the cap, or refuse it (nothing is sent).
- * Returns a release function to call once the attempt is recorded in the ledger.
+ * Before a paid request: check the cap and durably record the attempt as pending, or refuse.
+ * Throws AISpendCapConfigError (cap missing or invalid), AIAccountingError (the ledger can't record
+ * it) or AISpendCapError (the cap would be exceeded). Nothing has been sent when it throws.
  */
-export async function reserveSpend(route: Pick<ResolvedRoute, "kind" | "key">, worstCaseUsd: number | null, env: Env = process.env): Promise<() => void> {
+export async function openAttempt(
+  route: Pick<ResolvedRoute, "kind" | "key" | "provider" | "model">,
+  info: { attempt: number; params?: Record<string, string> },
+  worstCaseUsd: number | null,
+  env: Env = process.env,
+): Promise<Ticket> {
   const parsed = parseSpendCap(env);
   if (!parsed.ok) throw new AISpendCapConfigError(parsed.reason);
-  if (parsed.capUsd === null) return () => {};
+  if (!(await flushUnsettled())) throw new AIAccountingError("an earlier request's usage couldn't be recorded yet");
   const cfg = spendCapConfig(env);
   const fallback = route.kind === "image" ? cfg.imageReserveUsd : cfg.textReserveUsd;
   const reserve = worstCaseUsd !== null && Number.isFinite(worstCaseUsd) && worstCaseUsd >= 0 ? worstCaseUsd : fallback;
-  // Reserve first, then read the ledger: concurrent requests in this process can't both pass the
-  // check while one of them is awaiting the database.
-  inFlight += reserve;
-  reservations++;
-  let usd: number;
+  let db: DB;
   try {
-    ({ usd } = await committedSpendUsd(parsed.since, env));
+    db = await getDb();
   } catch (e) {
-    inFlight = Math.max(0, inFlight - reserve);
-    reservations = Math.max(0, reservations - 1);
-    throw e;
+    log.error("ai.usage_db_unavailable", { route: route.key, error: e instanceof Error ? e.message : String(e) });
+    throw new AIAccountingError("the database is unavailable");
   }
-  if (usd + inFlight > parsed.capUsd + 1e-9) {
-    inFlight = Math.max(0, inFlight - reserve);
-    reservations = Math.max(0, reservations - 1);
-    throw new AISpendCapError(parsed.capUsd, usd, reserve);
+  const ctx = aiContext();
+  let id: string;
+  try {
+    id = await db.transaction(async (tx) => {
+      await tx.execute(sql`select pg_advisory_xact_lock(${LEDGER_LOCK})`);
+      if (parsed.capUsd !== null) {
+        const { usd } = await committedSpendUsd(parsed.since, env, tx);
+        if (usd + reserve > parsed.capUsd + 1e-9) throw new AISpendCapError(parsed.capUsd, usd, reserve);
+      }
+      const [row] = await tx
+        .insert(schema.usageEvents)
+        .values({
+          workspaceId: ctx.workspaceId ?? null,
+          brandId: ctx.brandId ?? null,
+          userId: ctx.userId ?? null,
+          taskId: ctx.taskId ?? null,
+          runId: ctx.runId ?? null,
+          route: route.key,
+          provider: route.provider,
+          model: route.model ?? null,
+          kind: route.kind,
+          params: info.params ?? {},
+          attempt: info.attempt,
+          outcome: "pending",
+          reserveUsd: reserve,
+        })
+        .returning({ id: schema.usageEvents.id });
+      if (!row?.id) throw new Error("the pending usage row wasn't returned");
+      return row.id;
+    });
+  } catch (e) {
+    if (e instanceof AISpendCapError) throw e;
+    log.error("ai.usage_write_failed", { route: route.key, stage: "pending", error: e instanceof Error ? e.message : String(e) });
+    throw new AIAccountingError("the usage ledger couldn't be written");
   }
-  let released = false;
-  return () => {
-    if (!released) {
-      released = true;
-      inFlight = Math.max(0, inFlight - reserve);
-      reservations = Math.max(0, reservations - 1);
-    }
-  };
+  state().reservations++;
+  return { id, reserveUsd: reserve };
 }
 
-/** Requests currently holding a reservation under the cap (the paid-run network guard checks this). */
+/**
+ * After the attempt: settle its pending row in place. Never throws. If the write fails, the row
+ * stays pending (still counted at its reserve), the failure is logged, and openAttempt() refuses
+ * further requests until the settlement is written.
+ */
+export async function settleAttempt(ticket: Ticket, s: Settlement): Promise<void> {
+  const st = state();
+  try {
+    await writeSettlement(ticket.id, s);
+  } catch (e) {
+    st.unsettled.set(ticket.id, s);
+    log.error("ai.usage_write_failed", { id: ticket.id, stage: "settle", outcome: s.outcome, error: e instanceof Error ? e.message : String(e) });
+  } finally {
+    st.reservations = Math.max(0, st.reservations - 1);
+  }
+}
+
+/** Attempts this process has opened and not yet settled (the paid-run network guard checks this). */
 export function activeReservations(): number {
-  return reservations;
+  return state().reservations;
 }
 
-/** For tests. */
+/** Settlements this process couldn't write yet (their rows stay pending). */
+export function unsettledAttempts(): number {
+  return state().unsettled.size;
+}
+
+/** For tests: forget this process's state (as after a restart). */
 export function resetSpendCapState() {
-  inFlight = 0;
-  reservations = 0;
+  g.__bpSpendState = { reservations: 0, unsettled: new Map() };
 }

@@ -38,6 +38,9 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   calls.push({ url, headers, body });
   return url.startsWith("https://api.openai.com/") ? openai(body) : anthropic(body);
 }) as typeof fetch;
+// Every provider request in this suite must go through the executor's accounting (a pending usage
+// row written first): the paid-request guard blocks any that doesn't (paid-run-guard.ts).
+await (await import("./ai/paid-run-guard")).installPaidRequestGuard();
 
 const okImage = () => new Response(JSON.stringify({ created: 1, data: [{ b64_json: PNG_1x1 }], usage: { input_tokens: 60, output_tokens: 4160 } }), { status: 200, headers: { "content-type": "application/json" } });
 const claude = (obj: unknown) =>

@@ -29,6 +29,9 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   captured.push({ body });
   return respond(body, captured.length);
 }) as typeof fetch;
+// Every provider request in this suite must go through the executor's accounting (a pending usage
+// row written first): the paid-request guard blocks any that doesn't (paid-run-guard.ts).
+await (await import("./ai/paid-run-guard")).installPaidRequestGuard();
 
 const msg = (content: unknown[], usage: Record<string, unknown> = {}) =>
   new Response(JSON.stringify({ id: "msg_test", type: "message", role: "assistant", model: "claude-opus-5-5", content, stop_reason: "end_turn", stop_sequence: null, usage: { input_tokens: 10_000, output_tokens: 2_000, ...usage } }), {

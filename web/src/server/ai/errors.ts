@@ -33,6 +33,17 @@ export class AISpendCapConfigError extends Error {
   }
 }
 
+/**
+ * The usage ledger can't record this request (database unavailable, a write failed, or an earlier
+ * attempt couldn't be settled), so it wasn't sent: no paid request goes out unaccounted for.
+ * Classified as `spend_cap`: a spending control refused it.
+ */
+export class AIAccountingError extends Error {
+  constructor(readonly reason: string) {
+    super(`AI usage can't be recorded right now (${reason}), so this request wasn't sent. Please try again shortly.`);
+  }
+}
+
 /** A hard spending cap (AI_SPEND_CAP_USD) would be exceeded by this request. Nothing was sent. */
 export class AISpendCapError extends Error {
   constructor(
@@ -141,7 +152,7 @@ export function classify(e: unknown): Classified {
     ...extra,
   });
   if (e instanceof AIUnavailableError) return base("circuit_open", { retryable: false, responded: false, serviceFailure: false });
-  if (e instanceof AISpendCapError || e instanceof AISpendCapConfigError) return base("spend_cap", { retryable: false, responded: false, serviceFailure: false });
+  if (e instanceof AISpendCapError || e instanceof AISpendCapConfigError || e instanceof AIAccountingError) return base("spend_cap", { retryable: false, responded: false, serviceFailure: false });
   if (e instanceof AIConfigError || e instanceof ImageProviderUnavailable) return base("not_configured", { retryable: false, responded: false, serviceFailure: false });
   if (e instanceof AIRefusalError) return base("refusal");
   if (e instanceof AIOutputError) return base("output_invalid");
@@ -197,7 +208,7 @@ export function isServiceError(e: unknown): boolean {
 
 /** User-facing message for AI failures; never exposes raw API payloads or keys. */
 export function friendlyAIError(e: unknown): string | null {
-  if (e instanceof AIConfigError || e instanceof AIRefusalError || e instanceof AIOutputError || e instanceof AIUnavailableError || e instanceof AISpendCapError || e instanceof AISpendCapConfigError) return e.message;
+  if (e instanceof AIConfigError || e instanceof AIRefusalError || e instanceof AIOutputError || e instanceof AIUnavailableError || e instanceof AISpendCapError || e instanceof AISpendCapConfigError || e instanceof AIAccountingError) return e.message;
   if (e instanceof ImageRefusedError) return e.message;
   if (e instanceof ImageProviderUnavailable) return "No image provider is configured. Choose brand photos or a typographic layout, or set OPENAI_API_KEY on the server.";
   const image = e instanceof ImageProviderError;

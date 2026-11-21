@@ -114,8 +114,15 @@ machine with the staging keys, with outbound HTTPS to `api.anthropic.com` and `a
 
 `test:live` has the same spending-cap guard: it refuses to run without `AI_SPEND_CAP_USD` and
 `AI_SPEND_CAP_SINCE` (UTC), with an in-memory ledger, in CI, or once the cap is used up, and blocks any
-provider request that doesn't hold a reservation under the cap. Set the cap once for the whole
+provider request that doesn't go through the usage accounting. Set the cap once for the whole
 validation, e.g. `export AI_SPEND_CAP_USD=10 AI_SPEND_CAP_SINCE=2026-11-14T00:00:00Z`.
+
+The cap counts only what the usage ledger recorded. On staging (`DATABASE_URL`) that is every run.
+Without `DATABASE_URL` the ledger is a local file that doesn't survive the machine or container, so
+both commands refuse unless you set `AI_SPEND_LEDGER_SINGLE_SESSION=true`, and refuse an
+`AI_SPEND_CAP_SINCE` earlier than the ledger's start (`npm run ai:billing -- ledger` shows it). Run
+the whole validation in that one session, set `AI_SPEND_CAP_SINCE` to its start, and lower the cap by
+anything the provider consoles show was already spent.
 
 ```bash
 cd web

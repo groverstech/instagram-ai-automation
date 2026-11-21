@@ -133,6 +133,8 @@ export type RequestLogRow = {
   params: Record<string, string>;
   latencyMs: number | null;
   estimatedUsd: number | null;
+  /** What this row counts against the spending cap: its estimated cost, or its reserve when it may have been billed without a price. */
+  countedUsd: number;
   priceSource: string | null;
   cumulativeUsd: number;
   remainingUsd: number | null;
@@ -152,8 +154,14 @@ export async function requestLog(since: Date, until: Date | null, budgetUsd: num
     .where(and(gte(e.createdAt, since), until ? lt(e.createdAt, until) : undefined, ne(e.provider, "mock")))
     .orderBy(e.createdAt);
   let cumulative = 0;
+  const { spendCapConfig } = await import("./spend-cap");
+  const cfg = spendCapConfig();
   return rows.map((r) => {
-    cumulative += r.costUsd ?? 0;
+    // Same rule as the spending cap: attempts that may have been billed without a price (pending —
+    // in flight or interrupted —, unknown outcome, unpriced) count at their reserve.
+    const held = r.costUsd === null && (r.outcome === "pending" || r.outcome === "unknown" || r.priceSource === "unpriced");
+    const counted = r.costUsd ?? (held ? (r.reserveUsd ?? (r.kind === "image" ? cfg.imageReserveUsd : cfg.textReserveUsd)) : 0);
+    cumulative += counted;
     return {
       at: r.createdAt.toISOString(),
       provider: r.provider,
@@ -168,6 +176,7 @@ export async function requestLog(since: Date, until: Date | null, budgetUsd: num
       params: (r.params as Record<string, string>) ?? {},
       latencyMs: r.latencyMs ?? null,
       estimatedUsd: r.costUsd ?? null,
+      countedUsd: counted,
       priceSource: r.priceSource ?? null,
       cumulativeUsd: Math.round(cumulative * 1e6) / 1e6,
       remainingUsd: budgetUsd === null ? null : Math.round((budgetUsd - cumulative) * 1e6) / 1e6,

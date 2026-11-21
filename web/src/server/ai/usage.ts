@@ -8,8 +8,13 @@ import { aiContext } from "./context";
 
 /**
  * The AI usage ledger (`usage_events`, docs/AI_PROVIDERS.md): one row per provider attempt, with
- * its outcome, units, estimated cost, price source and the provider's request ID. Writing a row
- * never breaks the AI call it records.
+ * its outcome, units, estimated cost, price source and the provider's request ID.
+ *
+ * Paid attempts are written by spend-cap.ts (openAttempt / settleAttempt): a pending row is written
+ * **before** the request is sent, or the request is refused, and settled in place afterwards.
+ * recordAttempt() is only for rows of requests that were never sent (blocked by the circuit breaker
+ * or a spending control) and demo calls: a failed write there is logged as an error, and the call
+ * it describes cost nothing.
  */
 export type AttemptRecord = {
   route: string;

@@ -52,7 +52,34 @@ export function ledgerIsPersistent(env: Env = process.env): boolean {
   return (env.PGLITE_DIR ?? "").trim() !== "memory://";
 }
 
-export type PaidRunBudget = { capUsd: number; since: string; committedUsd: number; remainingUsd: number };
+export type LedgerInfo = {
+  /** postgres: DATABASE_URL (durable across restarts and container replacement when it is managed Postgres). pglite-file: a local file, lost with this machine or container. */
+  storage: "postgres" | "pglite-file" | "pglite-memory";
+  durable: boolean;
+  /** When this database started keeping the ledger (ai_ledger_meta); spending before it isn't recorded here. */
+  createdAt: Date | null;
+};
+
+/** Where the usage ledger lives and since when it has been kept. Opens the database; sends nothing. */
+export async function ledgerInfo(env: Env = process.env): Promise<LedgerInfo> {
+  const storage = env.DATABASE_URL?.trim() ? "postgres" : (env.PGLITE_DIR ?? "").trim() === "memory://" ? "pglite-memory" : "pglite-file";
+  const { getDb, schema } = await import("../db/client");
+  const { eq } = await import("drizzle-orm");
+  const db = await getDb();
+  const [row] = await db.select().from(schema.aiLedgerMeta).where(eq(schema.aiLedgerMeta.key, "ledger"));
+  return { storage, durable: storage === "postgres", createdAt: row?.createdAt ?? null };
+}
+
+export type PaidRunBudget = {
+  capUsd: number;
+  since: string;
+  committedUsd: number;
+  pendingAttempts: number;
+  remainingUsd: number;
+  ledger: { storage: LedgerInfo["storage"]; durable: boolean; createdAt: string };
+  /** What the cap covers, in plain words: printed by the commands. */
+  coverage: string;
+};
 
 /**
  * Validates the configuration (no I/O). Exported for tests; preparePaidRun() calls it first.
@@ -70,16 +97,63 @@ export async function checkPaidRunConfig(env: Env = process.env, now = new Date(
   return { capUsd: parsed.capUsd, since: parsed.since };
 }
 
-/** Full pre-flight: configuration, then recorded spending. Turns on required-cap mode. Sends nothing. */
+/**
+ * Full pre-flight: configuration, the ledger's durability and coverage, then recorded spending.
+ * Turns on required-cap mode. Sends nothing.
+ *
+ * Durability: the cap can only count spending this ledger has recorded. With DATABASE_URL (managed
+ * Postgres) the ledger survives restarts and container replacement. A local PGlite file does not
+ * survive this machine or container, so a run on it is refused unless the operator acknowledges a
+ * single-session validation (AI_SPEND_LEDGER_SINGLE_SESSION=true). Either way, AI_SPEND_CAP_SINCE
+ * must not be earlier than the ledger's creation: spending before it isn't recorded here, and the
+ * cap must not appear to cover it.
+ */
 export async function preparePaidRun(env: Env = process.env): Promise<PaidRunBudget> {
   const { capUsd, since } = await checkPaidRunConfig(env);
+  let ledger: LedgerInfo;
+  try {
+    ledger = await ledgerInfo(env);
+  } catch (e) {
+    throw new PaidRunRefused(`the usage ledger (database) is unavailable, so spending can't be recorded: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  if (!ledger.createdAt) throw new PaidRunRefused("the usage ledger has no creation record (ai_ledger_meta): apply the database migrations first.");
+  if (!ledger.durable && !/^(1|true|yes)$/i.test(env.AI_SPEND_LEDGER_SINGLE_SESSION?.trim() ?? "")) {
+    throw new PaidRunRefused(
+      `the usage ledger is a local file (${ledger.storage}) that won't survive this machine or container, so the cap can't cover spending from other sessions. ` +
+        "Use DATABASE_URL (managed Postgres), or acknowledge a single-session validation with AI_SPEND_LEDGER_SINGLE_SESSION=true.",
+    );
+  }
+  if (since.getTime() < ledger.createdAt.getTime()) {
+    const from = ledger.createdAt.toISOString().replace(/\.\d+Z$/, "Z");
+    throw new PaidRunRefused(
+      `this usage ledger was created at ${ledger.createdAt.toISOString()}, after AI_SPEND_CAP_SINCE (${since.toISOString()}): spending between those times isn't recorded here, so the cap can't cover it. ` +
+        `Set AI_SPEND_CAP_SINCE to ${from} or later, and lower AI_SPEND_CAP_USD by anything the provider consoles show was spent before then.`,
+    );
+  }
   env.AI_SPEND_CAP_REQUIRED = "true";
   const { committedSpendUsd } = await import("./spend-cap");
-  const { usd } = await committedSpendUsd(since, env);
+  let usd: number;
+  let pendingAttempts: number;
+  try {
+    ({ usd, pendingAttempts } = await committedSpendUsd(since, env));
+  } catch (e) {
+    throw new PaidRunRefused(`recorded spending couldn't be read from the usage ledger: ${e instanceof Error ? e.message : String(e)}`);
+  }
   if (usd >= capUsd - 1e-9) {
     throw new PaidRunRefused(`the spending cap of $${capUsd.toFixed(2)} is already used up: about $${usd.toFixed(4)} recorded since ${since.toISOString()}.`);
   }
-  return { capUsd, since: since.toISOString(), committedUsd: usd, remainingUsd: capUsd - usd };
+  const coverage = ledger.durable
+    ? `The cap covers every request recorded in this database (${ledger.storage}) since ${since.toISOString()}.`
+    : `SINGLE-SESSION LEDGER: the cap covers only requests recorded on this machine since ${since.toISOString()}. Spending from earlier sessions or other containers is NOT counted; check the provider consoles.`;
+  return {
+    capUsd,
+    since: since.toISOString(),
+    committedUsd: usd,
+    pendingAttempts,
+    remainingUsd: capUsd - usd,
+    ledger: { storage: ledger.storage, durable: ledger.durable, createdAt: ledger.createdAt.toISOString() },
+    coverage,
+  };
 }
 
 const GUARD = Symbol.for("brandpilot.paidRequestGuard");

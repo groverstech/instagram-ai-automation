@@ -376,4 +376,30 @@ export function aiStatus() {
   return { provider: "anthropic", ready, model: MODEL } as const;
 }
 
-export { anthropic as anthropicClient };
+/**
+ * One raw Messages API request (tool-use loops such as the assistant), through the executor like
+ * every other text request: usage recorded as pending before sending (or refused), spending cap,
+ * circuit breaker, retries and the usage ledger. Provider code must never call the client directly.
+ *
+ * The worst-case reserve is priced at the most expensive catalog text model, since server-side
+ * fallbacks can answer with another model.
+ */
+export async function anthropicMessage(
+  routeKey: RouteKey,
+  body: Omit<Anthropic.Beta.MessageCreateParamsNonStreaming, "model">,
+): Promise<{ message: Anthropic.Beta.BetaMessage; usage: Usage; provider: string }> {
+  const route = await routed(routeKey);
+  const { execute } = await import("./call");
+  const { textCost } = await import("./pricing");
+  const maxTokens = Math.min(body.max_tokens, 16000);
+  const chars = JSON.stringify({ system: body.system, messages: body.messages, tools: body.tools }).length;
+  const worstUsd = [route.model, ...Object.keys(TEXT_MODELS)]
+    .map((model) => textWorstCaseUsd(model, { chars, maxTokens }, textCost))
+    .reduce<number | null>((max, v) => (v === null ? max : max === null ? v : Math.max(max, v)), null);
+  const pricing = await textPricing();
+  const out = await execute(route, { ...pricing, worstCaseUsd: worstUsd }, async () => {
+    const res = await anthropic().beta.messages.create({ ...body, model: route.model, max_tokens: maxTokens }, { timeout: route.timeoutMs });
+    return { value: res, usage: usageOf(res), requestId: requestIdOf(res) };
+  });
+  return { message: out.value, usage: out.usage, provider: `anthropic:${out.value.model}` };
+}

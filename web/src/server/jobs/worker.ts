@@ -19,6 +19,11 @@ if (!process.env.DATABASE_URL) {
   console.error("The standalone worker needs DATABASE_URL. With embedded PGlite, jobs run inside the web server.");
   process.exit(1);
 }
+// Staging (or AI_SPEND_CAP_REQUIRED=true): block provider requests without a spend-cap reservation.
+{
+  const { spendCapRequired } = await import("../ai/spend-cap");
+  if (spendCapRequired()) await (await import("../ai/paid-run-guard")).installPaidRequestGuard();
+}
 
 const queues = new Set((process.env.WORKER_QUEUES ?? "jobs,ai").split(",").map((q) => q.trim()).filter(Boolean));
 const unknown = [...queues].filter((q) => q !== "jobs" && q !== "ai");

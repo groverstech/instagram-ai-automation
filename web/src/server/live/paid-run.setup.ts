@@ -8,7 +8,7 @@ try {
   const budget = await preparePaidRun();
   await installPaidRequestGuard();
   console.log(
-    `Spending cap: $${budget.capUsd.toFixed(2)} since ${budget.since}; recorded so far about $${budget.committedUsd.toFixed(4)}, remaining about $${budget.remainingUsd.toFixed(4)}.`,
+    `Spending cap: $${budget.capUsd.toFixed(2)} since ${budget.since}; recorded so far about $${budget.committedUsd.toFixed(4)}, remaining about $${budget.remainingUsd.toFixed(4)} (${budget.pendingAttempts} pending).\n${budget.coverage}`,
   );
 } catch (e) {
   if (e instanceof PaidRunRefused) throw new Error(`Refusing to run live provider tests: ${e.message}`);

@@ -56,13 +56,15 @@ async function main() {
   // Spending cap (paid-run-guard.ts): a valid cap and start time, a persistent ledger, budget left.
   // Then every provider request must hold a reservation under the cap, checked before it is sent.
   const { PaidRunRefused, installPaidRequestGuard, preparePaidRun } = await import("./paid-run-guard");
+  let budget: Awaited<ReturnType<typeof preparePaidRun>> | null = null;
   try {
-    await preparePaidRun();
+    budget = await preparePaidRun();
   } catch (e) {
     if (e instanceof PaidRunRefused) fail(e.message);
     throw e;
   }
   await installPaidRequestGuard();
+  console.error(`Spending cap: $${budget!.capUsd.toFixed(2)} since ${budget!.since}; recorded about $${budget!.committedUsd.toFixed(4)}, remaining about $${budget!.remainingUsd.toFixed(4)}.\n${budget!.coverage}`);
   const { llm, friendlyAIError } = await import("./llm");
   const { classify } = await import("./errors");
   const { getDb, schema } = await import("../db/client");
@@ -97,6 +99,8 @@ async function main() {
     usage: { inputTokens: units.inputTokens ?? 0, outputTokens: units.outputTokens ?? 0, cacheReadTokens: units.cacheReadTokens ?? 0, cacheWriteTokens: units.cacheWriteTokens ?? 0 },
     estimatedUsd: attempt?.costUsd ?? null,
     priceSource: attempt?.priceSource ?? null,
+    ledgerOutcome: attempt?.outcome ?? null,
+    spendingCap: budget ? { capUsd: budget.capUsd, since: budget.since, ledger: budget.ledger, coverage: budget.coverage } : null,
     latencyMs: attempt?.latencyMs ?? null,
     authenticated: attempt ? attempt.errorKind !== "auth" && attempt.errorKind !== "permission" && attempt.outcome !== "blocked" : false,
     realResponse: Boolean(result && result.provider.startsWith("anthropic:")),

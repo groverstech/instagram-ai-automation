@@ -1,7 +1,8 @@
 import "server-only";
 import { log } from "../log";
 import { circuitAllows, circuitFailure, circuitSuccess } from "./circuit";
-import { AIUnavailableError, classify } from "./errors";
+import { AIAccountingError, AIUnavailableError, classify } from "./errors";
+import { openAttempt, settleAttempt, type Ticket } from "./spend-cap";
 import { attachUsage, usageFromError, type Usage } from "./llm";
 import { addUsage } from "./pricing";
 import type { Priced } from "./pricing";
@@ -67,40 +68,25 @@ export async function execute<T>(route: ResolvedRoute, pricing: Pricing, fn: (at
       await recordAttempt({ route: route.key, provider: route.provider, model: route.model, kind: route.kind, params, attempt, outcome: "blocked", errorKind: "circuit_open" });
       throw markHandled(withTotal(new AIUnavailableError(route.provider, gate.retryInMs), total, billed));
     }
-    let release: () => void;
+    // Accounting before sending (spend-cap.ts): the cap is checked and the attempt durably recorded
+    // as pending, or the request is refused and nothing is sent.
+    let ticket: Ticket;
     try {
-      const { reserveSpend } = await import("./spend-cap");
-      release = await reserveSpend(route, pricing.worstCaseUsd ?? null);
+      ticket = await openAttempt(route, { attempt, params }, pricing.worstCaseUsd ?? null);
     } catch (e) {
       if (classify(e).kind !== "spend_cap") throw e;
-      await recordAttempt({ route: route.key, provider: route.provider, model: route.model, kind: route.kind, params, attempt, outcome: "blocked", errorKind: "spend_cap" });
-      log.warn("ai.spend_cap", { route: route.key, provider: route.provider });
+      const reason = e instanceof AIAccountingError ? "accounting" : "spend_cap";
+      // Best effort: with the ledger down this write fails too (and is logged); nothing was sent.
+      await recordAttempt({ route: route.key, provider: route.provider, model: route.model, kind: route.kind, params, attempt, outcome: "blocked", errorKind: reason });
+      log.warn(reason === "accounting" ? "ai.accounting_unavailable" : "ai.spend_cap", { route: route.key, provider: route.provider });
       throw markHandled(withTotal(e, total, billed));
     }
     const counter = aiContext().attempts;
     if (counter) counter.n++;
     const started = Date.now();
+    let r: AttemptResult<T>;
     try {
-      const r = await fn(attempt);
-      circuitSuccess(route.provider);
-      const cost = pricing.price(r.usage);
-      await recordAttempt({
-        route: route.key,
-        provider: route.provider,
-        model: r.usage.model ?? r.usage.imageModel ?? route.model,
-        kind: route.kind,
-        params,
-        attempt,
-        outcome: "success",
-        units: pricing.units(r.usage),
-        costUsd: cost.usd,
-        priceSource: cost.source,
-        providerRequestId: r.requestId ?? null,
-        latencyMs: Date.now() - started,
-      });
-      release();
-      total = addUsage(total, r.usage);
-      return { value: r.value, usage: total, requestId: r.requestId };
+      r = await fn(attempt);
     } catch (e) {
       const c = classify(e);
       circuitFailure(route.provider, c.serviceFailure);
@@ -116,28 +102,47 @@ export async function execute<T>(route: ResolvedRoute, pricing: Pricing, fn: (at
       }
       const waitMs = c.retryable ? backoffMs(attempt, c.retryAfterMs) : 0;
       const retry = c.retryable && attempt < route.maxAttempts && (!c.outcomeUnknown || route.retryUnknown) && waitMs <= maxWait;
-      const cost = attemptUsage ? pricing.price(own) : null;
-      await recordAttempt({
-        route: route.key,
-        provider: route.provider,
+      const cost = attemptUsage ? safe(() => pricing.price(own), UNPRICED_COST) : null;
+      await settleAttempt(ticket, {
         model: own.model ?? own.imageModel ?? route.model,
-        kind: route.kind,
-        params,
-        attempt,
         outcome: retry ? "retried" : c.kind === "refusal" || c.kind === "content_policy" ? "refused" : c.outcomeUnknown ? "unknown" : c.kind === "not_configured" ? "blocked" : "failed",
         errorKind: c.kind,
         httpStatus: c.status ?? null,
-        units: { ...(attemptUsage ? pricing.units(own) : {}), ...(c.outcomeUnknown ? { unknownOutcome: 1 } : {}) },
+        units: { ...(attemptUsage ? safe(() => pricing.units(own), {}) : {}), ...(c.outcomeUnknown ? { unknownOutcome: 1 } : {}) },
         costUsd: cost?.usd ?? null,
         priceSource: cost?.source ?? (c.outcomeUnknown ? "unknown" : null),
         providerRequestId: c.requestId ?? null,
         latencyMs: Date.now() - started,
       });
-      release();
       if (!retry) throw markHandled(withTotal(e, total, billed));
       log.warn("ai.retry", { route: route.key, provider: route.provider, attempt, kind: c.kind, waitMs });
       await sleep(waitMs);
+      continue;
     }
+    circuitSuccess(route.provider);
+    const cost = safe(() => pricing.price(r.usage), UNPRICED_COST);
+    await settleAttempt(ticket, {
+      model: r.usage.model ?? r.usage.imageModel ?? route.model,
+      outcome: "success",
+      units: safe(() => pricing.units(r.usage), {}),
+      costUsd: cost.usd,
+      priceSource: cost.source,
+      providerRequestId: r.requestId ?? null,
+      latencyMs: Date.now() - started,
+    });
+    total = addUsage(total, r.usage);
+    return { value: r.value, usage: total, requestId: r.requestId };
+  }
+}
+
+/** A pricing bug must never stop an attempt from being settled: it then counts at its reserve (unpriced). */
+const UNPRICED_COST: Priced = { usd: null, source: "unpriced" };
+function safe<X>(f: () => X, fallback: X): X {
+  try {
+    return f();
+  } catch (e) {
+    log.error("ai.pricing_failed", { error: e instanceof Error ? e.message : String(e) });
+    return fallback;
   }
 }
 

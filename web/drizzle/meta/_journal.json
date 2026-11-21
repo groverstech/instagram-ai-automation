@@ -71,6 +71,13 @@
       "when": 1794367317060,
       "tag": "0009_image_pricing_billing",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795230399455,
+      "tag": "0010_ai_ledger_durability",
+      "breakpoints": true
     }
   ]
 }

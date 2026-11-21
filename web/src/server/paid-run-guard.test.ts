@@ -87,42 +87,116 @@ describe("paid runs: configuration is refused before anything is sent", () => {
 
 describe("paid runs: the cap counts recorded spending, in-flight requests and the worst case", () => {
   it("refuses the run when recorded spending has used up the cap, without a network request", async () => {
-    const since = new Date(Date.now() - 1000).toISOString().replace(/\.\d+Z$/, "Z");
+    await new Promise((r) => setTimeout(r, 5));
+    const since = new Date().toISOString(); // after the ledger was created, before these rows
     await recordAttempt({ route: "brand.qa", provider: "anthropic", model: "m", kind: "text", attempt: 1, outcome: "success", costUsd: 0.6, priceSource: "test" });
     await recordAttempt({ route: "image.generate", provider: "openai", model: "m", kind: "image", attempt: 1, outcome: "unknown", costUsd: null, priceSource: "unknown" }); // counts at its $1 reserve
-    const env: Record<string, string | undefined> = { AI_SPEND_CAP_USD: "1.6", AI_SPEND_CAP_SINCE: since, PGLITE_DIR: process.env.PGLITE_DIR };
+    const env: Record<string, string | undefined> = { AI_SPEND_CAP_USD: "1.6", AI_SPEND_CAP_SINCE: since, PGLITE_DIR: process.env.PGLITE_DIR, AI_SPEND_LEDGER_SINGLE_SESSION: "true" };
     await expect(guard.preparePaidRun(env)).rejects.toThrow(/already used up/);
     env.AI_SPEND_CAP_USD = "2";
     const budget = await guard.preparePaidRun(env);
     expect(budget.committedUsd).toBeCloseTo(1.6, 9);
     expect(budget.remainingUsd).toBeCloseTo(0.4, 9);
     expect(env.AI_SPEND_CAP_REQUIRED).toBe("true");
+    expect(budget.ledger).toMatchObject({ storage: "pglite-file", durable: false });
+    expect(budget.coverage).toMatch(/SINGLE-SESSION LEDGER/);
+    expect(budget.coverage).toMatch(/NOT counted/);
+    expect(networkCalls).toHaveLength(0);
+  });
+
+  it("a local ledger: refused unless single-session is acknowledged, and never before the ledger began", async () => {
+    const { ledgerInfo } = guard;
+    const info = await ledgerInfo();
+    expect(info.storage).toBe("pglite-file");
+    expect(info.durable).toBe(false);
+    expect(info.createdAt).toBeInstanceOf(Date);
+    const created = info.createdAt!;
+    await new Promise((r) => setTimeout(r, 5));
+    const after = new Date().toISOString();
+    const env = { AI_SPEND_CAP_USD: "10", AI_SPEND_CAP_SINCE: after, PGLITE_DIR: process.env.PGLITE_DIR };
+    await expect(guard.preparePaidRun({ ...env })).rejects.toThrow(/local file .* AI_SPEND_LEDGER_SINGLE_SESSION=true/);
+    // AI_SPEND_CAP_SINCE before the ledger existed: the cap would appear to cover unrecorded spending.
+    const before = new Date(created.getTime() - 60_000).toISOString();
+    await expect(guard.preparePaidRun({ ...env, AI_SPEND_LEDGER_SINGLE_SESSION: "true", AI_SPEND_CAP_SINCE: before })).rejects.toThrow(/created at .* after AI_SPEND_CAP_SINCE/);
+    expect(networkCalls).toHaveLength(0);
+  });
+
+  it("refuses the run when the ledger database is unavailable, without a network request", async () => {
+    const g = globalThis as unknown as { __db?: Promise<unknown> };
+    const saved = g.__db;
+    const down = Promise.reject(new Error("connection refused (test)"));
+    down.catch(() => {});
+    g.__db = down;
+    try {
+      const env = { AI_SPEND_CAP_USD: "10", AI_SPEND_CAP_SINCE: new Date().toISOString(), PGLITE_DIR: process.env.PGLITE_DIR, AI_SPEND_LEDGER_SINGLE_SESSION: "true" };
+      await expect(guard.preparePaidRun(env)).rejects.toThrow(/usage ledger \(database\) is unavailable/);
+    } finally {
+      g.__db = saved;
+    }
     expect(networkCalls).toHaveLength(0);
   });
 
   it("required mode: a missing or invalid cap refuses each request (fails closed, never 'no cap')", async () => {
-    const route = { kind: "text" as const, key: "brand.qa" as const };
-    const e1 = await spend.reserveSpend(route, 0.01, { AI_SPEND_CAP_REQUIRED: "true" }).catch((e: unknown) => e);
+    const route = { kind: "text" as const, key: "brand.qa" as const, provider: "anthropic" as const, model: "claude-opus-5-5" };
+    const e1 = await spend.openAttempt(route, { attempt: 1 }, 0.01, { AI_SPEND_CAP_REQUIRED: "true" }).catch((e: unknown) => e);
     expect(classify(e1).kind).toBe("spend_cap");
     // Without required mode, a cap that is set but malformed also fails closed (previously: no cap).
-    const e2 = await spend.reserveSpend(route, 0.01, { AI_SPEND_CAP_USD: "ten" }).catch((e: unknown) => e);
+    const e2 = await spend.openAttempt(route, { attempt: 1 }, 0.01, { AI_SPEND_CAP_USD: "ten" }).catch((e: unknown) => e);
     expect(classify(e2).kind).toBe("spend_cap");
-    const e3 = await spend.reserveSpend(route, 0.01, { AI_SPEND_CAP_USD: "10", AI_SPEND_CAP_SINCE: "yesterday" }).catch((e: unknown) => e);
+    const e3 = await spend.openAttempt(route, { attempt: 1 }, 0.01, { AI_SPEND_CAP_USD: "10", AI_SPEND_CAP_SINCE: "yesterday" }).catch((e: unknown) => e);
     expect(classify(e3).kind).toBe("spend_cap");
     expect(spend.activeReservations()).toBe(0);
   });
 
   it("in-flight reserves count: concurrent requests can't together exceed the cap", async () => {
     const env = { AI_SPEND_CAP_USD: "1", AI_SPEND_CAP_SINCE: new Date().toISOString(), AI_SPEND_CAP_REQUIRED: "true" };
-    const route = { kind: "text" as const, key: "brand.qa" as const };
-    const results = await Promise.allSettled([spend.reserveSpend(route, 0.6, env), spend.reserveSpend(route, 0.6, env)]);
+    const route = { kind: "text" as const, key: "brand.qa" as const, provider: "anthropic" as const, model: "claude-opus-5-5" };
+    const results = await Promise.allSettled([spend.openAttempt(route, { attempt: 1 }, 0.6, env), spend.openAttempt(route, { attempt: 1 }, 0.6, env)]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     expect(results.filter((r) => r.status === "rejected")).toHaveLength(1);
     expect(spend.activeReservations()).toBe(1);
-    (results.find((r) => r.status === "fulfilled") as PromiseFulfilledResult<() => void>).value();
+    const ticket = (results.find((r) => r.status === "fulfilled") as PromiseFulfilledResult<import("./ai/spend-cap").Ticket>).value;
+    await spend.settleAttempt(ticket, { outcome: "failed", errorKind: "server" }); // not billed: releases the reserve
     expect(spend.activeReservations()).toBe(0);
-    // A non-finite worst case falls back to the kind's reserve rather than reserving nothing.
-    await expect(spend.reserveSpend(route, Number.NaN, { ...env, AI_SPEND_CAP_USD: "0.4" })).rejects.toThrow(/spending cap/);
+    // A non-finite worst case falls back to the kind's reserve ($0.50) rather than reserving nothing.
+    await expect(spend.openAttempt(route, { attempt: 1 }, Number.NaN, { ...env, AI_SPEND_CAP_USD: "0.4" })).rejects.toThrow(/spending cap/);
+  });
+
+  it("staging (web app and worker) refuses to start without a required, valid cap", async () => {
+    const { checkConfig, enforceConfig } = await import("./config");
+    const errs = (env: Record<string, string>) => checkConfig(env).filter((p) => p.level === "error").map((p) => p.key);
+    const staging = { DEPLOY_ENV: "staging" };
+    expect(errs(staging)).toEqual(expect.arrayContaining(["AI_SPEND_CAP_REQUIRED", "AI_SPEND_CAP_USD", "AI_SPEND_CAP_SINCE"]));
+    const ok = { ...staging, AI_SPEND_CAP_REQUIRED: "true", AI_SPEND_CAP_USD: "10", AI_SPEND_CAP_SINCE: "2026-11-21T02:54:00Z" };
+    expect(errs(ok)).not.toEqual(expect.arrayContaining(["AI_SPEND_CAP_REQUIRED"]));
+    expect(errs(ok).filter((k) => k.startsWith("AI_SPEND_CAP"))).toEqual([]);
+    expect(errs({ ...ok, AI_SPEND_CAP_SINCE: "2026-11-21" })).toContain("AI_SPEND_CAP_SINCE");
+    expect(errs({ ...ok, VOYAGE_API_KEY: "x" })).toContain("VOYAGE_API_KEY");
+    expect(errs({ ...ok, AI_SPEND_CAP_REQUIRED: "maybe" })).toContain("AI_SPEND_CAP_REQUIRED");
+    // Production: opt-in, with the same checks.
+    expect(errs({ DEPLOY_ENV: "production" }).filter((k) => k.startsWith("AI_SPEND_CAP"))).toEqual([]);
+    expect(errs({ DEPLOY_ENV: "production", AI_SPEND_CAP_REQUIRED: "true" })).toEqual(expect.arrayContaining(["AI_SPEND_CAP_USD", "AI_SPEND_CAP_SINCE"]));
+    // In strict environments a configuration error stops the process (web and worker both call this).
+    let code: number | null = null;
+    const quiet = { error: console.error, warn: console.warn };
+    console.error = console.warn = () => {};
+    try {
+      enforceConfig("worker", staging, ((c: number) => {
+        code = c;
+        return undefined as never;
+      }) as (c: number) => never);
+    } finally {
+      console.error = quiet.error;
+      console.warn = quiet.warn;
+    }
+    expect(code).toBe(1);
+  });
+
+  it("staging is always required-cap mode", () => {
+    expect(spend.spendCapRequired({ DEPLOY_ENV: "staging" })).toBe(true);
+    expect(spend.spendCapRequired({ DEPLOY_ENV: "staging", AI_SPEND_CAP_REQUIRED: "false" })).toBe(true);
+    expect(spend.spendCapRequired({ DEPLOY_ENV: "production" })).toBe(false);
+    expect(spend.spendCapRequired({ DEPLOY_ENV: "production", AI_SPEND_CAP_REQUIRED: "true" })).toBe(true);
   });
 
   it("a real text request with the cap missing in required mode never reaches the network", async () => {
@@ -155,14 +229,39 @@ describe("paid runs: the network guard", () => {
     }
     expect(networkCalls).toHaveLength(0);
     // With a reservation (i.e. through the executor), provider requests go through; voyage never does.
-    const release = await spend.reserveSpend({ kind: "text" as const, key: "brand.qa" as const }, 0.01, { AI_SPEND_CAP_USD: "10", AI_SPEND_CAP_SINCE: new Date().toISOString(), AI_SPEND_CAP_REQUIRED: "true" });
+    const ticket = await spend.openAttempt({ kind: "text" as const, key: "brand.qa" as const, provider: "anthropic" as const, model: "claude-opus-5-5" }, { attempt: 1 }, 0.01, { AI_SPEND_CAP_USD: "10", AI_SPEND_CAP_SINCE: new Date().toISOString(), AI_SPEND_CAP_REQUIRED: "true" });
     await fetch("https://api.anthropic.com/v1/messages", { method: "POST" });
     await expect(fetch("https://api.voyageai.com/v1/embeddings")).rejects.toThrow(guard.PaidRunRefused);
-    release();
+    await spend.settleAttempt(ticket, { outcome: "failed", errorKind: "server" });
     await expect(fetch("https://api.anthropic.com/v1/messages")).rejects.toThrow(guard.PaidRunRefused);
     // Other hosts are untouched.
     await fetch("https://example.test/health");
     expect(networkCalls).toEqual(["https://api.anthropic.com/v1/messages", "https://example.test/health"]);
+  });
+
+  it("no other entry point talks to a paid AI provider directly (all go through the executor's accounting)", () => {
+    // Allowed: the two provider adapters (every request inside execute(), call.ts), the guard itself,
+    // the one-request check CLI (through llm.ts), and Voyage embeddings (refused while a cap is required).
+    const allowed = new Set(["ai/llm.ts", "ai/image.ts", "ai/paid-run-guard.ts", "ai/anthropic-check-cli.ts", "ai/embeddings.ts"]);
+    // Type-only SDK imports are fine; a value import (the client) or a direct Messages call is not.
+    const pattern = /new Anthropic\(|api\.anthropic\.com|api\.openai\.com|OPENAI_URL\(\)|api\.voyageai\.com|from "openai"|^import (?!type )[^;]*from "@anthropic-ai\/sdk"|anthropicClient|\.messages\.create\(/m;
+    const offenders: string[] = [];
+    const root = path.join(import.meta.dirname, "..");
+    const walk = (dir: string) => {
+      for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, f.name);
+        if (f.isDirectory()) walk(p);
+        else if (/\.(ts|tsx)$/.test(f.name) && !/\.(test|live)\.ts$/.test(f.name) && pattern.test(fs.readFileSync(p, "utf8"))) offenders.push(path.relative(path.join(root, "server"), p));
+      }
+    };
+    walk(root);
+    expect(offenders.filter((f) => !allowed.has(f) && f !== "ai/errors.ts")).toEqual([]);
+    // In the adapters, every provider call sits inside an execute() callback.
+    const llmSrc = fs.readFileSync(path.join(root, "server/ai/llm.ts"), "utf8");
+    expect(llmSrc.match(/anthropic\(\)\.beta\.messages/g)?.length ?? 0).toBe(llmSrc.match(/await execute\(/g)?.length ?? -1);
+    const imageSrc = fs.readFileSync(path.join(root, "server/ai/image.ts"), "utf8");
+    expect(imageSrc.match(/openaiRequest\(/g)?.length).toBeGreaterThan(1);
+    expect(imageSrc.match(/await execute\(/g)?.length).toBe(1);
   });
 
   it("live tests load the guard before any test file", async () => {

@@ -523,7 +523,11 @@ export const agentRuns = pgTable(
  *   retried) · refused (the provider declined; billed) · unknown (sent, no response: the
  *   provider may have processed and billed it) · blocked (not sent: circuit open, not configured)
  */
-export type UsageOutcome = "success" | "failed" | "retried" | "refused" | "unknown" | "blocked";
+/**
+ * `pending`: written (durably) before a paid request is sent, holding its worst-case reserve; settled
+ * in place to the final outcome. A row still pending after its process died counts at its reserve.
+ */
+export type UsageOutcome = "pending" | "success" | "failed" | "retried" | "refused" | "unknown" | "blocked";
 export const usageEvents = pgTable(
   "usage_events",
   {
@@ -555,9 +559,17 @@ export const usageEvents = pgTable(
     priceSource: text("price_source"),
     providerRequestId: text("provider_request_id"),
     latencyMs: integer("latency_ms"),
+    /**
+     * Worst-case cost reserved under the spending cap before the request was sent (spend-cap.ts).
+     * Counts against the cap while the row is pending, or when the outcome is unknown or unpriced.
+     */
+    reserveUsd: real("reserve_usd"),
+    /** When the attempt was settled (null while pending). */
+    settledAt: timestamp("settled_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [
+    index("usage_time_idx").on(t.createdAt),
     index("usage_ws_time_idx").on(t.workspaceId, t.createdAt),
     index("usage_brand_time_idx").on(t.brandId, t.createdAt),
     index("usage_run_idx").on(t.runId),
@@ -702,3 +714,13 @@ export const aiTaskLeases = pgTable(
   },
   (t) => [index("leases_ws_idx").on(t.workspaceId, t.expiresAt), index("leases_user_idx").on(t.userId, t.expiresAt)],
 );
+
+/**
+ * One row (`key = 'ledger'`), written by the migration that created it: when this database started
+ * keeping the AI usage ledger. Spending before that time isn't recorded here, so a spending cap
+ * can't cover it (paid-run-guard.ts refuses an AI_SPEND_CAP_SINCE earlier than this).
+ */
+export const aiLedgerMeta = pgTable("ai_ledger_meta", {
+  key: text("key").primaryKey(),
+  createdAt: createdAt(),
+});

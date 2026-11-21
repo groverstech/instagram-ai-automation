@@ -32,6 +32,9 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   captured.push({ url, headers, body });
   return respond(body);
 }) as typeof fetch;
+// Every provider request in this suite must go through the executor's accounting (a pending usage
+// row written first): the paid-request guard blocks any that doesn't (paid-run-guard.ts).
+await (await import("./ai/paid-run-guard")).installPaidRequestGuard();
 
 const message = (text: string, extra: Record<string, unknown> = {}) =>
   new Response(
