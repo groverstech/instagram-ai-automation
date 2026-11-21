@@ -101,6 +101,8 @@ type Executor = Pick<DB, "select">;
 /**
  * Committed spend since `since`: priced cost, plus the reserve of every attempt that may have been
  * billed without a price (pending — in flight or interrupted —, unknown outcome, or unpriced).
+ * A timed-out attempt that was then retried is settled as `retried` with price source `unknown`:
+ * it may have been billed, so it counts too.
  */
 export async function committedSpendUsd(
   since: Date,
@@ -122,7 +124,7 @@ export async function committedSpendUsd(
       pending: sql<number>`count(*) filter (where ${e.outcome} = 'pending')`,
     })
     .from(e)
-    .where(and(gte(e.createdAt, since), ne(e.provider, "mock"), isNull(e.costUsd), sql`(${e.outcome} in ('pending', 'unknown') or ${e.priceSource} = 'unpriced')`));
+    .where(and(gte(e.createdAt, since), ne(e.provider, "mock"), isNull(e.costUsd), sql`(${e.outcome} in ('pending', 'unknown') or ${e.priceSource} in ('unpriced', 'unknown'))`));
   const pricedUsd = Number(priced?.usd ?? 0);
   const reservedUsd = Number(held?.usd ?? 0);
   return { usd: pricedUsd + reservedUsd, pricedUsd, reservedUsd, unpricedAttempts: Number(held?.n ?? 0), pendingAttempts: Number(held?.pending ?? 0) };

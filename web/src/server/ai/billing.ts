@@ -159,7 +159,7 @@ export async function requestLog(since: Date, until: Date | null, budgetUsd: num
   return rows.map((r) => {
     // Same rule as the spending cap: attempts that may have been billed without a price (pending —
     // in flight or interrupted —, unknown outcome, unpriced) count at their reserve.
-    const held = r.costUsd === null && (r.outcome === "pending" || r.outcome === "unknown" || r.priceSource === "unpriced");
+    const held = r.costUsd === null && (r.outcome === "pending" || r.outcome === "unknown" || r.priceSource === "unpriced" || r.priceSource === "unknown");
     const counted = r.costUsd ?? (held ? (r.reserveUsd ?? (r.kind === "image" ? cfg.imageReserveUsd : cfg.textReserveUsd)) : 0);
     cumulative += counted;
     return {

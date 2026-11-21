@@ -283,6 +283,37 @@ describe("concurrency and retries", () => {
     expect(networkCalls).toBe(1);
   });
 
+  it("a timed-out attempt that is retried still counts at its reserve (it may have been billed)", async () => {
+    const since = new Date();
+    process.env.AI_MAX_ATTEMPTS = "2";
+    process.env.AI_TEXT_TIMEOUT_MS = "30";
+    let n = 0;
+    handler = () => (++n === 1 ? new Promise<Response>(() => {}) : ok());
+    expect(await outcome(ask())).toBe("ok");
+    expect(networkCalls).toBe(2);
+    const rows = await rowsSince(since);
+    expect(rows.map((r) => [r.outcome, r.priceSource])).toEqual([
+      ["retried", "unknown"],
+      ["success", expect.any(String)],
+    ]);
+    expect((await spend.committedSpendUsd(since)).usd).toBeCloseTo(worst + rows[1].costUsd!, 9);
+    const log = await requestLog(since, null, null);
+    expect(log[0].countedUsd).toBeCloseTo(worst, 9);
+  });
+
+  it("the worst case with server-side fallbacks is priced at the most expensive model that may answer", async () => {
+    const { routeWorstCaseUsd, textWorstCaseUsd } = await import("./ai/llm");
+    const { textCost } = await import("./ai/pricing");
+    const { TEXT_MODELS } = await import("./ai/catalog");
+    const req = { chars: 3000, maxTokens: 4000 };
+    const each = Object.keys(TEXT_MODELS).map((m) => textWorstCaseUsd(m, req, textCost)!);
+    for (const m of Object.keys(TEXT_MODELS)) {
+      const w = routeWorstCaseUsd(m, req, textCost)!;
+      if (TEXT_MODELS[m].serverFallback) expect(w).toBeCloseTo(Math.max(...each), 12);
+      else expect(w).toBeCloseTo(textWorstCaseUsd(m, req, textCost)!, 12);
+    }
+  });
+
   it("a retried request: one row per attempt, each settled once; settling twice changes nothing", async () => {
     const since = new Date();
     process.env.AI_MAX_ATTEMPTS = "2";

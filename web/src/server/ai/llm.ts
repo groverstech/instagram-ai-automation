@@ -204,10 +204,24 @@ export function textWorstCaseUsd(
   return cost({ model, cacheWriteTokens: input, cacheWrite1hTokens: input, outputTokens: req.maxTokens, webSearches: searches }).usd;
 }
 
-const textPricing = async (worst?: { model: string; chars: number; images?: ImageInput[]; maxTokens: number; searches?: number }) => {
+/**
+ * Worst case across the models that can answer: with server-side fallbacks ("fallbacks: default")
+ * another catalog model may answer, so it is priced at the most expensive one.
+ */
+export function routeWorstCaseUsd(
+  model: string,
+  req: { chars: number; images?: ImageInput[]; maxTokens: number; searches?: number },
+  cost: (u: Usage) => { usd: number | null },
+  fallbacks = TEXT_MODELS[model]?.serverFallback ?? false,
+): number | null {
+  const models = fallbacks ? [model, ...Object.keys(TEXT_MODELS)] : [model];
+  return models.map((m) => textWorstCaseUsd(m, req, cost)).reduce<number | null>((max, v) => (v === null ? max : max === null ? v : Math.max(max, v)), null);
+}
+
+const textPricing = async (worst?: { model: string; chars: number; images?: ImageInput[]; maxTokens: number; searches?: number; fallbacks?: boolean }) => {
   const { textCost } = await import("./pricing");
   return {
-    worstCaseUsd: worst ? textWorstCaseUsd(worst.model, worst, textCost) : null,
+    worstCaseUsd: worst ? routeWorstCaseUsd(worst.model, worst, textCost, worst.fallbacks) : null,
     price: (u: Usage) => textCost(u),
     units: (u: Usage) => ({
       inputTokens: u.inputTokens ?? 0,
@@ -390,14 +404,11 @@ export async function anthropicMessage(
 ): Promise<{ message: Anthropic.Beta.BetaMessage; usage: Usage; provider: string }> {
   const route = await routed(routeKey);
   const { execute } = await import("./call");
-  const { textCost } = await import("./pricing");
   const maxTokens = Math.min(body.max_tokens, 16000);
   const chars = JSON.stringify({ system: body.system, messages: body.messages, tools: body.tools }).length;
-  const worstUsd = [route.model, ...Object.keys(TEXT_MODELS)]
-    .map((model) => textWorstCaseUsd(model, { chars, maxTokens }, textCost))
-    .reduce<number | null>((max, v) => (v === null ? max : max === null ? v : Math.max(max, v)), null);
-  const pricing = await textPricing();
-  const out = await execute(route, { ...pricing, worstCaseUsd: worstUsd }, async () => {
+  // Fallbacks may be requested in the body itself: price at the most expensive catalog model.
+  const pricing = await textPricing({ model: route.model, chars, maxTokens, fallbacks: true });
+  const out = await execute(route, pricing, async () => {
     const res = await anthropic().beta.messages.create({ ...body, model: route.model, max_tokens: maxTokens }, { timeout: route.timeoutMs });
     return { value: res, usage: usageOf(res), requestId: requestIdOf(res) };
   });
