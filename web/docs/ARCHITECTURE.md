@@ -53,7 +53,7 @@ strategy, creative, caption, campaign and analysis it produces.
 │   ┌── AI Provider Layer ─────────────────────┐   │ worker / cron tick: publish  ││
 │   │ LLM: Anthropic (Claude) | mock           │   │ scheduled, sync metrics      ││
 │   │ Embeddings: Voyage | local hashing       │   └──────────────────────────────┘│
-│   │ Images: OpenAI gpt-image-1 | none        │   ┌── Storage ───────────────────┐│
+│   │ Images: OpenAI GPT Image 2.6 | none      │   ┌── Storage ───────────────────┐│
 │   └──────────────────────────────────────────┘   │ local disk | (S3/Supabase)   ││
 │                                                  │ signed public URLs           ││
 ├──────────────────────────────────────────────────┴──────────────────────────────┤
@@ -195,7 +195,7 @@ default, server-side refusal `fallbacks: "default"`. Effort is set per agent in 
 |---|---|---|
 | Reasoning / copy / vision | Anthropic Messages API (`@anthropic-ai/sdk`) | structured outputs, tool use, web search server tool |
 | Embeddings | Voyage AI `voyage-3.5-lite` (256-d) | local hashing fallback |
-| Images | OpenAI Images `gpt-image-1` | swappable `ImageProvider` |
+| Images | OpenAI Images, GPT Image 2.6 Flare (generation) and Sunburst (edits) | swappable `ImageProvider` |
 | Instagram | Instagram Graph API via Facebook Login (Business/Creator accounts) | publish image (container → publish), insights |
 | Facebook | Graph API Pages | photo posts, page insights |
 | LinkedIn | OAuth 2 + Posts API + Images API | member posts (w_member_social) |

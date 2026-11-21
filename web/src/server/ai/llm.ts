@@ -2,12 +2,27 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import type { z } from "zod";
-import { ImageProviderError, ImageProviderUnavailable, ImageRefusedError } from "./image";
 import { mockActive } from "./mode";
+import { TEXT_MODELS } from "./catalog";
+import { AIConfigError, AIOutputError, AIRefusalError } from "./errors";
+import { ANTHROPIC_KEY_HINT, anthropicConfigured, resolveAnthropicApiKey } from "./anthropic-key";
+import { baseRoute, resolveRoute, type Effort, type ResolvedRoute, type RouteKey } from "./routes";
 
+/**
+ * Text AI (Anthropic Claude): the provider adapter behind every text route
+ * (docs/AI_PROVIDERS.md). Agents call `llm().structured(...)` / `llm().research(...)` with the
+ * route of the job they do; the route picks the model and limits, and the executor (call.ts)
+ * handles retries, the circuit breaker and the per-attempt usage ledger.
+ *
+ * The API key stays on the server (BRANDPILOT_ANTHROPIC_API_KEY, falling back to ANTHROPIC_API_KEY,
+ * sent as x-api-key; or ANTHROPIC_AUTH_TOKEN for
+ * gateways that take a bearer token); it is never logged
+ * or sent to the browser.
+ */
 export { mockActive };
-
-export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
+export { AIConfigError, AIOutputError, AIRefusalError } from "./errors";
+export { isRetryable, isServiceError, isTransient, friendlyAIError } from "./errors";
+export type { Effort } from "./routes";
 
 export type ImageInput = {
   mime: "image/png" | "image/jpeg" | "image/webp" | "image/gif" | "application/pdf";
@@ -16,15 +31,18 @@ export type ImageInput = {
 };
 
 export type StructuredRequest<T> = {
+  /** The job this call does (routes.ts): decides model, limits and how usage is reported. */
+  route: RouteKey;
   system: string;
   prompt: string;
   schema: z.ZodType<T>;
   /** Images and PDFs (brand guidelines) for vision analysis. */
   images?: ImageInput[];
+  /** The agent's effort; a route override takes precedence. */
   effort?: Effort;
   /** Output budget (incl. thinking). Kept ≤ 16k so non-streaming requests stay within SDK limits. */
   maxTokens?: number;
-  /** Only used when AI_PROVIDER=mock. Agents supply a deterministic stand-in. */
+  /** Only used in demo mode (AI_PROVIDER=mock). Agents supply a deterministic stand-in. */
   mock: () => T;
 };
 
@@ -32,7 +50,9 @@ export type Usage = {
   inputTokens?: number;
   outputTokens?: number;
   cacheReadTokens?: number;
+  /** All cache writes; `cacheWrite1hTokens` is the part written with the 1-hour TTL. */
   cacheWriteTokens?: number;
+  cacheWrite1hTokens?: number;
   webSearches?: number;
   model?: string;
   /**
@@ -42,7 +62,14 @@ export type Usage = {
   unknownUsageAttempts?: number;
   /** Generated images (image providers). */
   images?: number;
-  /** Estimated image cost in USD (from configured per-image prices); absent when unpriced. */
+  /** Image token usage as reported by the image provider (kept apart from text tokens). */
+  imageInputTokens?: number;
+  imageTextInputTokens?: number;
+  imageImageInputTokens?: number;
+  imageOutputTokens?: number;
+  imageOutputImageTokens?: number;
+  imageOutputTextTokens?: number;
+  /** Estimated image cost in USD (from configured prices); absent when unpriced. */
   imageCostUsd?: number;
   /** Images generated without a configured price: counted, not priced. */
   unpricedImages?: number;
@@ -53,18 +80,16 @@ export type Usage = {
 export type ResearchSource = { url: string; title: string; publishedAt: string | null; cited: boolean };
 export type StructuredResult<T> = { data: T; usage: Usage; provider: string };
 
-export class AIConfigError extends Error {}
-export class AIRefusalError extends Error {}
-/** The model responded, but the output was unusable (truncated, invalid JSON, wrong shape). */
-export class AIOutputError extends Error {}
-
 /**
- * Billed usage travels with an error when the provider returned a response we then rejected
- * (refusal, truncation, invalid output). Errors with no response (network, 5xx) carry none.
+ * Usage travels with an error when the provider billed something before we rejected the result
+ * (refusal, truncation, invalid output), and the executor replaces it with the call's total
+ * (all attempts) before the error leaves it.
  */
 const USAGE = Symbol.for("brandpilot.aiUsage");
-export function attachUsage<E>(e: E, usage: Usage | undefined): E {
-  if (usage && e && typeof e === "object" && !(USAGE in (e as object))) Object.defineProperty(e, USAGE, { value: usage, enumerable: false });
+export function attachUsage<E>(e: E, usage: Usage | undefined, opts: { replace?: boolean } = {}): E {
+  if (!usage || !e || typeof e !== "object") return e;
+  if (USAGE in (e as object) && !opts.replace) return e;
+  Object.defineProperty(e, USAGE, { value: usage, enumerable: false, configurable: true });
   return e;
 }
 export function usageFromError(e: unknown): Usage | undefined {
@@ -75,7 +100,7 @@ export interface LLMProvider {
   readonly name: string;
   structured<T>(req: StructuredRequest<T>): Promise<StructuredResult<T>>;
   /** Free-form research with Claude's web search tool. Returns notes + cited URLs. */
-  research(req: { system: string; prompt: string; maxSearches?: number; mock: () => string }): Promise<{
+  research(req: { route: RouteKey; system: string; prompt: string; maxSearches?: number; mock: () => string }): Promise<{
     text: string;
     /** URLs of results and citations (legacy shape). */
     sources: string[];
@@ -86,17 +111,31 @@ export interface LLMProvider {
   }>;
 }
 
-export const MODEL = process.env.ANTHROPIC_MODEL || "claude-opus-5-5";
+/** The text model text routes use by default (ANTHROPIC_MODEL or the catalog default). */
+export const MODEL = baseRoute("brand.profile").model;
 const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 
 let client: Anthropic | null = null;
+
+/**
+ * How the API key is sent. The key is BRANDPILOT_ANTHROPIC_API_KEY, or ANTHROPIC_API_KEY as a fallback
+ * (anthropic-key.ts). Anthropic API keys go in the `x-api-key` header, with no prefix. The
+ * installed SDK would otherwise send ANTHROPIC_API_KEY as `Authorization: Bearer <key>`, so the key
+ * is passed explicitly (which also stops the SDK looking for other credentials, e.g. in config
+ * files) and `Authorization` is removed. ANTHROPIC_AUTH_TOKEN, for gateways that take a bearer
+ * token, is left to the SDK as before; the API key wins when both are set.
+ */
+export function anthropicAuth(env: Record<string, string | undefined>): { apiKey: string; defaultHeaders: Record<string, string | null> } | Record<string, never> {
+  const key = resolveAnthropicApiKey(env)?.key;
+  return key ? { apiKey: key, defaultHeaders: { "X-Api-Key": key, Authorization: null } } : {};
+}
+
 function anthropic(): Anthropic {
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
-    throw new AIConfigError(
-      "No AI provider is configured. Add ANTHROPIC_API_KEY to your environment (see .env.example).",
-    );
+  if (!anthropicConfigured(process.env)) {
+    throw new AIConfigError(`No AI provider is configured. Add ${ANTHROPIC_KEY_HINT} to your environment (see .env.example).`);
   }
-  client ??= new Anthropic();
+  // SDK retries are off: the executor retries, so every attempt is visible and recorded.
+  client ??= new Anthropic({ maxRetries: 0, fetch: (url, init) => globalThis.fetch(url, init), ...anthropicAuth(process.env) });
   return client;
 }
 
@@ -114,57 +153,155 @@ function userContent(prompt: string, images?: ImageInput[]): Anthropic.Beta.Beta
   return blocks;
 }
 
+/**
+ * Request parameters shared by every Claude call: the routed model, adaptive thinking, the
+ * effort, server-side refusal fallbacks where the model supports them, and the agent's system
+ * prompt marked for prompt caching (it is identical across calls of the same agent).
+ */
+function common(route: ResolvedRoute, system: string, effort: Effort) {
+  const fallback = TEXT_MODELS[route.model]?.serverFallback ?? false;
+  return {
+    model: route.model,
+    ...(fallback ? { betas: [FALLBACK_BETA], fallbacks: "default" as const } : {}),
+    thinking: { type: "adaptive" as const },
+    system: [{ type: "text" as const, text: system, cache_control: { type: "ephemeral" as const } }],
+    effort,
+  };
+}
+
+const requestIdOf = (res: unknown) => (res as { _request_id?: string | null })._request_id ?? null;
+
+function usageOf(res: Anthropic.Beta.BetaMessage): Usage {
+  const u = res.usage;
+  return {
+    inputTokens: u.input_tokens,
+    outputTokens: u.output_tokens,
+    cacheReadTokens: u.cache_read_input_tokens ?? 0,
+    cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
+    cacheWrite1hTokens: u.cache_creation?.ephemeral_1h_input_tokens || undefined,
+    webSearches: u.server_tool_use?.web_search_requests ?? 0,
+    // The model that actually served it (a server-side fallback may differ from the route's).
+    model: res.model,
+  };
+}
+
+async function routed(key: RouteKey): Promise<ResolvedRoute> {
+  const { aiContext } = await import("./context");
+  return resolveRoute(key, { brandId: aiContext().brandId });
+}
+
+/**
+ * Worst-case cost of one Claude attempt, for the hard spending cap (spend-cap.ts). Deliberately
+ * pessimistic: about 3 characters per input token, every input token at the 1-hour cache-write
+ * rate (the highest input rate), ~1,600 tokens per image and 30,000 per PDF, 25,000 tokens of
+ * search results per allowed web search plus its fee, and the full output-token limit.
+ */
+export function textWorstCaseUsd(
+  model: string,
+  req: { chars: number; images?: ImageInput[]; maxTokens: number; searches?: number },
+  cost: (u: Usage) => { usd: number | null },
+): number | null {
+  const media = (req.images ?? []).reduce((n, i) => n + (i.mime === "application/pdf" ? 30_000 : 1_600), 0);
+  const searches = req.searches ?? 0;
+  const input = Math.ceil(req.chars / 3) + media + searches * 25_000;
+  return cost({ model, cacheWriteTokens: input, cacheWrite1hTokens: input, outputTokens: req.maxTokens, webSearches: searches }).usd;
+}
+
+/**
+ * Worst case across the models that can answer: with server-side fallbacks ("fallbacks: default")
+ * another catalog model may answer, so it is priced at the most expensive one.
+ */
+export function routeWorstCaseUsd(
+  model: string,
+  req: { chars: number; images?: ImageInput[]; maxTokens: number; searches?: number },
+  cost: (u: Usage) => { usd: number | null },
+  fallbacks = TEXT_MODELS[model]?.serverFallback ?? false,
+): number | null {
+  const models = fallbacks ? [model, ...Object.keys(TEXT_MODELS)] : [model];
+  return models.map((m) => textWorstCaseUsd(m, req, cost)).reduce<number | null>((max, v) => (v === null ? max : max === null ? v : Math.max(max, v)), null);
+}
+
+const textPricing = async (worst?: { model: string; chars: number; images?: ImageInput[]; maxTokens: number; searches?: number; fallbacks?: boolean }) => {
+  const { textCost } = await import("./pricing");
+  return {
+    worstCaseUsd: worst ? routeWorstCaseUsd(worst.model, worst, textCost, worst.fallbacks) : null,
+    price: (u: Usage) => textCost(u),
+    units: (u: Usage) => ({
+      inputTokens: u.inputTokens ?? 0,
+      outputTokens: u.outputTokens ?? 0,
+      cacheReadTokens: u.cacheReadTokens ?? 0,
+      cacheWriteTokens: u.cacheWriteTokens ?? 0,
+      cacheWrite1hTokens: u.cacheWrite1hTokens ?? 0,
+      webSearches: u.webSearches ?? 0,
+    }),
+  };
+};
+
 const anthropicProvider: LLMProvider = {
   name: "anthropic",
   async structured<T>(req: StructuredRequest<T>): Promise<StructuredResult<T>> {
+    const route = await routed(req.route);
+    const { execute } = await import("./call");
     // Structured outputs constrain the response to the JSON schema. We parse it ourselves *after*
     // checking stop_reason, so refusals and truncation produce clear errors instead of JSON
     // parse exceptions, and the result is re-validated with the same Zod schema.
     const format = betaZodOutputFormat(req.schema) as unknown as { schema: Record<string, unknown> };
-    const res = await anthropic().beta.messages.create({
-      model: MODEL,
-      max_tokens: Math.min(req.maxTokens ?? 16000, 16000),
-      betas: [FALLBACK_BETA],
-      fallbacks: "default",
-      thinking: { type: "adaptive" },
-      output_config: { effort: req.effort ?? "medium", format: { type: "json_schema", schema: format.schema } },
-      system: req.system,
-      messages: [{ role: "user", content: userContent(req.prompt, req.images) }],
+    const { effort, ...params } = common(route, req.system, route.effort ?? req.effort ?? "medium");
+    const maxTokens = Math.min(req.maxTokens ?? 16000, 16000);
+    const worst = { model: route.model, chars: req.system.length + req.prompt.length + JSON.stringify(format.schema).length, images: req.images, maxTokens };
+    const out = await execute(route, await textPricing(worst), async () => {
+      const res = await anthropic().beta.messages.create(
+        {
+          ...params,
+          max_tokens: maxTokens,
+          output_config: { effort, format: { type: "json_schema", schema: format.schema } },
+          messages: [{ role: "user", content: userContent(req.prompt, req.images) }],
+        },
+        { timeout: route.timeoutMs },
+      );
+      const usage = usageOf(res);
+      if (res.stop_reason === "refusal") {
+        throw attachUsage(new AIRefusalError("The AI declined this request. Try rephrasing, or remove content that may be sensitive."), usage);
+      }
+      if (res.stop_reason === "max_tokens") {
+        throw attachUsage(new AIOutputError("The AI response was cut off before it finished. Please try again."), usage);
+      }
+      const text = res.content
+        .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
+        .map((b) => b.text)
+        .join("");
+      let json: unknown;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        throw attachUsage(new AIOutputError("The AI returned an incomplete response. Please try again."), usage);
+      }
+      const parsed = req.schema.safeParse(json);
+      if (!parsed.success) throw attachUsage(new AIOutputError("The AI returned output that didn't match the expected format. Please try again."), usage);
+      return { value: { data: parsed.data, model: res.model }, usage, requestId: requestIdOf(res) };
     });
-    const usage = usageOf(res);
-    if (res.stop_reason === "refusal") {
-      throw attachUsage(new AIRefusalError("The AI declined this request. Try rephrasing, or remove content that may be sensitive."), usage);
-    }
-    if (res.stop_reason === "max_tokens") {
-      throw attachUsage(new AIOutputError("The AI response was cut off before it finished. Please try again."), usage);
-    }
-    const text = res.content
-      .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("");
-    let json: unknown;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      throw attachUsage(new AIOutputError("The AI returned an incomplete response. Please try again."), usage);
-    }
-    const parsed = req.schema.safeParse(json);
-    if (!parsed.success) throw attachUsage(new AIOutputError("The AI returned output that didn't match the expected format. Please try again."), usage);
-    return { data: parsed.data, usage, provider: `anthropic:${res.model}` };
+    return { data: out.value.data, usage: out.usage, provider: `anthropic:${out.value.model}` };
   },
   async research(req) {
-    const res = await anthropic().beta.messages.create({
-      model: MODEL,
-      max_tokens: 16000,
-      betas: [FALLBACK_BETA],
-      fallbacks: "default",
-      thinking: { type: "adaptive" },
-      output_config: { effort: "medium" },
-      system: req.system,
-      tools: [{ type: "web_search_20260209", name: "web_search", max_uses: req.maxSearches ?? 5 }],
-      messages: [{ role: "user", content: req.prompt }],
+    const route = await routed(req.route);
+    const { execute } = await import("./call");
+    const { effort, ...params } = common(route, req.system, route.effort ?? "medium");
+    const worst = { model: route.model, chars: req.system.length + req.prompt.length, maxTokens: 16000, searches: req.maxSearches ?? 5 };
+    const out = await execute(route, await textPricing(worst), async () => {
+      const res = await anthropic().beta.messages.create(
+        {
+          ...params,
+          max_tokens: 16000,
+          output_config: { effort },
+          tools: [{ type: TEXT_MODELS[route.model]?.webSearchTool ?? "web_search_20260209", name: "web_search", max_uses: req.maxSearches ?? 5 }],
+          messages: [{ role: "user", content: req.prompt }],
+        },
+        { timeout: route.timeoutMs },
+      );
+      if (res.stop_reason === "refusal") throw attachUsage(new AIRefusalError("The AI declined this research request."), usageOf(res));
+      return { value: res, usage: usageOf(res), requestId: requestIdOf(res) };
     });
-    if (res.stop_reason === "refusal") throw attachUsage(new AIRefusalError("The AI declined this research request."), usageOf(res));
+    const res = out.value;
     const sources = new Set<string>();
     const results = new Map<string, ResearchSource>();
     const cited = new Set<string>();
@@ -194,37 +331,19 @@ const anthropicProvider: LLMProvider = {
       text,
       sources: [...sources].slice(0, 20),
       results: [...results.values()].slice(0, 40),
-      usage: usageOf(res),
+      usage: out.usage,
       provider: `anthropic:${res.model}`,
     };
   },
 };
 
-function usageOf(res: Anthropic.Beta.BetaMessage): Usage {
-  return {
-    inputTokens: res.usage.input_tokens,
-    outputTokens: res.usage.output_tokens,
-    cacheReadTokens: res.usage.cache_read_input_tokens ?? 0,
-    cacheWriteTokens: res.usage.cache_creation_input_tokens ?? 0,
-    webSearches: res.usage.server_tool_use?.web_search_requests ?? 0,
-    model: res.model,
-  };
-}
-
-/** True for failures worth retrying: unusable output, network errors, overload and 5xx. Never auth/config/refusal/4xx. */
-export function isRetryable(e: unknown): boolean {
-  if (e instanceof AIOutputError) return true;
-  if (e instanceof ImageProviderError) return e.status === undefined || e.status === 429 || e.status >= 500;
-  if (e instanceof Anthropic.APIConnectionError) return true;
-  if (e instanceof Anthropic.APIError) return e.status === 408 || e.status === 409 || e.status === 429 || (e.status !== undefined && e.status >= 500);
-  return false;
-}
-
 /**
- * Retry an AI call on transient failures with exponential backoff. The SDK already retries
- * HTTP-level failures twice; this adds retries for unusable model output and keeps the count.
+ * Retry an AI call on transient failures with exponential backoff (used by the run ledger for
+ * whole-step retries; provider-level retries happen in the executor).
  */
 export async function withRetry<T>(fn: (attempt: number) => Promise<T>, opts: { attempts?: number; baseMs?: number; onRetry?: (e: unknown, attempt: number) => void } = {}): Promise<T> {
+  const { isRetryable } = await import("./errors");
+  const { handledByExecutor } = await import("./call");
   const attempts = opts.attempts ?? 2;
   let last: unknown;
   for (let i = 1; i <= attempts; i++) {
@@ -232,7 +351,8 @@ export async function withRetry<T>(fn: (attempt: number) => Promise<T>, opts: { 
       return await fn(i);
     } catch (e) {
       last = e;
-      if (i === attempts || !isRetryable(e)) throw e;
+      // Provider errors already went through the executor's retries: don't multiply them.
+      if (i === attempts || !isRetryable(e) || handledByExecutor(e)) throw e;
       opts.onRetry?.(e, i);
       await new Promise((r) => setTimeout(r, (opts.baseMs ?? 1500) * 2 ** (i - 1)));
     }
@@ -240,12 +360,25 @@ export async function withRetry<T>(fn: (attempt: number) => Promise<T>, opts: { 
   throw last;
 }
 
+/**
+ * Demo mode: deterministic stand-ins, clearly labelled in the UI. Never calls a provider. Each
+ * call is still written to the usage ledger as provider "mock" with no cost, so the usage view
+ * shows demo activity as demo, never as real provider usage.
+ */
+async function recordMock(route: RouteKey) {
+  const { recordAttempt } = await import("./usage");
+  const r = baseRoute(route);
+  await recordAttempt({ route, provider: "mock", model: "mock", kind: r.kind, attempt: 1, outcome: "success", priceSource: "demo" });
+}
+
 const mockProvider: LLMProvider = {
   name: "mock",
   async structured<T>(req: StructuredRequest<T>) {
+    await recordMock(req.route);
     return { data: req.schema.parse(req.mock()), usage: {}, provider: "mock" };
   },
   async research(req) {
+    await recordMock(req.route);
     return { text: req.mock(), sources: [], results: [], usage: {}, provider: "mock" };
   },
 };
@@ -254,41 +387,33 @@ export function llm(): LLMProvider {
   return mockActive() ? mockProvider : anthropicProvider;
 }
 
-/** Errors that mean "the AI service is unavailable", not "this input is bad". Retrying later may work. */
-export function isServiceError(e: unknown): boolean {
-  if (e instanceof AIConfigError) return true;
-  if (e instanceof ImageProviderError) return e.status === undefined || e.status === 408 || e.status === 409 || e.status === 429 || e.status >= 500;
-  if (e instanceof Anthropic.APIConnectionError) return true;
-  if (e instanceof Anthropic.APIError) return e.status === undefined || e.status === 401 || e.status === 403 || e.status === 408 || e.status === 409 || e.status === 429 || e.status >= 500;
-  return false;
-}
-
-/** User-facing message for AI failures; never exposes raw API payloads. */
-export function friendlyAIError(e: unknown): string | null {
-  if (e instanceof AIConfigError || e instanceof AIRefusalError || e instanceof AIOutputError) return e.message;
-  if (e instanceof ImageRefusedError) return e.message;
-  if (e instanceof ImageProviderUnavailable) return "No image provider is configured. Choose brand photos or a typographic layout, or set OPENAI_API_KEY on the server.";
-  if (e instanceof ImageProviderError) {
-    if (e.status === 401 || e.status === 403) return "The image service rejected the API key. Check OPENAI_API_KEY on the server.";
-    if (e.status === 429) return "The image service is rate-limiting requests. Please try again in a minute.";
-    if (e.status === undefined || e.status >= 500) return "The image service is temporarily unavailable. Please try again shortly.";
-    return "The image service couldn't process this request.";
-  }
-  if (e instanceof Anthropic.APIConnectionError) return "Couldn't reach the AI service. Check the server's network connection and try again.";
-  if (e instanceof Anthropic.APIError) {
-    if (e.status === 401 || e.status === 403) return "The AI service rejected the API key. Check ANTHROPIC_API_KEY on the server.";
-    if (e.status === 429) return "The AI service is rate-limiting requests. Please try again in a minute.";
-    if (e.status === 400) return "The AI service couldn't process this request. Try again, or remove unusual files and retry.";
-    if (e.status !== undefined && e.status >= 500) return "The AI service is temporarily unavailable. Please try again shortly.";
-    return "The AI request failed. Please try again.";
-  }
-  return null;
-}
-
 export function aiStatus() {
   if (mockActive()) return { provider: "mock", ready: true, model: "mock" } as const;
-  const ready = Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+  const ready = anthropicConfigured(process.env);
   return { provider: "anthropic", ready, model: MODEL } as const;
 }
 
-export { anthropic as anthropicClient };
+/**
+ * One raw Messages API request (tool-use loops such as the assistant), through the executor like
+ * every other text request: usage recorded as pending before sending (or refused), spending cap,
+ * circuit breaker, retries and the usage ledger. Provider code must never call the client directly.
+ *
+ * The worst-case reserve is priced at the most expensive catalog text model, since server-side
+ * fallbacks can answer with another model.
+ */
+export async function anthropicMessage(
+  routeKey: RouteKey,
+  body: Omit<Anthropic.Beta.MessageCreateParamsNonStreaming, "model">,
+): Promise<{ message: Anthropic.Beta.BetaMessage; usage: Usage; provider: string }> {
+  const route = await routed(routeKey);
+  const { execute } = await import("./call");
+  const maxTokens = Math.min(body.max_tokens, 16000);
+  const chars = JSON.stringify({ system: body.system, messages: body.messages, tools: body.tools }).length;
+  // Fallbacks may be requested in the body itself: price at the most expensive catalog model.
+  const pricing = await textPricing({ model: route.model, chars, maxTokens, fallbacks: true });
+  const out = await execute(route, pricing, async () => {
+    const res = await anthropic().beta.messages.create({ ...body, model: route.model, max_tokens: maxTokens }, { timeout: route.timeoutMs });
+    return { value: res, usage: usageOf(res), requestId: requestIdOf(res) };
+  });
+  return { message: out.value, usage: out.usage, provider: `anthropic:${out.value.model}` };
+}

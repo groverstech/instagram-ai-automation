@@ -16,9 +16,9 @@ Mock (demo-mode) results never count towards this plan.
 | Item | Detail |
 |---|---|
 | Keys | `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`, set as server environment variables or secrets. Never in client code, never in the repository, never pasted into chats or tickets. |
-| OpenAI access | The organisation can use `gpt-image-1` (OpenAI may require organisation verification). |
+| OpenAI access | The organisation can use `gpt-image-2.6-flare` and `gpt-image-2.6-sunburst` (OpenAI may require organisation verification). |
 | Network | Outbound HTTPS to `api.openai.com` and `api.anthropic.com`. Behind an HTTPS proxy without direct DNS, run Node with `NODE_USE_ENV_PROXY=1`. |
-| Pricing config | `IMAGE_PRICE_USD_1024X1024`, `_1024X1536` and `_1536X1024`, from the current OpenAI price sheet for the quality the app requests (`high`). |
+| Pricing | Nothing required: OpenAI list prices are built in and costs are calculated per token from reported usage. Add `ai_prices` rows only for contract rates. |
 | Mode | `AI_PROVIDER` unset (not `mock`); `IMAGE_PROVIDER=openai`. |
 | Budget | Set a monthly spend limit on both provider dashboards before testing. The full plan uses roughly 40 images and 150 Claude calls; check the actual cost against the dashboards (§6). |
 | Data | A test workspace and brand with: an approved brand profile, 3 brand colours, heading and body fonts, a logo, and 3 approved product photos. |
@@ -30,7 +30,7 @@ Mock (demo-mode) results never count towards this plan.
 
 ```bash
 cd web
-ANTHROPIC_API_KEY=… OPENAI_API_KEY=… IMAGE_PRICE_USD_1024X1536=… \
+ANTHROPIC_API_KEY=… OPENAI_API_KEY=… \
 LIVE_REPORT_DIR=./live-report npm run test:live
 ```
 
@@ -42,7 +42,7 @@ LIVE_REPORT_DIR=./live-report npm run test:live
 
 | ID | Test | Pass criteria | Last result |
 |---|---|---|---|
-| L1 | Real AI creative via the background job (Claude concept → OpenAI image) | Job `succeeded`; `image_provider` = `openai:gpt-image-1`; the stored image is 1024×1536 for a 4:5 post; `agent_runs` records `images ≥ 1`, `imageModel`, and a cost or an unpriced count; the dominant colour's ΔE to the brand palette is reported | not_run (no keys) |
+| L1 | Real AI creative via the background job (Claude concept → OpenAI image) | Job `succeeded`; `image_provider` = `openai:gpt-image-2.6-flare`; the stored image is 1024×1536 for a 4:5 post; `agent_runs` records `images ≥ 1`, `imageModel`, and a cost or an unpriced count; the dominant colour's ΔE to the brand palette is reported | not_run (no keys) |
 | L2 | The real image rendered in all 12 formats | Each PNG is exactly the format's size; files are written to the report | not_run (no keys) |
 | L3 | Claude vision review of the rendered creative | `reviewer.provider = anthropic`; no "[Demo]"; input tokens > 500 (the image is included); cost > 0 | not_run (no key) |
 | L4 | Claude copy pack | Real text (no "[Demo]"), more than 40 characters, hashtags present, cost > 0, originality result recorded | not_run (no key) |

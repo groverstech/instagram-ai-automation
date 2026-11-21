@@ -9,6 +9,6 @@ The app lives in [`web/`](web/). Start with [`web/README.md`](web/README.md) for
 ```bash
 cd web
 npm install
-cp .env.example .env.local   # add ANTHROPIC_API_KEY, or set AI_PROVIDER=mock to try it without keys
+cp .env.example .env.local   # add BRANDPILOT_ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY), or set AI_PROVIDER=mock to try it without keys
 npm run dev                  # http://localhost:3000
 ```

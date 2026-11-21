@@ -1,4 +1,6 @@
 import "server-only";
+import { anthropicConfigured } from "./ai/anthropic-key";
+import { IMAGE_COMPLEXITIES, IMAGE_MODELS, IMAGE_QUALITIES, TEXT_MODELS } from "./ai/catalog";
 
 /**
  * Deployment configuration checks (ADR-002 in docs/ARCHITECTURE_DECISIONS.md).
@@ -66,7 +68,7 @@ export function migrateOnStart(env: Env = process.env): boolean {
 }
 
 const set = (v: string | undefined) => Boolean(v && v.trim());
-const BOOL_KEYS = ["MIGRATE_ON_START", "ALLOW_LOCAL_STORAGE_IN_PRODUCTION", "AI_ALLOW_MOCK_IN_PRODUCTION", "RUN_JOBS_IN_PROCESS"] as const;
+const BOOL_KEYS = ["MIGRATE_ON_START", "ALLOW_LOCAL_STORAGE_IN_PRODUCTION", "AI_ALLOW_MOCK_IN_PRODUCTION", "RUN_JOBS_IN_PROCESS", "AI_SPEND_CAP_REQUIRED", "AI_SPEND_LEDGER_SINGLE_SESSION"] as const;
 
 /** Validate the environment. Pure (takes the env as input) so it's easy to test. */
 export function checkConfig(env: Env = process.env): ConfigProblem[] {
@@ -122,8 +124,8 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   if (set(env.AI_PROVIDER) && !["anthropic", "mock"].includes(env.AI_PROVIDER!)) err("AI_PROVIDER", "Use `anthropic` (or leave unset) for Claude, or `mock` for demos.");
   if (mockRequested && isProd) err("AI_PROVIDER", "Demo mode (mock) can't run in production. Remove AI_PROVIDER=mock.");
   else if (mockRequested && !mockEffective) warn("AI_PROVIDER", "AI_PROVIDER=mock is ignored with NODE_ENV=production unless AI_ALLOW_MOCK_IN_PRODUCTION=true; the real AI provider is used.");
-  if (!mockEffective && !set(env.ANTHROPIC_API_KEY) && !set(env.ANTHROPIC_AUTH_TOKEN)) {
-    (strict ? err : warn)("ANTHROPIC_API_KEY", "No Anthropic credentials: AI features are unavailable. Real-provider validation stays pending until it's configured.");
+  if (!mockEffective && !anthropicConfigured(env)) {
+    (strict ? err : warn)("BRANDPILOT_ANTHROPIC_API_KEY", "No Anthropic credentials (BRANDPILOT_ANTHROPIC_API_KEY, or ANTHROPIC_API_KEY as a fallback): AI features are unavailable. Real-provider validation stays pending until it's configured.");
   }
   if (env.AI_ALLOW_MOCK_IN_PRODUCTION === "true" && isProd) {
     err("AI_ALLOW_MOCK_IN_PRODUCTION", "Must not be set in production.");
@@ -132,6 +134,52 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   if (!["openai", "none"].includes(imageProvider)) err("IMAGE_PROVIDER", "Use `openai`, or `none` to turn AI images off.");
   else if (imageProvider === "openai" && !set(env.OPENAI_API_KEY)) {
     warn("OPENAI_API_KEY", "Not set: AI images are unavailable (brand-photo and type-led creatives still work).");
+  }
+
+  // AI models and routing (docs/AI_PROVIDERS.md): only catalogued models, so costs are known.
+  if (set(env.ANTHROPIC_MODEL) && !Object.hasOwn(TEXT_MODELS, env.ANTHROPIC_MODEL!.trim())) {
+    err("ANTHROPIC_MODEL", `Unknown model. Use one of: ${Object.keys(TEXT_MODELS).join(", ")} (add others to src/server/ai/catalog.ts with their prices first).`);
+  }
+  for (const k of ["OPENAI_IMAGE_MODEL", "OPENAI_IMAGE_EDIT_MODEL"] as const) {
+    if (set(env[k]) && !(IMAGE_MODELS as readonly string[]).includes(env[k]!.trim())) {
+      err(k, `Unknown image model. Use one of: ${IMAGE_MODELS.join(", ")} (gpt-image-1 was shut down on 2026-10-23).`);
+    }
+  }
+  if (set(env.OPENAI_IMAGE_COMPLEXITY) && !(IMAGE_COMPLEXITIES as readonly string[]).includes(norm(env.OPENAI_IMAGE_COMPLEXITY))) {
+    err("OPENAI_IMAGE_COMPLEXITY", `Use one of: ${IMAGE_COMPLEXITIES.join(", ")}.`);
+  }
+  if (set(env.OPENAI_IMAGE_QUALITY) && !(IMAGE_QUALITIES as readonly string[]).includes(norm(env.OPENAI_IMAGE_QUALITY))) {
+    err("OPENAI_IMAGE_QUALITY", `Use one of: ${IMAGE_QUALITIES.join(", ")}.`);
+  }
+  if (set(env.OPENAI_BASE_URL) && strict && !/^https:\/\//i.test(env.OPENAI_BASE_URL!)) err("OPENAI_BASE_URL", "Must be https in staging/production.");
+  if (set(env.ANTHROPIC_BASE_URL) && strict && !/^https:\/\//i.test(env.ANTHROPIC_BASE_URL!)) err("ANTHROPIC_BASE_URL", "Must be https in staging/production.");
+  for (const k of ["AI_TEXT_TIMEOUT_MS", "AI_IMAGE_TIMEOUT_MS", "AI_MAX_ATTEMPTS", "AI_IMAGE_MAX_ATTEMPTS", "AI_CIRCUIT_THRESHOLD", "AI_CIRCUIT_OPEN_MS"] as const) {
+    if (set(env[k]) && !/^[1-9]\d*$/.test(env[k]!.trim())) err(k, "Must be a positive whole number.");
+  }
+  for (const k of ["AI_RETRY_BASE_MS", "AI_RETRY_MAX_WAIT_MS"] as const) {
+    if (set(env[k]) && !/^\d+$/.test(env[k]!.trim())) err(k, "Must be a whole number of milliseconds.");
+  }
+  // Prices and spending limits: non-negative numbers only. A typo must not silently zero a cost.
+  for (const [k, v] of Object.entries(env)) {
+    if (!/^(AI_PRICE_|OPENAI_IMAGE_PRICE_|AI_MONTHLY_COST_LIMIT_USD|AI_SPEND_CAP_(USD|IMAGE_RESERVE_USD|TEXT_RESERVE_USD)$)/.test(k) || !set(v)) continue;
+    const n = Number(v);
+    if (!Number.isFinite(n) || n < 0) err(k, "Must be a non-negative number (USD).");
+  }
+  if (set(env.AI_SPEND_CAP_SINCE) && Number.isNaN(Date.parse(env.AI_SPEND_CAP_SINCE!))) err("AI_SPEND_CAP_SINCE", "Must be a date and time, e.g. 2026-11-14T00:00:00Z.");
+  // Staging always runs under a hard spending cap (spend-cap.ts treats staging as required-cap mode,
+  // whatever this says; this makes a missing cap stop the web app and the worker at boot instead of
+  // refusing each request). Elsewhere AI_SPEND_CAP_REQUIRED=true opts in, with the same checks.
+  const capRequired = deployEnv(env) === "staging" || norm(env.AI_SPEND_CAP_REQUIRED) === "true";
+  if (capRequired) {
+    if (deployEnv(env) === "staging" && norm(env.AI_SPEND_CAP_REQUIRED) !== "true") err("AI_SPEND_CAP_REQUIRED", "Must be `true` in staging: every provider request is checked against a hard spending cap.");
+    if (!set(env.AI_SPEND_CAP_USD)) err("AI_SPEND_CAP_USD", "Required with AI_SPEND_CAP_REQUIRED (and in staging): the hard spending cap in USD.");
+    if (!set(env.AI_SPEND_CAP_SINCE)) err("AI_SPEND_CAP_SINCE", "Required with AI_SPEND_CAP_REQUIRED (and in staging): when the budget starts, in UTC, e.g. 2026-11-14T00:00:00Z.");
+    else if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(env.AI_SPEND_CAP_SINCE!.trim())) err("AI_SPEND_CAP_SINCE", "Must be UTC in the form 2026-11-14T00:00:00Z.");
+    if (set(env.VOYAGE_API_KEY)) err("VOYAGE_API_KEY", "Voyage embeddings aren't covered by the spending cap, so they're refused while it is required. Unset it (the local embedder is used).");
+  }
+  // Images are priced per token from reported usage; a flat per-image price is no longer used.
+  for (const k of Object.keys(env)) {
+    if (/^IMAGE_PRICE_USD/.test(k) && set(env[k])) warn(k, "No longer used: image costs are calculated per token from the usage OpenAI reports (docs/AI_PROVIDERS.md). Use OPENAI_IMAGE_PRICE_*_PER_MTOK or the ai_prices table for other rates.");
   }
 
   // Public URL: platforms fetch media from it, OAuth redirects use it.

@@ -49,6 +49,12 @@ describe("SSRF: URL policy", () => {
     ];
     for (const u of bad) expect(() => web.checkUrlPolicy(new URL(u)), u).toThrow(web.UnsafeUrlError);
     expect(web.checkUrlPolicy(new URL("https://www.Example.com./about"))).toBe("www.example.com");
+    // Paid AI provider APIs are never fetched as web pages (only the accounted executor reaches them).
+    for (const u of ["https://api.anthropic.com/v1/messages", "https://API.OpenAI.com./v1/images/generations", "https://api.voyageai.com/v1/embeddings", "https://eu.api.openai.com/v1/models"]) {
+      expect(() => web.checkUrlPolicy(new URL(u)), u).toThrow(/AI provider APIs/);
+    }
+    expect(web.checkUrlPolicy(new URL("https://openai.com/research"))).toBe("openai.com"); // their public websites stay readable
+    expect(web.checkUrlPolicy(new URL("https://www.anthropic.com/news"))).toBe("www.anthropic.com");
     expect(web.checkUrlPolicy(new URL("http://93.184.215.14/"))).toBe("93.184.215.14");
   });
 });

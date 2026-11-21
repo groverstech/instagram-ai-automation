@@ -141,3 +141,29 @@ marked **pending**.
   - AI tasks keep their existing durable engine (claims, heartbeats, idempotent steps, recovery).
 - **Future phases:** the publish-attempt ledger with platform reconciliation (PR 4.4) replaces the
   human check with an automatic read-back where the platform API allows it.
+
+## ADR-009: AI provider layer with named routes and a per-attempt usage ledger (PR 4.1)
+
+- **Context:** agents called Claude and the OpenAI image API directly. The SDK's own retries were
+  invisible, so billed attempts could go uncounted. Models and prices were fixed in code, and only
+  per-run totals were kept.
+- **Decision:**
+  - A model catalog (`catalog.ts`) is the only place models and prices live: Anthropic list prices
+    are dated, and OpenAI image prices come from configuration only.
+  - Named routes (`routes.ts`) map each job to a provider and model, overridable per environment
+    and in the database (global, plan, brand), and validated against the catalog. Opus 5.5 stays
+    the default.
+  - One executor (`call.ts`) for both providers, with SDK retries off. It retries with backoff,
+    honours `retry-after` and `x-should-retry`, never retries an image whose outcome is unknown, and
+    has a per-provider circuit breaker.
+  - `usage_events` records every attempt with its outcome, units, estimated cost, price source and
+    the provider's request ID, attributed through an async context.
+  - The job engine retries only transient failures.
+- **Consequences:**
+  - Retries and ambiguous outcomes are counted exactly.
+  - Costs are estimates with an explicit source, and can be reconciled by request ID.
+  - Swapping a model is configuration.
+  - Real-provider validation remains pending until keys exist.
+- **Future phases:** credits (PRs 4.5–4.6) consume `usage_events`; a route admin UI and the
+  provider usage-report reconciliation job build on the same tables.
+

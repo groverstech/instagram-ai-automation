@@ -132,7 +132,7 @@ export function BrandWorkspace(props: {
           ) : (
             <div className="grid h-full place-items-center p-8">
               <Empty icon={<Sparkles />} title="No Brand Intelligence Profile yet" action={canEdit ? <Button variant="accent" loading={busy("gen")} disabled={!props.ai.ready} onClick={generate}><Sparkles /> Analyse my brand</Button> : null}>
-                {props.ai.ready ? "The agent reads your answers, website and uploaded assets, then builds a profile you review section by section." : "Configure ANTHROPIC_API_KEY on the server to enable analysis."}
+                {props.ai.ready ? "The agent reads your answers, website and uploaded assets, then builds a profile you review section by section." : "Configure BRANDPILOT_ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY) on the server to enable analysis."}
               </Empty>
             </div>
           )}

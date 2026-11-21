@@ -71,6 +71,11 @@ export function isPrivateAddress(ip: string): boolean {
 
 const INTERNAL_HOST = /(^|\.)(localhost|local|internal|intranet|lan|home|corp|localdomain|home\.arpa)$/i;
 const METADATA_HOSTS = new Set(["metadata", "metadata.google.internal", "metadata.goog", "instance-data", "instance-data.ec2.internal"]);
+/**
+ * Paid AI provider APIs: never fetched as "web pages". Provider requests go only through the AI
+ * executor's usage accounting (ai/call.ts, ai/spend-cap.ts); a user-supplied URL must not reach them.
+ */
+const AI_PROVIDER_HOST = /(^|\.)(anthropic\.com|openai\.com|voyageai\.com)$/i;
 
 export class UnsafeUrlError extends Error {}
 
@@ -86,6 +91,7 @@ export function checkUrlPolicy(url: URL): string {
     return host;
   }
   if (!host.includes(".") || INTERNAL_HOST.test(host) || METADATA_HOSTS.has(host)) throw new UnsafeUrlError("Internal hostnames can't be fetched.");
+  if (/(^|\.)api\./i.test(host) && AI_PROVIDER_HOST.test(host)) throw new UnsafeUrlError("AI provider APIs can't be fetched as web pages.");
   return host;
 }
 

@@ -97,6 +97,10 @@ jobs:
             echo "ALLOW_LOCAL_STORAGE_IN_PRODUCTION=true"
             echo "TRUSTED_PROXY_HOPS=1"
             echo "RUN_JOBS_IN_PROCESS=false"
+            # Staging always runs under a hard AI spending cap; web and worker refuse to start without it.
+            echo "AI_SPEND_CAP_REQUIRED=true"
+            echo "AI_SPEND_CAP_USD=1"
+            echo "AI_SPEND_CAP_SINCE=2026-01-01T00:00:00Z"
           } > "$RUNNER_TEMP/staging.env"
 
       - name: Web never migrates at start-up (fresh database stays un-migrated and not ready)
@@ -153,6 +157,9 @@ jobs:
             test "$code" != "0"
             grep '"config.refused"' out.log
           }
+          # Staging without the AI spending cap is refused (web, worker and migrate share the check).
+          refused --env-file "$RUNNER_TEMP/staging.env" -e AI_SPEND_CAP_REQUIRED= -e AI_SPEND_CAP_USD= -e AI_SPEND_CAP_SINCE= brandpilot:ci migrate
+          grep -q '"AI_SPEND_CAP_USD"' out.log
           # DEPLOY_ENV not set at all: the image default (production) applies.
           refused -e AI_PROVIDER=mock brandpilot:ci migrate
           # A typo in DEPLOY_ENV fails closed.

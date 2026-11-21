@@ -72,7 +72,7 @@ export async function askAdvisor(scope: RunScope, brand: Brand, question: string
   let result: { runId: string; data: AdvisorAnswer };
   try {
     result = await runAgent(scope, "marketing_advisor", `Advisor: ${question.slice(0, 60)}`, { question }, () =>
-      llm().structured({
+      llm().structured({ route: "advisor.chat",
         system: SYSTEM,
         prompt,
         schema: AdvisorAnswer,
