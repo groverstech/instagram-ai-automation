@@ -118,7 +118,7 @@ An append-only `audit_events` table records:
 
 ## AI providers (PR 4.1)
 
-- **Keys:** `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` are server environment variables only. They're
+- **Keys:** `BRANDPILOT_ANTHROPIC_API_KEY` (or the fallback `ANTHROPIC_API_KEY`) and `OPENAI_API_KEY` are server environment variables only. They're
   never logged, sent to the browser (Settings shows only "key configured") or included in error
   messages; client bundles are scanned in CI.
 - **Outbound:** AI calls go only to the configured provider hosts (public APIs by default;

@@ -1,4 +1,5 @@
 import "server-only";
+import { anthropicConfigured } from "./ai/anthropic-key";
 import { IMAGE_COMPLEXITIES, IMAGE_MODELS, IMAGE_QUALITIES, TEXT_MODELS } from "./ai/catalog";
 
 /**
@@ -123,8 +124,8 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   if (set(env.AI_PROVIDER) && !["anthropic", "mock"].includes(env.AI_PROVIDER!)) err("AI_PROVIDER", "Use `anthropic` (or leave unset) for Claude, or `mock` for demos.");
   if (mockRequested && isProd) err("AI_PROVIDER", "Demo mode (mock) can't run in production. Remove AI_PROVIDER=mock.");
   else if (mockRequested && !mockEffective) warn("AI_PROVIDER", "AI_PROVIDER=mock is ignored with NODE_ENV=production unless AI_ALLOW_MOCK_IN_PRODUCTION=true; the real AI provider is used.");
-  if (!mockEffective && !set(env.ANTHROPIC_API_KEY) && !set(env.ANTHROPIC_AUTH_TOKEN)) {
-    (strict ? err : warn)("ANTHROPIC_API_KEY", "No Anthropic credentials: AI features are unavailable. Real-provider validation stays pending until it's configured.");
+  if (!mockEffective && !anthropicConfigured(env)) {
+    (strict ? err : warn)("BRANDPILOT_ANTHROPIC_API_KEY", "No Anthropic credentials (BRANDPILOT_ANTHROPIC_API_KEY, or ANTHROPIC_API_KEY as a fallback): AI features are unavailable. Real-provider validation stays pending until it's configured.");
   }
   if (env.AI_ALLOW_MOCK_IN_PRODUCTION === "true" && isProd) {
     err("AI_ALLOW_MOCK_IN_PRODUCTION", "Must not be set in production.");

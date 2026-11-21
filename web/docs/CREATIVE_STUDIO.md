@@ -217,7 +217,7 @@ Last run: 8 Nov 2026. The full plan is in `docs/CREATIVE_STUDIO_REAL_AI_TEST_PLA
 | Check | Status | Evidence |
 |---|---|---|
 | OpenAI rejects an invalid key: clear message, not retried as an outage, no image usage | **Verified against the real API** | `npm run test:live`: HTTP 401 → "The image service rejected the API key. Check OPENAI_API_KEY on the server." |
-| Anthropic rejects an invalid key: clear message | **Verified against the real API** | `npm run test:live`: HTTP 401 → "The AI service rejected the API key. Check ANTHROPIC_API_KEY on the server." |
+| Anthropic rejects an invalid key: clear message | **Verified against the real API** | `npm run test:live`: HTTP 401 → "The AI service rejected the API key. Check BRANDPILOT_ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY) on the server." |
 | OpenAI request format and response handling (GPT Image 2.6) | Verified with an intercepted request only | `creative-providers.test.ts` |
 | Anthropic request format (vision review, copy) | Verified with an intercepted request only | `creative-providers.test.ts` |
 | Real image generation from brand identity | **Not verified**: no OpenAI key | `test:live` reports `not_run` |

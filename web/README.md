@@ -15,7 +15,7 @@ platform APIs after human approval, and analyses real performance.
 ```bash
 cd web
 npm install
-cp .env.example .env.local     # add ANTHROPIC_API_KEY (and optionally OPENAI_API_KEY for imagery)
+cp .env.example .env.local     # add BRANDPILOT_ANTHROPIC_API_KEY or ANTHROPIC_API_KEY (and optionally OPENAI_API_KEY for imagery)
 npm run dev                    # http://localhost:3000
 ```
 

@@ -61,7 +61,7 @@ async function main() {
   }
   if (cmd === "ledger") {
     // Where the spending ledger lives, whether it survives this machine, and what is still pending.
-    const { ledgerInfo } = await import("./paid-run-guard");
+    const { earliestCapSince, ledgerInfo } = await import("./paid-run-guard");
     const { committedSpendUsd, parseSpendCap } = await import("./spend-cap");
     const info = await ledgerInfo();
     const cap = parseSpendCap();
@@ -71,6 +71,7 @@ async function main() {
       storage: info.storage,
       durable: info.durable,
       createdAt: info.createdAt?.toISOString() ?? null,
+      earliestCapSince: info.createdAt ? earliestCapSince(info.createdAt) : null,
       capUsd: cap.ok ? cap.capUsd : null,
       capProblem: cap.ok ? null : cap.reason,
       since: since?.toISOString() ?? null,
@@ -80,7 +81,7 @@ async function main() {
     };
     console.log(JSON.stringify(out, null, 2));
     if (since && info.createdAt && since.getTime() < info.createdAt.getTime()) {
-      console.log(`\nAI_SPEND_CAP_SINCE is earlier than this ledger's start: spending before ${info.createdAt.toISOString()} isn't recorded here, so paid commands refuse to run. Set AI_SPEND_CAP_SINCE to that time or later.`);
+      console.log(`\nAI_SPEND_CAP_SINCE is earlier than this ledger's start: spending before ${info.createdAt.toISOString()} isn't recorded here, so paid commands refuse to run. Set AI_SPEND_CAP_SINCE to ${earliestCapSince(info.createdAt)} or later.`);
     }
     if (!info.durable) console.log("\nThis ledger is a local file: it doesn't survive this machine or container. Production and staging need DATABASE_URL (managed Postgres).");
     return;

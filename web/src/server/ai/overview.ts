@@ -7,6 +7,7 @@ import type { SessionUser } from "../auth/session";
 import { ANTHROPIC_PRICES_RETRIEVED, TEXT_MODELS } from "./catalog";
 import { circuitStatus } from "./circuit";
 import { mockActive } from "./mode";
+import { anthropicConfigured } from "./anthropic-key";
 import { baseRoute, ROUTE_KEYS, ROUTES } from "./routes";
 import { usageSummary, type UsageSummary } from "./usage";
 
@@ -81,7 +82,7 @@ export async function aiOverviewFor(session: SessionUser, workspaceId: string): 
         id: "anthropic",
         label: "Anthropic Claude",
         purpose: "Brand intelligence, strategy, campaigns, copy, advisor, research and visual review",
-        configured: Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN),
+        configured: anthropicConfigured(process.env),
         model: TEXT_MODELS[text.model]?.label ?? text.model,
         detail: `Prices: ${priceLabel(textSource)}`,
         circuit: circuitStatus("anthropic").state,

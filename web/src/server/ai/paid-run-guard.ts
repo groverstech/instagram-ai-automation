@@ -60,6 +60,17 @@ export type LedgerInfo = {
   createdAt: Date | null;
 };
 
+/**
+ * The earliest AI_SPEND_CAP_SINCE this ledger can cover, in the documented whole-second UTC format
+ * (e.g. 2026-11-21T03:54:26Z). The ledger's creation time usually has milliseconds; dropping them
+ * would give a time *before* the ledger began, which the guard refuses. So it rounds UP to the next
+ * whole second, never down; a creation time already on a whole second is kept as it is.
+ */
+export function earliestCapSince(ledgerCreatedAt: Date): string {
+  const ms = Math.ceil(ledgerCreatedAt.getTime() / 1000) * 1000;
+  return new Date(ms).toISOString().replace(/\.000Z$/, "Z");
+}
+
 /** Where the usage ledger lives and since when it has been kept. Opens the database; sends nothing. */
 export async function ledgerInfo(env: Env = process.env): Promise<LedgerInfo> {
   const storage = env.DATABASE_URL?.trim() ? "postgres" : (env.PGLITE_DIR ?? "").trim() === "memory://" ? "pglite-memory" : "pglite-file";
@@ -124,7 +135,7 @@ export async function preparePaidRun(env: Env = process.env): Promise<PaidRunBud
     );
   }
   if (since.getTime() < ledger.createdAt.getTime()) {
-    const from = ledger.createdAt.toISOString().replace(/\.\d+Z$/, "Z");
+    const from = earliestCapSince(ledger.createdAt);
     throw new PaidRunRefused(
       `this usage ledger was created at ${ledger.createdAt.toISOString()}, after AI_SPEND_CAP_SINCE (${since.toISOString()}): spending between those times isn't recorded here, so the cap can't cover it. ` +
         `Set AI_SPEND_CAP_SINCE to ${from} or later, and lower AI_SPEND_CAP_USD by anything the provider consoles show was spent before then.`,

@@ -51,8 +51,12 @@ describe("production configuration validation", () => {
 
   it("checks the effective AI mode: an ignored mock setting still needs real credentials", () => {
     const staging = { ...goodProd, DEPLOY_ENV: "staging", ANTHROPIC_API_KEY: "" };
-    expect(keys({ ...staging, AI_PROVIDER: "mock" })).toContain("ANTHROPIC_API_KEY"); // mock ignored → real provider
-    expect(keys({ ...staging, AI_PROVIDER: "mock", AI_ALLOW_MOCK_IN_PRODUCTION: "true" })).not.toContain("ANTHROPIC_API_KEY"); // demo staging
+    expect(keys({ ...staging, AI_PROVIDER: "mock" })).toContain("BRANDPILOT_ANTHROPIC_API_KEY"); // mock ignored → real provider
+    expect(keys({ ...staging, AI_PROVIDER: "mock", AI_ALLOW_MOCK_IN_PRODUCTION: "true" })).not.toContain("BRANDPILOT_ANTHROPIC_API_KEY"); // demo staging
+    // Either key variable satisfies the check: the preferred BRANDPILOT_ name, or the ANTHROPIC_API_KEY fallback.
+    expect(keys({ ...staging, BRANDPILOT_ANTHROPIC_API_KEY: "test-placeholder" })).not.toContain("BRANDPILOT_ANTHROPIC_API_KEY");
+    expect(keys({ ...staging, ANTHROPIC_API_KEY: "test-placeholder" })).not.toContain("BRANDPILOT_ANTHROPIC_API_KEY");
+    expect(keys({ ...staging, BRANDPILOT_ANTHROPIC_API_KEY: "   " })).toContain("BRANDPILOT_ANTHROPIC_API_KEY"); // blank counts as unset
     expect(keys({ ...goodProd, AI_PROVIDER: "mock", AI_ALLOW_MOCK_IN_PRODUCTION: "true" })).toEqual(expect.arrayContaining(["AI_PROVIDER", "AI_ALLOW_MOCK_IN_PRODUCTION"]));
   });
 

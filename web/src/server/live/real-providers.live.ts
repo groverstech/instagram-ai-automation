@@ -6,10 +6,10 @@
  * as NOT RUN, never as passed. Keys are read from the server environment only and are never
  * written to output: the report is scanned for them before the run ends.
  *
- *   ANTHROPIC_API_KEY=… OPENAI_API_KEY=… npm run test:live
+ *   BRANDPILOT_ANTHROPIC_API_KEY=… OPENAI_API_KEY=… npm run test:live   (or ANTHROPIC_API_KEY=…)
  *
  * Each provider can be validated on its own: with only OPENAI_API_KEY, the image tests use a fixed
- * creative concept instead of one written by Claude; with only ANTHROPIC_API_KEY, the text and
+ * creative concept instead of one written by Claude; with only the Anthropic key, the text and
  * vision tests run and the image tests are reported as not run.
  *
  * Behind an HTTPS proxy (e.g. a sandbox without direct DNS), also set NODE_USE_ENV_PROXY=1 so
@@ -23,6 +23,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { eq } from "drizzle-orm";
+import { anthropicConfigured } from "../ai/anthropic-key";
 
 if (process.env.AI_PROVIDER === "mock") throw new Error("Refusing to run live provider tests in demo mode (AI_PROVIDER=mock).");
 // The spending-cap guard (paid-run.setup.ts) must have run: never send a paid request without it.
@@ -40,7 +41,7 @@ const OUT = process.env.LIVE_REPORT_DIR || fs.mkdtempSync(path.join(os.tmpdir(),
 fs.mkdirSync(OUT, { recursive: true });
 
 const HAS_OPENAI = Boolean(process.env.OPENAI_API_KEY);
-const HAS_ANTHROPIC = Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+const HAS_ANTHROPIC = anthropicConfigured(process.env);
 
 const { getDb, schema } = await import("../db/client");
 const { requireBrandForUser } = await import("../auth/guard");
@@ -97,7 +98,7 @@ afterAll(() => {
   const out = JSON.stringify({ ranAt: new Date().toISOString(), textModel: aiStatus().model, imageProvider: imageProvider()?.name ?? "none", report }, null, 2);
   fs.writeFileSync(path.join(OUT, "report.json"), out);
   // Never leave a key in any output file.
-  const secrets = [process.env.OPENAI_API_KEY, process.env.ANTHROPIC_API_KEY, process.env.ANTHROPIC_AUTH_TOKEN].filter((s): s is string => Boolean(s && s.length >= 12));
+  const secrets = [process.env.OPENAI_API_KEY, process.env.BRANDPILOT_ANTHROPIC_API_KEY, process.env.ANTHROPIC_API_KEY, process.env.ANTHROPIC_AUTH_TOKEN].filter((s): s is string => Boolean(s && s.length >= 12));
   for (const f of fs.readdirSync(OUT)) {
     const text = fs.readFileSync(path.join(OUT, f)).toString("latin1");
     for (const s of secrets) if (text.includes(s)) throw new Error(`A provider key leaked into ${f}`);
@@ -241,10 +242,10 @@ describe("real error handling with invalid keys (no key needed)", () => {
 
 describe("live run preconditions", () => {
   it("reports providers that could not be tested instead of passing them", () => {
-    const missing = [!HAS_OPENAI && "OPENAI_API_KEY", !HAS_ANTHROPIC && "ANTHROPIC_API_KEY"].filter(Boolean).join(" and ");
+    const missing = [!HAS_OPENAI && "OPENAI_API_KEY", !HAS_ANTHROPIC && "BRANDPILOT_ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY)"].filter(Boolean).join(" and ");
     if (!HAS_OPENAI) for (const k of ["openai.image_generation", "render.all_formats_with_real_image", "openai.image_variation", "openai.image_edit"]) record(k, { status: "not_run", reason: "OPENAI_API_KEY not set" });
     if (!HAS_OPENAI && !HAS_ANTHROPIC) record("ledger.real_request_ids", { status: "not_run", reason: `${missing} not set` });
-    if (!HAS_ANTHROPIC) for (const k of ["anthropic.vision_review", "anthropic.copy_pack"]) record(k, { status: "not_run", reason: "ANTHROPIC_API_KEY not set" });
+    if (!HAS_ANTHROPIC) for (const k of ["anthropic.vision_review", "anthropic.copy_pack"]) record(k, { status: "not_run", reason: "BRANDPILOT_ANTHROPIC_API_KEY (or ANTHROPIC_API_KEY) not set" });
     expect(mockActive()).toBe(false);
   });
 });

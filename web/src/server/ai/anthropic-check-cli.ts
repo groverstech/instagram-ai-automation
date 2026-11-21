@@ -2,7 +2,8 @@
 // layer, to validate a staging key (docs/DEMO.md §4). Operator tool; never part of tests or CI.
 //
 // Before anything is sent it refuses to run unless:
-//   - ANTHROPIC_API_KEY is set (checked by presence only) and ANTHROPIC_AUTH_TOKEN is not;
+//   - an API key is set, BRANDPILOT_ANTHROPIC_API_KEY or else ANTHROPIC_API_KEY (anthropic-key.ts;
+//     checked by presence only, and only the variable name is reported), and ANTHROPIC_AUTH_TOKEN is not;
 //   - demo mode is off, and the API host is https://api.anthropic.com;
 //   - a valid spending cap is set (AI_SPEND_CAP_USD, AI_SPEND_CAP_SINCE in UTC), the usage ledger is
 //     persistent, and the spending already recorded since then is below the cap (paid-run-guard.ts).
@@ -16,6 +17,7 @@
 // the usage ledger. Never the key or any header value. `--json <file>` also writes it to a file.
 import fs from "node:fs";
 import { z } from "zod";
+import { ANTHROPIC_KEY_HINT, anthropicApiKeySource } from "./anthropic-key";
 
 const fail = (msg: string): never => {
   console.error(`Refusing to run: ${msg}`);
@@ -23,7 +25,8 @@ const fail = (msg: string): never => {
 };
 
 const env = process.env;
-if (!env.ANTHROPIC_API_KEY?.trim()) fail("ANTHROPIC_API_KEY is not set in this process (it's loaded when the session or server starts).");
+const keySource = anthropicApiKeySource(env);
+if (!keySource) fail(`no Anthropic API key in this process: set ${ANTHROPIC_KEY_HINT} (it's loaded when the session or server starts).`);
 if (env.ANTHROPIC_AUTH_TOKEN) fail("ANTHROPIC_AUTH_TOKEN is set; unset it so only the API key can be used.");
 if (env.AI_PROVIDER === "mock") fail("demo mode is on (AI_PROVIDER=mock).");
 const base = (env.ANTHROPIC_BASE_URL?.trim() || "https://api.anthropic.com").replace(/\/+$/, "");
@@ -93,6 +96,7 @@ async function main() {
     ranAt: started.toISOString(),
     requestsSent: sent,
     provider: "anthropic",
+    apiKeyVariable: keySource,
     model: attempt?.model ?? null,
     httpStatus: attempt ? (attempt.httpStatus ?? (attempt.outcome === "success" ? 200 : null)) : null,
     requestId: attempt?.providerRequestId ?? null,

@@ -86,7 +86,7 @@ Costs here are estimates. Confirmed provider billing is reconciled by operators 
 ## 4. Staging: configuring and validating credentials
 
 **Configuring keys:**
-- Set `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` in the **staging** environment's secret store only.
+- Set `BRANDPILOT_ANTHROPIC_API_KEY` (or `ANTHROPIC_API_KEY`) and `OPENAI_API_KEY` in the **staging** environment's secret store only.
   Never in the repository, `.env.example`, documentation, tickets or chat.
 - Keys are read on the server only. The client bundle scan (`npm run check:secrets`, in CI) fails the
   build if a server-only variable or key pattern reaches browser code, and logs redact them.
@@ -101,7 +101,8 @@ Costs here are estimates. Confirmed provider billing is reconciled by operators 
 AI_SPEND_CAP_USD=10 AI_SPEND_CAP_SINCE=<start of the validation, UTC> npm run ai:check-anthropic -- --json anthropic-check.json
 ```
 
-It refuses to run unless `ANTHROPIC_API_KEY` is set (checked by presence only), `ANTHROPIC_AUTH_TOKEN`
+It refuses to run unless `BRANDPILOT_ANTHROPIC_API_KEY` (or the fallback `ANTHROPIC_API_KEY`) is set
+(checked by presence only; the report names the variable used, never its value), `ANTHROPIC_AUTH_TOKEN`
 is unset, demo mode is off, the host is `https://api.anthropic.com`, a valid spending cap and UTC start
 time are set, the usage ledger is persistent and the cap isn't already used up
 (docs/AI_PROVIDERS.md, "Spending cap and run log"). It
@@ -120,8 +121,9 @@ validation, e.g. `export AI_SPEND_CAP_USD=10 AI_SPEND_CAP_SINCE=2026-11-14T00:00
 The cap counts only what the usage ledger recorded. On staging (`DATABASE_URL`) that is every run.
 Without `DATABASE_URL` the ledger is a local file that doesn't survive the machine or container, so
 both commands refuse unless you set `AI_SPEND_LEDGER_SINGLE_SESSION=true`, and refuse an
-`AI_SPEND_CAP_SINCE` earlier than the ledger's start (`npm run ai:billing -- ledger` shows it). Run
-the whole validation in that one session, set `AI_SPEND_CAP_SINCE` to its start, and lower the cap by
+`AI_SPEND_CAP_SINCE` earlier than the ledger's start (`npm run ai:billing -- ledger` shows it, and
+`earliestCapSince`, the start rounded up to the next whole second). Run the whole validation in that
+one session, set `AI_SPEND_CAP_SINCE` to `earliestCapSince` or later, and lower the cap by
 anything the provider consoles show was already spent.
 
 ```bash
@@ -154,7 +156,7 @@ Settings.
 
 | Symptom | Cause |
 |---|---|
-| Yellow "AI is not configured" bar | No `ANTHROPIC_API_KEY` and not in Demo mode |
+| Yellow "AI is not configured" bar | No `BRANDPILOT_ANTHROPIC_API_KEY` or `ANTHROPIC_API_KEY`, and not in Demo mode |
 | "The AI service rejected the API key…" | Wrong or revoked key (not retried) |
 | "…run out of credit or hit its spending limit" | Provider quota or billing limit (not retried) |
 | "The AI service is having problems right now…" | Circuit breaker open after repeated provider failures; it retries automatically after 30 s |

@@ -293,7 +293,9 @@ time, spending since `AI_SPEND_CAP_SINCE` and pending attempts, without any netw
 - **`memory://`: nothing survives.** Refused for paid operator commands.
 
 The cap can only count what the ledger recorded. Paid operator commands therefore refuse to run
-when `AI_SPEND_CAP_SINCE` is earlier than the ledger's start (spending before it isn't recorded),
+when `AI_SPEND_CAP_SINCE` is earlier than the ledger's start (spending before it isn't recorded;
+`npm run ai:billing -- ledger` prints `earliestCapSince`, the ledger's start rounded **up** to the
+next whole second, e.g. a ledger created at `03:54:25.586Z` gives `03:54:26Z`),
 and on a local ledger unless the operator acknowledges a **single-session validation** with
 `AI_SPEND_LEDGER_SINGLE_SESSION=true`. They then print what the cap covers:
 "SINGLE-SESSION LEDGER: … Spending from earlier sessions or other containers is NOT counted". For a
@@ -363,9 +365,19 @@ budget. It holds no keys or prompt content.
 All keys are server-side environment variables (deployment secret store), never in code, the
 repository, logs or the browser. `npm run check:secrets` scans client bundles.
 
+**Anthropic key variable.** The app reads `BRANDPILOT_ANTHROPIC_API_KEY` first and falls back to
+`ANTHROPIC_API_KEY` (`src/server/ai/anthropic-key.ts`); authentication, configuration checks,
+readiness (`aiStatus`, the AI overview) and `npm run ai:check-anthropic` all use that one resolution.
+Some hosts reserve `ANTHROPIC_API_KEY` for themselves: a Claude Code cloud session doesn't pass it to
+the processes it runs, and its network secrets can't be used for `api.anthropic.com`. There, store
+the key as the environment variable `BRANDPILOT_ANTHROPIC_API_KEY`. Either way the key is sent as
+`x-api-key` with no `Authorization` header. Unit tests never see a real key: `src/test/unit.setup.ts`
+clears both variables (and `ANTHROPIC_AUTH_TOKEN`) before each test file.
+
 | Variable | Default | Purpose |
 |---|---|---|
-| `ANTHROPIC_API_KEY` (or `ANTHROPIC_AUTH_TOKEN`) | — | Claude. Required in staging and production. |
+| `BRANDPILOT_ANTHROPIC_API_KEY` | — | Claude API key, sent as `x-api-key`. Preferred. Required in staging and production (this or the fallback). |
+| `ANTHROPIC_API_KEY` | — | Fallback for the Claude API key, used only when `BRANDPILOT_ANTHROPIC_API_KEY` is unset or blank. (`ANTHROPIC_AUTH_TOKEN` is for bearer-token gateways.) |
 | `ANTHROPIC_MODEL` | `claude-opus-5-5` | Default text model (catalogued models only) |
 | `OPENAI_API_KEY` | — | Images. Without it, AI images are unavailable; brand-photo and type-led creatives still work. |
 | `IMAGE_PROVIDER` | `openai` | `none` turns AI images off |

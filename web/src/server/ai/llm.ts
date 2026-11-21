@@ -5,6 +5,7 @@ import type { z } from "zod";
 import { mockActive } from "./mode";
 import { TEXT_MODELS } from "./catalog";
 import { AIConfigError, AIOutputError, AIRefusalError } from "./errors";
+import { ANTHROPIC_KEY_HINT, anthropicConfigured, resolveAnthropicApiKey } from "./anthropic-key";
 import { baseRoute, resolveRoute, type Effort, type ResolvedRoute, type RouteKey } from "./routes";
 
 /**
@@ -13,7 +14,8 @@ import { baseRoute, resolveRoute, type Effort, type ResolvedRoute, type RouteKey
  * route of the job they do; the route picks the model and limits, and the executor (call.ts)
  * handles retries, the circuit breaker and the per-attempt usage ledger.
  *
- * The API key stays on the server (ANTHROPIC_API_KEY, sent as x-api-key; or ANTHROPIC_AUTH_TOKEN for
+ * The API key stays on the server (BRANDPILOT_ANTHROPIC_API_KEY, falling back to ANTHROPIC_API_KEY,
+ * sent as x-api-key; or ANTHROPIC_AUTH_TOKEN for
  * gateways that take a bearer token); it is never logged
  * or sent to the browser.
  */
@@ -116,20 +118,21 @@ const FALLBACK_BETA = "server-side-fallback-2026-07-01";
 let client: Anthropic | null = null;
 
 /**
- * How the API key is sent. Anthropic API keys go in the `x-api-key` header, with no prefix. The
+ * How the API key is sent. The key is BRANDPILOT_ANTHROPIC_API_KEY, or ANTHROPIC_API_KEY as a fallback
+ * (anthropic-key.ts). Anthropic API keys go in the `x-api-key` header, with no prefix. The
  * installed SDK would otherwise send ANTHROPIC_API_KEY as `Authorization: Bearer <key>`, so the key
  * is passed explicitly (which also stops the SDK looking for other credentials, e.g. in config
  * files) and `Authorization` is removed. ANTHROPIC_AUTH_TOKEN, for gateways that take a bearer
  * token, is left to the SDK as before; the API key wins when both are set.
  */
 export function anthropicAuth(env: Record<string, string | undefined>): { apiKey: string; defaultHeaders: Record<string, string | null> } | Record<string, never> {
-  const key = env.ANTHROPIC_API_KEY?.trim();
+  const key = resolveAnthropicApiKey(env)?.key;
   return key ? { apiKey: key, defaultHeaders: { "X-Api-Key": key, Authorization: null } } : {};
 }
 
 function anthropic(): Anthropic {
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
-    throw new AIConfigError("No AI provider is configured. Add ANTHROPIC_API_KEY to your environment (see .env.example).");
+  if (!anthropicConfigured(process.env)) {
+    throw new AIConfigError(`No AI provider is configured. Add ${ANTHROPIC_KEY_HINT} to your environment (see .env.example).`);
   }
   // SDK retries are off: the executor retries, so every attempt is visible and recorded.
   client ??= new Anthropic({ maxRetries: 0, fetch: (url, init) => globalThis.fetch(url, init), ...anthropicAuth(process.env) });
@@ -386,7 +389,7 @@ export function llm(): LLMProvider {
 
 export function aiStatus() {
   if (mockActive()) return { provider: "mock", ready: true, model: "mock" } as const;
-  const ready = Boolean(process.env.ANTHROPIC_API_KEY || process.env.ANTHROPIC_AUTH_TOKEN);
+  const ready = anthropicConfigured(process.env);
   return { provider: "anthropic", ready, model: MODEL } as const;
 }
 

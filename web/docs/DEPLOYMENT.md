@@ -190,7 +190,7 @@ limiter, and are never cached. Responses carry `version` from `APP_VERSION` or `
 | `APP_URL` | Public https URL, e.g. `https://app.example.com`. OAuth redirects, Stripe return URLs, signed media links. |
 | `APP_SECRET` | 32+ random characters (`openssl rand -base64 48`). Encrypts OAuth tokens at rest, signs links, keys the audit-log IP hashes. Rotating it invalidates stored tokens (users reconnect accounts). |
 | `DATABASE_URL` | Postgres connection string (`postgres://…`). |
-| `ANTHROPIC_API_KEY` | Claude API key, for every AI feature. |
+| `BRANDPILOT_ANTHROPIC_API_KEY` | Claude API key, for every AI feature. `ANTHROPIC_API_KEY` still works as a fallback when this is unset. |
 
 **Deployment and operations:**
 
@@ -345,7 +345,7 @@ For large deployments, also put a CDN or WAF rate limit in front.
 | Service | Used for | Required for launch | Configured with | Status |
 |---|---|---|---|---|
 | Postgres 15+ with pgvector | All data | Yes | `DATABASE_URL` | Provider pending |
-| Anthropic (Claude) | Every AI feature | Yes | `ANTHROPIC_API_KEY` | Integrated (PR 4.1); key pending; **live validation pending** |
+| Anthropic (Claude) | Every AI feature | Yes | `BRANDPILOT_ANTHROPIC_API_KEY` (or `ANTHROPIC_API_KEY`) | Integrated (PR 4.1); key pending; **live validation pending** |
 | OpenAI | AI images and variations | No (brand-photo and type-led creatives work without it) | `OPENAI_API_KEY`, image prices | Integrated (PR 4.1); key and prices pending; **live validation pending** |
 | Voyage AI | Semantic brand memory | No (local hashing otherwise) | `VOYAGE_API_KEY` | Optional |
 | Cloudflare R2 | File storage for more than one instance | Yes, for more than one web instance | PR 4.2 | Account pending |

@@ -1,5 +1,6 @@
 import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
+import { ANTHROPIC_KEY_HINT } from "./anthropic-key";
 
 /**
  * AI errors and their classification (docs/AI_PROVIDERS.md). Every provider failure maps to one
@@ -214,7 +215,7 @@ export function friendlyAIError(e: unknown): string | null {
   const image = e instanceof ImageProviderError;
   if (!image && !(e instanceof Anthropic.APIError)) return null;
   const service = image ? "image service" : "AI service";
-  const key = image ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
+  const key = image ? "OPENAI_API_KEY" : ANTHROPIC_KEY_HINT;
   const c = classify(e);
   switch (c.kind) {
     case "auth":

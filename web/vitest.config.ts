@@ -4,5 +4,5 @@ import path from "node:path";
 export default defineConfig({
   oxc: { jsx: { runtime: "automatic" } },
   resolve: { alias: { "@": path.resolve(import.meta.dirname, "src"), "server-only": path.resolve(import.meta.dirname, "src/test/empty.ts") } },
-  test: { environment: "node", include: ["src/**/*.test.ts"], testTimeout: 30000 },
+  test: { environment: "node", include: ["src/**/*.test.ts"], setupFiles: ["src/test/unit.setup.ts"], testTimeout: 30000 },
 });

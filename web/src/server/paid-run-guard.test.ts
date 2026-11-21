@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 
-for (const k of Object.keys(process.env)) if (/^(AI_SPEND_CAP_|AI_PROVIDER$|CI$|DATABASE_URL$|ANTHROPIC_|OPENAI_|VOYAGE_)/.test(k)) delete process.env[k];
+for (const k of Object.keys(process.env)) if (/^(AI_SPEND_CAP_|AI_PROVIDER$|CI$|DATABASE_URL$|ANTHROPIC_|BRANDPILOT_ANTHROPIC_|OPENAI_|VOYAGE_)/.test(k)) delete process.env[k];
 // A persistent ledger (a temporary on-disk database), as paid commands require.
 process.env.PGLITE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bp-paidguard-pg-"));
 process.env.STORAGE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bp-paidguard-store-"));
@@ -118,6 +118,42 @@ describe("paid runs: the cap counts recorded spending, in-flight requests and th
     // AI_SPEND_CAP_SINCE before the ledger existed: the cap would appear to cover unrecorded spending.
     const before = new Date(created.getTime() - 60_000).toISOString();
     await expect(guard.preparePaidRun({ ...env, AI_SPEND_LEDGER_SINGLE_SESSION: "true", AI_SPEND_CAP_SINCE: before })).rejects.toThrow(/created at .* after AI_SPEND_CAP_SINCE/);
+    expect(networkCalls).toHaveLength(0);
+  });
+
+  it("earliestCapSince rounds a fractional-second ledger start UP to the next whole second, never down", () => {
+    const f = guard.earliestCapSince;
+    expect(f(new Date("2026-11-21T03:54:25.586Z"))).toBe("2026-11-21T03:54:26Z");
+    expect(f(new Date("2026-11-21T03:54:25.001Z"))).toBe("2026-11-21T03:54:26Z");
+    expect(f(new Date("2026-11-21T03:54:25.999Z"))).toBe("2026-11-21T03:54:26Z");
+    expect(f(new Date("2026-11-21T03:54:59.500Z"))).toBe("2026-11-21T03:55:00Z"); // carries into the minute
+    expect(f(new Date("2026-12-31T23:59:59.250Z"))).toBe("2027-01-01T00:00:00Z"); // and across the year
+    expect(f(new Date("2026-11-21T03:54:25.000Z"))).toBe("2026-11-21T03:54:25Z"); // already whole: kept
+    for (const ms of [0, 1, 586, 999]) {
+      const created = new Date(Date.UTC(2026, 10, 21, 3, 54, 25, ms));
+      const out = f(created);
+      expect(out).toMatch(spend.SPEND_CAP_SINCE_FORMAT);
+      expect(new Date(out).getTime()).toBeGreaterThanOrEqual(created.getTime());
+      expect(new Date(out).getTime() - created.getTime()).toBeLessThan(1000);
+    }
+  });
+
+  it("the suggested AI_SPEND_CAP_SINCE for a fractional-second ledger start is accepted by the guard", async () => {
+    const created = (await guard.ledgerInfo()).createdAt!;
+    const suggested = guard.earliestCapSince(created);
+    // The old guidance dropped the milliseconds, giving a time before the ledger began: still refused.
+    const truncated = created.toISOString().replace(/\.\d+Z$/, "Z");
+    if (created.getUTCMilliseconds() > 0) {
+      const err = await guard.preparePaidRun({ AI_SPEND_CAP_USD: "10", AI_SPEND_CAP_SINCE: truncated, AI_SPEND_LEDGER_SINGLE_SESSION: "true", PGLITE_DIR: process.env.PGLITE_DIR }).then(() => null, (e: Error) => e.message);
+      expect(err).toMatch(/created at .* after AI_SPEND_CAP_SINCE/);
+      expect(err).toContain(`Set AI_SPEND_CAP_SINCE to ${suggested} or later`);
+      expect(err).not.toContain(`Set AI_SPEND_CAP_SINCE to ${truncated} or later`);
+    }
+    // The suggestion itself passes (once it is no longer in the future).
+    const wait = new Date(suggested).getTime() - Date.now();
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait + 5));
+    const budget = await guard.preparePaidRun({ AI_SPEND_CAP_USD: "10", AI_SPEND_CAP_SINCE: suggested, AI_SPEND_LEDGER_SINGLE_SESSION: "true", PGLITE_DIR: process.env.PGLITE_DIR });
+    expect(budget.ledger.createdAt).toBe(created.toISOString());
     expect(networkCalls).toHaveLength(0);
   });
 

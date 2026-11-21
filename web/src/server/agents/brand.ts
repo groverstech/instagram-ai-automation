@@ -7,6 +7,7 @@ import { fetchPublicText } from "../web";
 import { remember } from "../memory";
 import { extractText, MIME } from "../assets";
 import { log } from "../log";
+import { ANTHROPIC_KEY_HINT } from "../ai/anthropic-key";
 import { AGENTS } from "./registry";
 import { runAgent, type RunScope } from "./orchestrator";
 import { latestProfile, profileOf } from "./context";
@@ -56,7 +57,7 @@ export async function prepareImage(bytes: Buffer, mime: string): Promise<{ mime:
  * later retry analyses them normally.
  */
 export async function analyzeAssets(scope: RunScope, brand: Brand, opts: { retryFailed?: boolean } = {}) {
-  if (!aiStatus().ready) throw new AIConfigError("No AI provider is configured. Add ANTHROPIC_API_KEY to your environment (see .env.example).");
+  if (!aiStatus().ready) throw new AIConfigError(`No AI provider is configured. Add ${ANTHROPIC_KEY_HINT} to your environment (see .env.example).`);
   const db = await getDb();
   const pending = await db
     .select()
@@ -380,7 +381,7 @@ function mockProfile(brand: Brand): BrandProfileV2 {
       contentOpportunities: [],
     },
     competitors: brand.competitors.map((name) => ({ name, positioning: "", howWeDiffer: "", source: "provided" as const })),
-    openQuestions: ["Mock provider: connect ANTHROPIC_API_KEY for a real analysis."],
+    openQuestions: ["Mock provider: connect BRANDPILOT_ANTHROPIC_API_KEY for a real analysis."],
     rationale: "Mock provider: echoes onboarding answers only. No analysis was performed.",
   };
 }
