@@ -25,7 +25,15 @@ import path from "node:path";
 import { eq } from "drizzle-orm";
 
 if (process.env.AI_PROVIDER === "mock") throw new Error("Refusing to run live provider tests in demo mode (AI_PROVIDER=mock).");
-process.env.PGLITE_DIR = "memory://";
+// The spending-cap guard (paid-run.setup.ts) must have run: never send a paid request without it.
+if (process.env.AI_SPEND_CAP_REQUIRED !== "true" || !(await import("../ai/paid-run-guard")).paidRequestGuardInstalled()) {
+  throw new Error("Refusing to run live provider tests: the spending-cap guard isn't active. Run them with `npm run test:live`.");
+}
+// The usage ledger is the app's persistent database (DATABASE_URL, PGLITE_DIR or .data/pg), shared
+// with `npm run ai:check-anthropic`, so the cap counts spending from earlier runs. Test data is
+// unique to this run.
+const RUN_STARTED = new Date();
+const RUN_ID = `${RUN_STARTED.getTime().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 process.env.IMAGE_PROVIDER = process.env.IMAGE_PROVIDER || "openai";
 process.env.STORAGE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bp-live-store-"));
 const OUT = process.env.LIVE_REPORT_DIR || fs.mkdtempSync(path.join(os.tmpdir(), "bp-live-report-"));
@@ -65,7 +73,7 @@ async function sharpLib() {
 beforeAll(async () => {
   expect(mockActive()).toBe(false);
   const db = await getDb();
-  const [o] = await db.insert(schema.users).values({ email: "live@x.test", name: "Live", passwordHash: "x" }).returning();
+  const [o] = await db.insert(schema.users).values({ email: `live-${RUN_ID}@x.test`, name: "Live", passwordHash: "x" }).returning();
   ownerId = o.id;
   const [w] = await db.insert(schema.workspaces).values({ name: "Live test", plan: "agency" }).returning();
   await db.insert(schema.workspaceMembers).values({ workspaceId: w.id, userId: o.id, role: "owner" });
@@ -281,7 +289,7 @@ describe.skipIf(!HAS_OPENAI && !HAS_ANTHROPIC)("PR 4.1: the usage ledger (real A
   it("records every real request in the usage ledger with the provider's request ID and a price source", async () => {
     const db = await getDb();
     const events = await db.select().from(schema.usageEvents);
-    const real = events.filter((e) => e.provider !== "mock");
+    const real = events.filter((e) => e.provider !== "mock" && e.createdAt >= RUN_STARTED); // this run only
     expect(real.length).toBeGreaterThan(0);
     const ok = real.filter((e) => e.outcome === "success");
     for (const e of ok) {

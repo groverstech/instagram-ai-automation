@@ -240,6 +240,27 @@ request**: a request is sent only if
 - A refused request is recorded as `blocked` (`spend_cap`), and the user sees "The AI spending cap
   for this environment would be exceeded…". Nothing is sent.
 - The in-flight reserve is per process: run a validation with a single app process.
+- **Fails closed.** A cap that is set but malformed, or an `AI_SPEND_CAP_SINCE` that is set but
+  not a date and time, refuses every request (it used to mean "no cap" / "start of month").
+  `AI_SPEND_CAP_SINCE` is ISO 8601 in UTC, e.g. `2026-11-14T00:00:00Z`.
+- `AI_SPEND_CAP_REQUIRED=true` refuses every provider request unless a valid cap and start time
+  are set. Paid operator commands turn it on for their own process.
+
+**Paid operator commands** (`npm run test:live`, `npm run ai:check-anthropic`) go through
+`src/server/ai/paid-run-guard.ts`. Before anything can reach a provider they refuse to run unless:
+- not in CI;
+- `AI_SPEND_CAP_USD` is a positive number and `AI_SPEND_CAP_SINCE` a UTC time in the format above,
+  not in the future;
+- the usage ledger is persistent (`DATABASE_URL`, `PGLITE_DIR` or the default `.data/pg`; never
+  `memory://`), so spending recorded by earlier runs counts. Both commands share that ledger;
+- the spending already recorded since `AI_SPEND_CAP_SINCE` is below the cap.
+
+During the run, required-cap mode is on and a network guard blocks any request to a provider host
+(`api.anthropic.com`, `api.openai.com`, or a configured base URL) that doesn't hold a reservation
+under the cap, i.e. that didn't go through the executor's check. Paid APIs with no cap accounting
+(embeddings, `api.voyageai.com`) are blocked. `test:live` loads the guard through
+`vitest.live.config.ts` (`setupFiles`) before any live test file, and the live test refuses to start
+if it isn't active.
 
 `npm run ai:billing -- log --since <ISO> --budget 10 [--json run-log.json]` lists every real
 provider request: time, provider, route, model, attempt, outcome, HTTP status, the provider's
@@ -285,7 +306,8 @@ repository, logs or the browser. `npm run check:secrets` scans client bundles.
 | `AI_CIRCUIT_THRESHOLD` / `AI_CIRCUIT_OPEN_MS` | 5 / 30000 | Circuit breaker |
 | Price variables | — | See "How costs are calculated". The retired `IMAGE_PRICE_USD*` variables are ignored, with a warning at boot. |
 | `AI_MONTHLY_COST_LIMIT_USD`, `AI_MONTHLY_COST_LIMIT_USD_<PLAN>` | — | Optional spending limit |
-| `AI_SPEND_CAP_USD`, `AI_SPEND_CAP_SINCE` | — | Hard cap for the whole deployment, checked before every request (validation budgets) |
+| `AI_SPEND_CAP_USD`, `AI_SPEND_CAP_SINCE` | — | Hard cap for the whole deployment, checked before every request (validation budgets). Since: UTC, e.g. `2026-11-14T00:00:00Z`. Required by `test:live` and `ai:check-anthropic` |
+| `AI_SPEND_CAP_REQUIRED` | — | `true`: refuse every provider request unless a valid cap is set (paid commands set it themselves) |
 | `AI_SPEND_CAP_IMAGE_RESERVE_USD`, `AI_SPEND_CAP_TEXT_RESERVE_USD` | 1.00 / 0.50 | Worst-case reserve for an image request; fallback reserve for an unpriced text attempt |
 | `LIVE_REPORT_DIR` | — | Where `test:live` writes `report.json`; Settings shows it |
 | `AI_PROVIDER=mock` | — | Demo mode (refused in production) |

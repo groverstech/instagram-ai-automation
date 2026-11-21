@@ -102,13 +102,20 @@ AI_SPEND_CAP_USD=10 AI_SPEND_CAP_SINCE=<start of the validation, UTC> npm run ai
 ```
 
 It refuses to run unless `ANTHROPIC_API_KEY` is set (checked by presence only), `ANTHROPIC_AUTH_TOKEN`
-is unset, demo mode is off, the host is `https://api.anthropic.com` and a spending cap is set. It
+is unset, demo mode is off, the host is `https://api.anthropic.com`, a valid spending cap and UTC start
+time are set, the usage ledger is persistent and the cap isn't already used up
+(docs/AI_PROVIDERS.md, "Spending cap and run log"). It
 sends exactly one request with retries off. A guard at the network layer blocks the request unless
 it carries `x-api-key` and no `Authorization` header. It reports provider, model, HTTP status,
 request ID, token usage, estimated cost and outcome, never the key.
 
 **Validate each provider on its own** (real, paid calls; never in CI). Run on the staging server or a
 machine with the staging keys, with outbound HTTPS to `api.anthropic.com` and `api.openai.com`:
+
+`test:live` has the same spending-cap guard: it refuses to run without `AI_SPEND_CAP_USD` and
+`AI_SPEND_CAP_SINCE` (UTC), with an in-memory ledger, in CI, or once the cap is used up, and blocks any
+provider request that doesn't hold a reservation under the cap. Set the cap once for the whole
+validation, e.g. `export AI_SPEND_CAP_USD=10 AI_SPEND_CAP_SINCE=2026-11-14T00:00:00Z`.
 
 ```bash
 cd web

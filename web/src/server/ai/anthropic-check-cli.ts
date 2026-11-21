@@ -4,8 +4,11 @@
 // Before anything is sent it refuses to run unless:
 //   - ANTHROPIC_API_KEY is set (checked by presence only) and ANTHROPIC_AUTH_TOKEN is not;
 //   - demo mode is off, and the API host is https://api.anthropic.com;
-//   - a spending cap is set (AI_SPEND_CAP_USD), so the request counts against the budget.
+//   - a valid spending cap is set (AI_SPEND_CAP_USD, AI_SPEND_CAP_SINCE in UTC), the usage ledger is
+//     persistent, and the spending already recorded since then is below the cap (paid-run-guard.ts).
 // While running:
+//   - the request is sent only if recorded spend + in-flight reserves + its worst-case cost fit
+//     under the cap, and a network guard blocks any provider request without a cap reservation;
 //   - one attempt only (retries off), low effort, a tiny prompt, at most 1,024 output tokens;
 //   - a guard at the network layer allows exactly one request to api.anthropic.com, and only if
 //     it carries x-api-key and no Authorization header (checked by header name, never by value).
@@ -26,6 +29,7 @@ if (env.AI_PROVIDER === "mock") fail("demo mode is on (AI_PROVIDER=mock).");
 const base = (env.ANTHROPIC_BASE_URL?.trim() || "https://api.anthropic.com").replace(/\/+$/, "");
 if (base !== "https://api.anthropic.com") fail("ANTHROPIC_BASE_URL points somewhere other than https://api.anthropic.com.");
 if (!env.AI_SPEND_CAP_USD?.trim()) fail("set AI_SPEND_CAP_USD (and AI_SPEND_CAP_SINCE) so the request counts against the validation budget.");
+if (!env.AI_SPEND_CAP_SINCE?.trim()) fail("set AI_SPEND_CAP_SINCE (UTC, e.g. 2026-11-14T00:00:00Z) to the start of the validation budget.");
 env.AI_MAX_ATTEMPTS = "1"; // retries off for this process
 
 // Network guard: exactly one Anthropic request, x-api-key present, Authorization absent.
@@ -49,6 +53,16 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 }) as typeof fetch;
 
 async function main() {
+  // Spending cap (paid-run-guard.ts): a valid cap and start time, a persistent ledger, budget left.
+  // Then every provider request must hold a reservation under the cap, checked before it is sent.
+  const { PaidRunRefused, installPaidRequestGuard, preparePaidRun } = await import("./paid-run-guard");
+  try {
+    await preparePaidRun();
+  } catch (e) {
+    if (e instanceof PaidRunRefused) fail(e.message);
+    throw e;
+  }
+  await installPaidRequestGuard();
   const { llm, friendlyAIError } = await import("./llm");
   const { classify } = await import("./errors");
   const { getDb, schema } = await import("../db/client");

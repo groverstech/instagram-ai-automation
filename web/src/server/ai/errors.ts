@@ -23,6 +23,16 @@ export class AIUnavailableError extends Error {
   }
 }
 
+/**
+ * The spending cap is required but missing, or set but invalid (AI_SPEND_CAP_USD / AI_SPEND_CAP_SINCE).
+ * Fails closed: nothing is sent. Classified as `spend_cap`, like an exceeded cap.
+ */
+export class AISpendCapConfigError extends Error {
+  constructor(readonly reason: string) {
+    super(`The AI spending cap for this environment is ${reason}, so this request wasn't sent.`);
+  }
+}
+
 /** A hard spending cap (AI_SPEND_CAP_USD) would be exceeded by this request. Nothing was sent. */
 export class AISpendCapError extends Error {
   constructor(
@@ -131,7 +141,7 @@ export function classify(e: unknown): Classified {
     ...extra,
   });
   if (e instanceof AIUnavailableError) return base("circuit_open", { retryable: false, responded: false, serviceFailure: false });
-  if (e instanceof AISpendCapError) return base("spend_cap", { retryable: false, responded: false, serviceFailure: false });
+  if (e instanceof AISpendCapError || e instanceof AISpendCapConfigError) return base("spend_cap", { retryable: false, responded: false, serviceFailure: false });
   if (e instanceof AIConfigError || e instanceof ImageProviderUnavailable) return base("not_configured", { retryable: false, responded: false, serviceFailure: false });
   if (e instanceof AIRefusalError) return base("refusal");
   if (e instanceof AIOutputError) return base("output_invalid");
@@ -187,7 +197,7 @@ export function isServiceError(e: unknown): boolean {
 
 /** User-facing message for AI failures; never exposes raw API payloads or keys. */
 export function friendlyAIError(e: unknown): string | null {
-  if (e instanceof AIConfigError || e instanceof AIRefusalError || e instanceof AIOutputError || e instanceof AIUnavailableError || e instanceof AISpendCapError) return e.message;
+  if (e instanceof AIConfigError || e instanceof AIRefusalError || e instanceof AIOutputError || e instanceof AIUnavailableError || e instanceof AISpendCapError || e instanceof AISpendCapConfigError) return e.message;
   if (e instanceof ImageRefusedError) return e.message;
   if (e instanceof ImageProviderUnavailable) return "No image provider is configured. Choose brand photos or a typographic layout, or set OPENAI_API_KEY on the server.";
   const image = e instanceof ImageProviderError;
