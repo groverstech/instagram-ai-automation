@@ -71,14 +71,14 @@ Rules:
 
   const { runId, data } = await runAgent(scope, "creative_director", `${count}× ${fmtDef.label}${carousel ? ` carousel (${slides} slides)` : ""} · ${style.label}`, { brief: req.brief.slice(0, 300), format: req.format, style: req.style, count, kind: req.kind ?? "single", strategyId: req.strategyId ?? undefined }, () =>
     carousel
-      ? llm().structured({
+      ? llm().structured({ route: "creative.concepts",
           system: AGENTS.creative_director.system,
           prompt,
           schema: CarouselConcepts,
           effort: AGENTS.creative_director.effort,
           mock: () => ({ concepts: Array.from({ length: count }, (_, i) => ({ ...mockConcept(brand, req.brief, i), slides: mockSlides(slides - 1) })) }),
         })
-      : llm().structured({
+      : llm().structured({ route: "creative.concepts",
           system: AGENTS.creative_director.system,
           prompt,
           schema: CreativeConcepts,

@@ -10,6 +10,9 @@ import { EMBEDDING_DIMS } from "../db/schema";
 export async function embed(texts: string[], kind: "document" | "query" = "document"): Promise<number[][]> {
   if (!texts.length) return [];
   if (process.env.VOYAGE_API_KEY) {
+    // Voyage isn't covered by the spending cap's accounting: never call it while the cap is required.
+    const { spendCapRequired } = await import("./spend-cap");
+    if (spendCapRequired()) throw new Error("Voyage embeddings are disabled while a spending cap is required (they aren't covered by it). Unset VOYAGE_API_KEY.");
     const res = await fetch("https://api.voyageai.com/v1/embeddings", {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${process.env.VOYAGE_API_KEY}` },

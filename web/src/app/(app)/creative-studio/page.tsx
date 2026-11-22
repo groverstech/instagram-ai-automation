@@ -1,7 +1,8 @@
 import { desc, eq } from "drizzle-orm";
 import { requireActiveBrand } from "@/server/auth/guard";
 import { getDb, schema } from "@/server/db/client";
-import { imagePrice, imageStatus } from "@/server/ai/image";
+import { imageModelLabel, imageStatus } from "@/server/ai/image";
+import { imageRates } from "@/server/ai/pricing";
 import { latestProfile, profileOf } from "@/server/agents/context";
 import { brandPhotos } from "@/server/creative/visuals";
 import { recentCreativeTasks } from "@/server/creative/jobs";
@@ -30,7 +31,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ c
       initialOpen={c}
       initialBrief={brief?.slice(0, 2000)}
       initialObjective={objective}
-      imageProvider={{ ...img, priced: imagePrice("1024x1024") !== null }}
+      imageProvider={{ ...img, priced: Boolean(img.model && imageRates(img.model)), modelLabel: img.model ? imageModelLabel(img.model) : null, editModelLabel: img.editModel ? imageModelLabel(img.editModel) : null }}
       preferredStyles={profile?.visual.preferredStyles ?? []}
       campaigns={campaigns}
       photos={photos.map((p) => ({ id: p.id, name: p.name, kind: p.kind }))}
