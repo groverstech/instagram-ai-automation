@@ -81,7 +81,7 @@ production-grade deployment, with the security, data and operations gates below 
 | P1 | Public privacy, terms and data-deletion pages; Meta data-deletion and deauthorise callbacks | **In progress** | PR #12 (4.3a). Legal text comes from the owner's counsel (O5); until then the pages are marked draft and must not be submitted | Code, Owner |
 | P2 | Capabilities match what the publishers implement (plan defect D2) | **In progress** | PR #12. Before it, Instagram and Facebook claim carousel and video support, but only single images are published | Code |
 | P3 | Instagram receives JPEG media (plan defect D1) | **In progress** | PR #12 serves the publish media as JPEG. Public hosting at scale comes with R2 (PR 4.2) | Code |
-| P4 | Meta app approved for production permissions (or beta users added as app testers) | **External** | Submit after P1 is live with final legal text | Owner, External |
+| P4 | Meta app approved for production permissions (or beta users added as app testers) | **External** | Pack, checklist and reviewer account ready (#14, `docs/submissions/META.md`). Submit once a public domain, the final legal text and your Meta app are in place. **It doesn't need R2:** single-image publishing works through the app's signed media links on a single instance | Owner, External |
 | P5 | Publish ledger, idempotency, reconciliation and token health; carousel and Reels | **Not started** | PR 4.4, which needs PR 4.2 and PR 4.3 | Code |
 | P6 | Live publish tests to test accounts on every enabled platform | **Not started** | After PR 4.4 and Meta access | Owner |
 | P7 | LinkedIn and YouTube marked "coming soon" until approved | **In progress** | PR #12 labels them; a test checks the wording | Code |
@@ -123,7 +123,7 @@ started without waiting; each item is its own PR.
 
 | Order | Work | Gates | Needs from the owner | Status |
 |---|---|---|---|---|
-| 1 | **PR 4.3 Platform readiness**, in three PRs: **4.3a** (#12) legal pages, Meta callbacks, honest capabilities, JPEG media; **4.3b** (#13) self-service deletion; **4.3c** reviewer demo workspace and submission packs | P1, P2, P3, P7, D3 | Legal text before any submission | 4.3a and 4.3b in review; 4.3c next |
+| 1 | **PR 4.3 Platform readiness**, in three stacked PRs: **4.3a** (#12) legal pages, Meta callbacks, honest capabilities, JPEG media; **4.3b** (#13) self-service deletion; **4.3c** (#14) Meta submission pack and reviewer account | P1, P2, P3, P7, D3 | Legal text before any submission; the `business_management` decision | All three in review |
 | 2 | Emergency pause | R2 | — | Queued |
 | 3 | Strict CSP (F2) | S6 | — | Queued |
 | 4 | MFA (F3) | S7 | — | Queued |
@@ -132,7 +132,7 @@ started without waiting; each item is its own PR.
 | 7 | Audit-log retention and export (F4), tenant export | D4, D5 | — | Queued |
 | 8 | PR 4.9 parts: RLS pilot, `APP_SECRET` rotation procedure | S8, S3 | — | Queued |
 | — | PR 4.2 R2 storage and CDN | D2, P3, O6 | **Authorisation**, Cloudflare account | Blocked: owner |
-| — | PR 4.4 Instagram and Facebook publishing | P5, P6 | PR 4.2; Meta app and test accounts | Blocked: 4.2 |
+| — | PR 4.4 Instagram and Facebook publishing (ledger, idempotency, reconciliation, carousels, Reels) | P5, P6 | PR 4.2 for video and scale; Meta app and test accounts | Blocked: 4.2 and owner. Single-image publishing already works without it on one instance (#14 finding) |
 | — | Real-provider validation | A1, A2 | Keys in the validation environment; approval of the paid run | Blocked: owner |
 | — | Email, error tracking, hosting, alerting adapters | O1–O4, S5 | Vendor choices | Blocked: owner |
 
@@ -159,3 +159,4 @@ Each session appends one line: date, what was merged or opened, gates changed, n
 |---|---|
 | 22 Nov 2026 | Baseline verified (§1). Tracker created; plan documents brought onto `main` with it. Next: PR 4.3 platform readiness. |
 | 22 Nov 2026 | Opened #12 (4.3a: legal pages, Meta callbacks, capabilities, JPEG; CI green) and #13 (4.3b: self-service deletion, stacked on #12). Evidence: 373/373 tests on Postgres 16; browser regression 19/16/10/20 passing. Next: 4.3c (reviewer demo workspace, submission packs), then emergency pause (R2). |
+| 22 Nov 2026 | Opened #14 (4.3c: Meta submission pack, `reviewer:setup`). Finding: the Meta review and single-image beta publishing don't depend on R2 for a single-instance beta. Next: emergency pause (R2), then strict CSP (F2). |
