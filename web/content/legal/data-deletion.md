@@ -20,10 +20,17 @@ In Facebook, go to **Settings & privacy → Settings → Apps and websites**, fi
 
 Check the progress of a Meta deletion request with your confirmation code at [{{appUrl}}/data-deletion/status]({{appUrl}}/data-deletion/status).
 
-## Delete your account or organisation
+## Delete a brand, your organisation or your account
 
-Email {{contact}} from your account's email address and say what you want deleted: your user account, a brand, or your whole organisation. We confirm by email and complete the deletion within 30 days. [Self-service deletion in Settings is being added.]
+In BrandPilot, open **Settings → Delete data**:
+
+- **Delete a brand** (organisation owners and admins): deletes the brand's profile, uploaded files, strategies, campaigns, creatives and their images, posts and metrics, connected social accounts and assistant history. Type the brand's name to confirm.
+- **Delete the organisation** (owners): deletes every brand in it and everyone's access to it. Cancel any paid subscription in Billing first. Confirm with your password.
+- **Delete my account** (everyone): deletes your account, sign-ins and memberships, and any organisation where you're the only member. If you're the only owner of an organisation that has other members, make one of them an owner first. Confirm with your password.
+
+Deletion happens immediately. You can also email {{contact}} from your account's email address and we'll do it for you within 30 days.
 
 ## What we keep
 
-Records we must keep by law (for example billing records) and short-lived backups, until they expire. [Periods to be confirmed.]
+- AI usage records (which feature ran, token counts, estimated cost) for billing, and the Security log for investigating security events. They keep the deleted items' internal IDs and, for social connections, the platform's account IDs, but no names, text or files.
+- Records we must keep by law (for example billing records), and short-lived backups until they expire. [Periods to be confirmed.]

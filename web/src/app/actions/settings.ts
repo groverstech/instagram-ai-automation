@@ -3,7 +3,8 @@ import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/server/db/client";
 import { AccessError, requireWorkspaceRole } from "@/server/auth/guard";
-import { getSession } from "@/server/auth/session";
+import { destroySession, getSession } from "@/server/auth/session";
+import { deleteAccountFor, deleteBrandFor, deleteWorkspaceFor } from "@/server/deletion";
 import { changeRoleFor, inviteMemberFor, removeMemberFor, setMemberBrandsFor } from "@/server/members";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
@@ -16,6 +17,30 @@ export async function updateWorkspace(workspaceId: string, input: { name: string
     await db.update(schema.workspaces).set({ name: input.name.trim() || "Workspace", type: input.type }).where(eq(schema.workspaces.id, workspaceId));
     await audit({ action: "workspace.update", workspaceId, actorUserId: session.user.id, targetType: "workspace", targetId: workspaceId, details: { type: input.type } });
     revalidatePath("/settings");
+  });
+}
+
+/** Delete a brand and everything in it. Owners and admins with access to every brand; the brand's name confirms. */
+export async function deleteBrand(brandId: string, confirmName: string) {
+  return safe(async () => {
+    await deleteBrandFor(await me(), brandId, confirmName);
+    revalidatePath("/", "layout");
+  });
+}
+
+/** Delete an organisation with all its brands. Owners only; their password confirms. */
+export async function deleteWorkspace(workspaceId: string, password: string) {
+  return safe(async () => {
+    await deleteWorkspaceFor(await me(), workspaceId, password);
+    revalidatePath("/", "layout");
+  });
+}
+
+/** Delete your own account (and organisations only you belong to). Your password confirms; you're signed out. */
+export async function deleteAccount(password: string) {
+  return safe(async () => {
+    await deleteAccountFor(await me(), password);
+    await destroySession();
   });
 }
 

@@ -17,6 +17,8 @@ type Member = { id: string; role: Role; brandIds: string[] | null; status: strin
 import type { AuditRow, AuditScope } from "@/server/audit";
 import type { AiOverview } from "@/server/ai/overview";
 import { AiUsageCard } from "./ai-usage";
+import { DeleteData } from "./delete-data";
+import type { AccountDeletionPlan } from "@/server/deletion";
 type BrandRow = { id: string; name: string; createdAt: Date; active: boolean; colors: string[]; access: { all: number; scoped: number } };
 
 export function SettingsView(props: {
@@ -41,6 +43,8 @@ export function SettingsView(props: {
   /** Owners/admins with access to every brand only; null for everyone else. */
   auditLog?: { rows: AuditRow[]; scope: AuditScope } | null;
   aiOverview?: AiOverview | null;
+  /** What deleting your own account would do (Settings → Delete data). */
+  accountPlan: AccountDeletionPlan;
   integrations: { ai: { provider: string; ready: boolean; model: string }; image: { ready: boolean; provider: string }; embeddings: string; database: string } | null;
 }) {
   const isAdmin = roleAtLeast(props.role, "admin") && !props.scoped;
@@ -173,6 +177,8 @@ export function SettingsView(props: {
           {props.aiOverview ? <AiUsageCard data={props.aiOverview} /> : null}
 
           {props.auditLog ? <SecurityLog rows={props.auditLog.rows} scope={props.auditLog.scope} brandName={brandName} /> : null}
+
+          <DeleteData workspace={{ id: props.workspace.id, name: props.workspace.name }} brands={props.brands.map((b) => ({ id: b.id, name: b.name }))} canDeleteBrand={isAdmin} isOwner={props.role === "owner" && !props.scoped} plan={props.accountPlan} />
         </div>
 
         <div className="min-w-0 space-y-6">
