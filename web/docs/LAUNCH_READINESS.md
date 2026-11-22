@@ -70,7 +70,7 @@ production-grade deployment, with the security, data and operations gates below 
 |---|---|---|---|---|
 | D1 | Postgres backups with PITR; restore drill passed | **Owner** | Procedure in DEPLOYMENT §9; needs managed Postgres | Owner |
 | D2 | Object storage with versioning and lifecycle (R2) | **Not started** | PR 4.2: **not authorised yet** | Owner |
-| D3 | Account and brand deletion end to end | **In progress** | PR 4.3 | Code |
+| D3 | Account and brand deletion end to end | **In progress** | PR #13 (4.3b): Settings → Delete data for brands, organisations and accounts; tests and browser checks pass | Code |
 | D4 | Tenant data export | **Not started** | With the F4 export work (§4) | Code |
 | D5 | Audit-log retention and export (F4) | **Not started** | Required before customer launch | Code |
 
@@ -78,13 +78,13 @@ production-grade deployment, with the security, data and operations gates below 
 
 | # | Gate | Status | Evidence or next action | Blocker type |
 |---|---|---|---|---|
-| P1 | Public privacy, terms and data-deletion pages; Meta data-deletion and deauthorise callbacks | **In progress** | PR 4.3. Legal text comes from the owner's counsel (O5); until then the pages are marked draft and must not be submitted | Code, Owner |
-| P2 | Capabilities match what the publishers implement (plan defect D2) | **In progress** | PR 4.3. Today Instagram and Facebook claim carousel and video support, but only single images are published | Code |
-| P3 | Instagram receives JPEG media (plan defect D1) | **In progress** | PR 4.3 serves the publish media as JPEG. Public hosting at scale comes with R2 (PR 4.2) | Code |
+| P1 | Public privacy, terms and data-deletion pages; Meta data-deletion and deauthorise callbacks | **In progress** | PR #12 (4.3a). Legal text comes from the owner's counsel (O5); until then the pages are marked draft and must not be submitted | Code, Owner |
+| P2 | Capabilities match what the publishers implement (plan defect D2) | **In progress** | PR #12. Before it, Instagram and Facebook claim carousel and video support, but only single images are published | Code |
+| P3 | Instagram receives JPEG media (plan defect D1) | **In progress** | PR #12 serves the publish media as JPEG. Public hosting at scale comes with R2 (PR 4.2) | Code |
 | P4 | Meta app approved for production permissions (or beta users added as app testers) | **External** | Submit after P1 is live with final legal text | Owner, External |
 | P5 | Publish ledger, idempotency, reconciliation and token health; carousel and Reels | **Not started** | PR 4.4, which needs PR 4.2 and PR 4.3 | Code |
 | P6 | Live publish tests to test accounts on every enabled platform | **Not started** | After PR 4.4 and Meta access | Owner |
-| P7 | LinkedIn and YouTube marked "coming soon" until approved | **Partial** | Check the capability labels in PR 4.3 | Code |
+| P7 | LinkedIn and YouTube marked "coming soon" until approved | **In progress** | PR #12 labels them; a test checks the wording | Code |
 
 ### AI
 
@@ -123,7 +123,7 @@ started without waiting; each item is its own PR.
 
 | Order | Work | Gates | Needs from the owner | Status |
 |---|---|---|---|---|
-| 1 | **PR 4.3 Platform readiness**: legal pages (draft text), Meta callbacks, deletion requests, account and brand deletion, honest capabilities, JPEG publish media, reviewer demo workspace, submission packs | P1, P2, P3, P7, D3 | Legal text before any submission | In progress |
+| 1 | **PR 4.3 Platform readiness**, in three PRs: **4.3a** (#12) legal pages, Meta callbacks, honest capabilities, JPEG media; **4.3b** (#13) self-service deletion; **4.3c** reviewer demo workspace and submission packs | P1, P2, P3, P7, D3 | Legal text before any submission | 4.3a and 4.3b in review; 4.3c next |
 | 2 | Emergency pause | R2 | — | Queued |
 | 3 | Strict CSP (F2) | S6 | — | Queued |
 | 4 | MFA (F3) | S7 | — | Queued |
@@ -158,3 +158,4 @@ Each session appends one line: date, what was merged or opened, gates changed, n
 | Date | Checkpoint |
 |---|---|
 | 22 Nov 2026 | Baseline verified (§1). Tracker created; plan documents brought onto `main` with it. Next: PR 4.3 platform readiness. |
+| 22 Nov 2026 | Opened #12 (4.3a: legal pages, Meta callbacks, capabilities, JPEG; CI green) and #13 (4.3b: self-service deletion, stacked on #12). Evidence: 373/373 tests on Postgres 16; browser regression 19/16/10/20 passing. Next: 4.3c (reviewer demo workspace, submission packs), then emergency pause (R2). |
