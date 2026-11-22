@@ -113,7 +113,7 @@ production-grade deployment, with the security, data and operations gates below 
 | L1 | Privacy policy, terms and DPA published | **Owner** | Text from counsel; pages from PR 4.3 | Owner |
 | L2 | Platform terms reviewed | **Owner** | — | Owner |
 | R1 | Human approval before every publish | **Done** | `schedulePost` and `publishNow` refuse unapproved posts; only admins schedule (`src/app/actions/posts.ts`) | — |
-| R2 | Emergency pause of all publishing for a brand | **Not started** | Small PR (§4) | Code |
+| R2 | Emergency pause of all publishing for a brand | **In progress** | PR #15: pause (editors and above) cancels queued publishes and blocks every publishing path; resume (admins) re-queues future posts and returns missed ones to approved; tests and browser checks pass | Code |
 | R3 | Plans and limits configurable, credits in shadow mode (plan defect D5) | **Not started** | PR 4.5 | Code |
 
 ## 4. Work queue
@@ -124,7 +124,7 @@ started without waiting; each item is its own PR.
 | Order | Work | Gates | Needs from the owner | Status |
 |---|---|---|---|---|
 | 1 | **PR 4.3 Platform readiness**, in three stacked PRs: **4.3a** (#12) legal pages, Meta callbacks, honest capabilities, JPEG media; **4.3b** (#13) self-service deletion; **4.3c** (#14) Meta submission pack and reviewer account | P1, P2, P3, P7, D3 | Legal text before any submission; the `business_management` decision | All three in review |
-| 2 | Emergency pause | R2 | — | Queued |
+| 2 | Emergency pause | R2 | — | In review (#15) |
 | 3 | Strict CSP (F2) | S6 | — | Queued |
 | 4 | MFA (F3) | S7 | — | Queued |
 | 5 | PR 4.5 Configurable plans and credits, shadow mode; organisation and brand AI limits and alerts | R3, A4 (part) | Commercial inputs can come later: everything is configuration | Queued |
@@ -160,3 +160,4 @@ Each session appends one line: date, what was merged or opened, gates changed, n
 | 22 Nov 2026 | Baseline verified (§1). Tracker created; plan documents brought onto `main` with it. Next: PR 4.3 platform readiness. |
 | 22 Nov 2026 | Opened #12 (4.3a: legal pages, Meta callbacks, capabilities, JPEG; CI green) and #13 (4.3b: self-service deletion, stacked on #12). Evidence: 373/373 tests on Postgres 16; browser regression 19/16/10/20 passing. Next: 4.3c (reviewer demo workspace, submission packs), then emergency pause (R2). |
 | 22 Nov 2026 | Opened #14 (4.3c: Meta submission pack, `reviewer:setup`). Finding: the Meta review and single-image beta publishing don't depend on R2 for a single-instance beta. Next: emergency pause (R2), then strict CSP (F2). |
+| 22 Nov 2026 | Opened #15 (emergency pause, R2; stacked on #14 for migration numbering). 378/378 tests; regression 19/16/10/20. Next: strict CSP (F2, S6). |
