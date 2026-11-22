@@ -30,7 +30,10 @@ async function exchangeCode({ code, redirectUri }: { code: string; redirectUri: 
   const long = await jsonFetch<{ access_token: string; expires_in?: number }>(
     `${G}/oauth/access_token?${form({ grant_type: "fb_exchange_token", client_id: process.env.META_APP_ID!, client_secret: process.env.META_APP_SECRET!, fb_exchange_token: short.access_token })}`,
   );
-  return { accessToken: long.access_token, expiresAt: long.expires_in ? new Date(Date.now() + long.expires_in * 1000) : undefined, scopes: SCOPES };
+  // The app-scoped ID of the person who signed in: Meta's data-deletion and deauthorise callbacks
+  // identify people by it, so every account connected through this login records it.
+  const me = await jsonFetch<{ id: string }>(`${G}/me?${form({ fields: "id", access_token: long.access_token })}`);
+  return { accessToken: long.access_token, expiresAt: long.expires_in ? new Date(Date.now() + long.expires_in * 1000) : undefined, scopes: SCOPES, platformUserId: me.id };
 }
 
 type Page = {
@@ -55,12 +58,12 @@ export const facebook: SocialProvider = {
   envKeys: ["META_APP_ID", "META_APP_SECRET"],
   capabilities: {
     publishImage: "supported",
-    publishCarousel: "supported",
-    publishVideo: "supported",
-    scheduleNative: "supported",
+    publishCarousel: "not_built",
+    publishVideo: "not_built",
+    scheduleNative: "unsupported",
     postAnalytics: "supported",
     accountAnalytics: "supported",
-    notes: "Publishes to Facebook Pages you manage. Personal profiles can't be posted to via the API.",
+    notes: "Publishes single-image posts to Facebook Pages you manage; BrandPilot's scheduler times them. Multi-photo and video posts aren't in BrandPilot yet. Personal profiles can't be posted to via the API.",
   },
   configured,
   authorizeUrl,
@@ -72,7 +75,7 @@ export const facebook: SocialProvider = {
         externalId: p.id,
         name: p.name,
         avatarUrl: p.picture?.data?.url,
-        token: { accessToken: p.access_token, scopes: token.scopes },
+        token: { accessToken: p.access_token, scopes: token.scopes, platformUserId: token.platformUserId },
       }),
     );
   },
@@ -116,12 +119,12 @@ export const instagram: SocialProvider = {
   envKeys: ["META_APP_ID", "META_APP_SECRET"],
   capabilities: {
     publishImage: "supported",
-    publishCarousel: "supported",
-    publishVideo: "supported",
+    publishCarousel: "not_built",
+    publishVideo: "not_built",
     scheduleNative: "unsupported",
     postAnalytics: "supported",
     accountAnalytics: "supported",
-    notes: "Requires an Instagram Business or Creator account linked to a Facebook Page. Stories need the Reels/Stories publishing permission. Scheduling is handled by BrandPilot's scheduler.",
+    notes: "Publishes single-image posts to an Instagram Business or Creator account linked to a Facebook Page; BrandPilot's scheduler times them. Carousels, Reels and Stories aren't in BrandPilot yet.",
   },
   configured,
   authorizeUrl,
@@ -136,7 +139,7 @@ export const instagram: SocialProvider = {
           name: p.instagram_business_account!.name ?? p.instagram_business_account!.username ?? p.name,
           handle: p.instagram_business_account!.username,
           avatarUrl: p.instagram_business_account!.profile_picture_url,
-          token: { accessToken: p.access_token, scopes: token.scopes },
+          token: { accessToken: p.access_token, scopes: token.scopes, platformUserId: token.platformUserId },
           meta: { pageId: p.id },
         }),
       );

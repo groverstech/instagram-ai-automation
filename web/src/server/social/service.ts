@@ -20,10 +20,11 @@ export function isPublicAppUrl() {
   }
 }
 
-/** Signed URL platforms can fetch the rendered creative from (valid 24h). */
+/** Signed URL platforms can fetch the rendered creative from, as sRGB JPEG (valid 24h). */
 export function publicMediaUrl(creativeId: string, format?: string) {
   const token = sign({ c: creativeId, f: format ?? null, exp: Date.now() + 24 * 3600 * 1000 });
-  return `${appUrl()}/api/public/media/${token}.png`;
+  // JPEG: Instagram's content publishing API accepts JPEG images only (plan defect D1).
+  return `${appUrl()}/api/public/media/${token}.jpg`;
 }
 
 export async function saveAccounts(brandId: string, userId: string, accounts: DiscoveredAccount[]) {
@@ -43,6 +44,8 @@ export async function saveAccounts(brandId: string, userId: string, accounts: Di
       status: "active" as const,
       meta: a.meta ?? {},
       connectedBy: userId,
+      platformUserId: a.token.platformUserId ?? null,
+      deauthorizedAt: null,
     };
     await db
       .insert(schema.socialAccounts)

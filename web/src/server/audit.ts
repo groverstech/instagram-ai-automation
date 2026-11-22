@@ -26,6 +26,8 @@ export type AuditAction =
   | "brand.create"
   | "social.connect"
   | "social.disconnect"
+  | "social.data_deletion"
+  | "social.deauthorized"
   | "billing.checkout_started"
   | "billing.plan_changed"
   | "creative.approve_override"

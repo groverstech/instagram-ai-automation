@@ -78,6 +78,13 @@
       "when": 1795230399455,
       "tag": "0010_ai_ledger_durability",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795356522841,
+      "tag": "0011_platform_readiness",
+      "breakpoints": true
     }
   ]
 }

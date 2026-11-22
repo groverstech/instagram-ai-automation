@@ -149,6 +149,19 @@ An append-only `audit_events` table records:
 - **Interrupted publishes** are never re-sent automatically: the post is flagged so a person checks
   the platform first.
 
+## Public platform callbacks (PR 4.3)
+
+`/api/platforms/meta/data-deletion` and `/api/platforms/meta/deauthorize` take no session. They act
+only on a `signed_request` that verifies against `META_APP_SECRET`:
+- HMAC-SHA256 compared in constant time;
+- the algorithm must be HMAC-SHA256;
+- the user ID must be numeric;
+- requests older than 24 hours, or dated in the future, are refused.
+
+An invalid request changes nothing and records nothing (400). The deletion status page shows only
+status and dates for a 12-character confirmation code. Details are in
+[PLATFORM_READINESS.md](PLATFORM_READINESS.md).
+
 ## Verified by automated tests (PR 4.0)
 
 In CI, the full suite also runs against real Postgres 16 with pgvector.
