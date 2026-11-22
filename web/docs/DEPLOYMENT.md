@@ -28,7 +28,7 @@ security model is in [SECURITY.md](SECURITY.md).
 | Fail-closed configuration | Staging and production refuse unsafe or invalid settings; the image defaults to `DEPLOY_ENV=production`; a typo in `DEPLOY_ENV` is refused | Unit tests; CI refuses a missing `DEPLOY_ENV`, a typo, local disk without opt-in, and `MIGRATE_ON_START=true` |
 | Migrations | Separate deploy step under a Postgres advisory lock; app instances never migrate in staging or production | Real Postgres (three concurrent runs apply once; a production start leaves the database untouched); CI container job |
 | Health | Liveness and readiness (database, migrations, storage round trip, configuration) | Unit, real Postgres, CI container job |
-| Background jobs | Durable AI tasks, single publish under races, interrupted publishes flagged not re-sent, graceful worker drain | Unit and integration; CI worker `SIGTERM` check |
+| Background jobs | Durable AI tasks, single publish under races, interrupted publishes flagged not re-sent, each queued job run once by concurrent runners, graceful worker drain | Unit and integration; real Postgres (`jobs-postgres.test.ts`: worker, in-process scheduler, cron route); CI container job takes a queued job to `done` through each entry point, plus the worker `SIGTERM` check |
 | Security | Tenant and brand isolation, Security log scoped to the viewer's access, refused access audited, headers, trusted client IP, password hashing, outbound allowlists, hidden internal errors | Integration tests (see SECURITY.md) |
 
 ### Needs external credentials or infrastructure (pending)
@@ -155,7 +155,8 @@ volume there, or point `STORAGE_DIR` at one. Production uses Postgres and, from 
    - `/api/health/ready` returns 200;
    - sign in;
    - open the Creative Studio and the Strategist;
-   - check worker logs for `worker.started`.
+   - check worker logs for `worker.started`, and for `worker.ran` once jobs are due (no
+     `worker.tick_failed` or `jobs.tick_failed`).
 
 **Migrations are additive** (expand and contract). A release never drops a column or table the
 previous release still uses, so **rollback = redeploy the previous image tag**. The database
@@ -320,6 +321,13 @@ For large deployments, also put a CDN or WAF rate limit in front.
 - **Publishing:** the claim is atomic, so a post is published once even when "publish now" and the
   scheduler race. A publish interrupted mid-flight is **not** retried automatically; the post is
   flagged for a human to check the platform first.
+- **Jobs queue** (`jobs`: publishing, metric syncs): any number of workers, the in-process
+  scheduler and the cron route can run at once; each due job is claimed by one runner with a single
+  conditional update, oldest first. A failed job is retried with backoff (1 minute × attempt, 3
+  attempts) and then marked `failed` with its error (`jobs.job_failed` in the log). A job whose
+  runner stopped is recovered after 10 minutes; a runner that outlives that window can't overwrite
+  the outcome the new owner records (`jobs.claim_lost`). A failed tick is logged
+  (`jobs.tick_failed`, `worker.tick_failed`) and the cron route answers 500 with a reference.
 
 ### Logging, errors and monitoring
 
