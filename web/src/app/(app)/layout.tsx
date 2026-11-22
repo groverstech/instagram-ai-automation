@@ -1,6 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { redirect } from "next/navigation";
 import { mfaRequiredFor } from "@/server/auth/mfa";
+import { StepUpDialog } from "@/components/account/step-up-dialog";
 import { requireActiveBrand, listAccessibleBrands } from "@/server/auth/guard";
 import { getDb, schema } from "@/server/db/client";
 import { aiStatus } from "@/server/ai/llm";
@@ -62,6 +63,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <main className="mx-auto max-w-[1280px] px-4 pb-28 pt-6 sm:px-6 md:px-10 md:pt-10">{children}</main>
       </div>
       <Toaster />
+      <StepUpDialog />
       <Assistant
         brandId={brand.id}
         brandName={brand.name}

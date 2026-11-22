@@ -84,7 +84,7 @@ export async function confirmEnrolment(userId: string, sessionId: string, code: 
 }
 
 /** Check a TOTP or recovery code for a user with MFA on. Consumes the code. */
-async function checkSecondFactor(userId: string, code: string, now: number): Promise<"totp" | "recovery" | null> {
+export async function checkSecondFactor(userId: string, code: string, now: number): Promise<"totp" | "recovery" | null> {
   const u = await userRow(userId);
   if (!u.mfaEnabledAt || !u.mfaSecretEnc) return null;
   const db = await getDb();

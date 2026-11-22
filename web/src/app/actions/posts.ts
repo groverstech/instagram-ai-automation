@@ -7,6 +7,7 @@ import { z } from "zod";
 import { getDb, schema } from "@/server/db/client";
 import { AccessError, requireBrand } from "@/server/auth/guard";
 import { getSession } from "@/server/auth/session";
+import { requireRecentSecondFactor } from "@/server/auth/step-up";
 import { pausePublishingFor, resumePublishingFor } from "@/server/publishing-pause";
 import { safe } from "@/server/action";
 import { approvePost, publishPost, syncMetrics } from "@/server/social/service";
@@ -192,6 +193,7 @@ export async function syncMetricsAction(brandId: string) {
 export async function disconnectAccount(brandId: string, accountId: string) {
   return safe(async () => {
     const { session, brand } = await requireBrand(brandId, "admin");
+    await requireRecentSecondFactor(session);
     const db = await getDb();
     const [gone] = await db.delete(schema.socialAccounts).where(and(eq(schema.socialAccounts.id, accountId), eq(schema.socialAccounts.brandId, brandId))).returning({ platform: schema.socialAccounts.platform });
     if (gone) await audit({ action: "social.disconnect", workspaceId: brand.workspaceId, brandId, actorUserId: session.user.id, targetType: "social_account", targetId: accountId, details: { platform: gone.platform } });

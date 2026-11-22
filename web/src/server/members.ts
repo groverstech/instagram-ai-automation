@@ -1,4 +1,5 @@
 import "server-only";
+import { requireRecentSecondFactor } from "./auth/step-up";
 import { and, count, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "./db/client";
@@ -40,6 +41,7 @@ async function memberOf(workspaceId: string, memberId: string) {
 
 export async function inviteMemberFor(session: SessionUser, workspaceId: string, email: string, role: Role, brandIds?: string[] | null) {
   await requireWorkspaceRoleForUser(session, workspaceId, "admin");
+  await requireRecentSecondFactor(session);
   if (role === "owner") throw new MemberError("Invite as admin, then transfer ownership.");
   const scope = await checkScope(workspaceId, role, brandIds);
   const e = z.string().trim().toLowerCase().email("Enter a valid email").parse(email);
@@ -61,6 +63,7 @@ export async function inviteMemberFor(session: SessionUser, workspaceId: string,
 
 export async function changeRoleFor(session: SessionUser, workspaceId: string, memberId: string, role: Role) {
   const { role: mine } = await requireWorkspaceRoleForUser(session, workspaceId, "admin");
+  await requireRecentSecondFactor(session);
   if (role === "owner" && mine !== "owner") throw new MemberError("Only the owner can grant ownership.");
   const m = await memberOf(workspaceId, memberId);
   if (Array.isArray(m.brandIds) && (role === "owner" || role === "admin")) throw new MemberError("This member only has access to specific brands. Give them access to all brands first.");
@@ -76,6 +79,7 @@ export async function changeRoleFor(session: SessionUser, workspaceId: string, m
 /** Limit a member to specific brands (client access), or pass null for every brand. */
 export async function setMemberBrandsFor(session: SessionUser, workspaceId: string, memberId: string, brandIds: string[] | null) {
   await requireWorkspaceRoleForUser(session, workspaceId, "admin");
+  await requireRecentSecondFactor(session);
   const m = await memberOf(workspaceId, memberId);
   if (m.userId === session.user.id) throw new MemberError("You can't change your own brand access.");
   const scope = await checkScope(workspaceId, m.role, brandIds);
@@ -93,6 +97,7 @@ export async function setMemberBrandsFor(session: SessionUser, workspaceId: stri
 
 export async function removeMemberFor(session: SessionUser, workspaceId: string, memberId: string) {
   await requireWorkspaceRoleForUser(session, workspaceId, "admin");
+  await requireRecentSecondFactor(session);
   const m = await memberOf(workspaceId, memberId);
   if (m.role === "owner") throw new MemberError("Transfer ownership before removing the owner.");
   if (m.userId === session.user.id) throw new MemberError("You can't remove yourself.");
