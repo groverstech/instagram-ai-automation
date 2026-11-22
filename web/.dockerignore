@@ -1,0 +1,14 @@
+# Never send local state or secrets into the build context.
+node_modules
+.next
+.data
+.env
+.env.*
+!.env.example
+*.log
+coverage
+# Not needed at run time.
+docs
+**/*.test.ts
+**/*.live.ts
+vitest*.config.ts

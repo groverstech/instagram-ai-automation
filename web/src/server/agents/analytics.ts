@@ -121,7 +121,7 @@ Analyse performance over the last ${days} days. Answer where the data allows: wh
 ${data.length < 5 ? "IMPORTANT: there are fewer than 5 posts with real metrics. Say clearly that conclusions are preliminary, keep confidence low, and lean recommendations on the brand strategy." : ""}`;
 
   const result = await runAgent(scope, "analytics", `Analyse last ${days} days`, { days, posts: data.length }, () =>
-    llm().structured({
+    llm().structured({ route: "analytics.insights",
       system: AGENTS.analytics.system,
       prompt,
       schema: Insights,

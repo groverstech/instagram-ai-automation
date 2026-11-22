@@ -4,6 +4,17 @@ import { PlatformError, PublishNotSupported, type SocialProvider } from "../type
 
 // ---------------- LinkedIn ----------------
 const LI_VERSION = process.env.LINKEDIN_VERSION ?? "202510";
+/** Token-bearing requests only go to LinkedIn-owned HTTPS hosts (outbound allowlist). */
+export function isLinkedInUploadUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    const host = u.hostname.toLowerCase();
+    return u.protocol === "https:" && !u.username && !u.password && (u.port === "" || u.port === "443") && (host === "api.linkedin.com" || host.endsWith(".linkedin.com"));
+  } catch {
+    return false;
+  }
+}
+
 const LI_SCOPES = "openid profile w_member_social";
 
 export const linkedin: SocialProvider = {
@@ -43,7 +54,10 @@ export const linkedin: SocialProvider = {
       headers: h,
       body: JSON.stringify({ initializeUploadRequest: { owner: account.externalId } }),
     });
-    const up = await fetch(init.value.uploadUrl, { method: "PUT", headers: { authorization: `Bearer ${account.accessToken}` }, body: new Uint8Array(await input.image()) });
+    // The upload URL comes from LinkedIn's response and receives our bearer token: only ever
+    // send it to LinkedIn's own HTTPS hosts.
+    if (!isLinkedInUploadUrl(init.value.uploadUrl)) throw new PlatformError("LinkedIn returned an unexpected upload URL.");
+    const up = await fetch(init.value.uploadUrl, { method: "PUT", headers: { authorization: `Bearer ${account.accessToken}` }, body: new Uint8Array(await input.image()), redirect: "error" });
     if (!up.ok) throw new PlatformError(`LinkedIn image upload failed (${up.status})`, up.status);
     const res = await fetch("https://api.linkedin.com/rest/posts", {
       method: "POST",

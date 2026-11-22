@@ -57,7 +57,7 @@ ${opts.note ? `User request: "${opts.note}"` : ""}
 Balance pillars and objectives, avoid the same pillar twice in a row on one platform, use platform-appropriate formats (${FORMAT_IDS.join(", ")}), and place relevant moments on their dates.`;
 
   const { runId, data } = await runAgent(scope, "content_strategist", `Plan calendar ${fmt(opts.start, "MMM d")}–${fmt(end, "MMM d")}`, opts, () =>
-    llm().structured({ system: AGENTS.content_strategist.system, prompt, schema: CalendarPlan, effort: AGENTS.content_strategist.effort, mock: () => mockCalendar(opts.start, opts.days, platforms) }),
+    llm().structured({ route: "content.calendar", system: AGENTS.content_strategist.system, prompt, schema: CalendarPlan, effort: AGENTS.content_strategist.effort, mock: () => mockCalendar(opts.start, opts.days, platforms) }),
   );
   const ids = await insertPlannedPosts(brand.id, data.posts, { runId });
   return { runId, postIds: ids, rationale: data.rationale };
@@ -118,7 +118,7 @@ ${req.creative?.headline ? `The creative says: "${req.creative.headline}"${req.c
 - platformVariants: adapt the primary for each of: ${brandPlatforms(brand).join(", ")}.`;
 
   return runAgent(scope, "copywriter", `Copy for ${platformLabel(req.platform)}: ${req.brief.slice(0, 60)}`, req, () =>
-    llm().structured({ system: AGENTS.copywriter.system, prompt, schema: Copy, effort: AGENTS.copywriter.effort, mock: () => mockCopy(brand, req.brief) }),
+    llm().structured({ route: "content.copy", system: AGENTS.copywriter.system, prompt, schema: Copy, effort: AGENTS.copywriter.effort, mock: () => mockCopy(brand, req.brief) }),
   );
 }
 
@@ -129,7 +129,7 @@ export async function suggestIdeas(scope: RunScope, brand: Brand, goal: string) 
 ${perf.length ? `<recent_platform_metrics>${JSON.stringify(perf.slice(0, 30))}</recent_platform_metrics>` : ""}
 Suggest 8 specific content ideas. Goal: ${goal || "improve engagement"}. Platforms: ${brandPlatforms(brand).join(", ")}. Each needs a concrete hook and why it fits this brand.`;
   return runAgent(scope, "content_strategist", `Content ideas: ${goal.slice(0, 60)}`, { goal }, () =>
-    llm().structured({ system: AGENTS.content_strategist.system, prompt, schema: ContentIdeas, effort: "medium", mock: () => mockIdeas(brand) }),
+    llm().structured({ route: "content.ideas", system: AGENTS.content_strategist.system, prompt, schema: ContentIdeas, effort: "medium", mock: () => mockIdeas(brand) }),
   );
 }
 

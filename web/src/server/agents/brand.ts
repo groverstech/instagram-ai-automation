@@ -7,6 +7,7 @@ import { fetchPublicText } from "../web";
 import { remember } from "../memory";
 import { extractText, MIME } from "../assets";
 import { log } from "../log";
+import { ANTHROPIC_KEY_HINT } from "../ai/anthropic-key";
 import { AGENTS } from "./registry";
 import { runAgent, type RunScope } from "./orchestrator";
 import { latestProfile, profileOf } from "./context";
@@ -56,7 +57,7 @@ export async function prepareImage(bytes: Buffer, mime: string): Promise<{ mime:
  * later retry analyses them normally.
  */
 export async function analyzeAssets(scope: RunScope, brand: Brand, opts: { retryFailed?: boolean } = {}) {
-  if (!aiStatus().ready) throw new AIConfigError("No AI provider is configured. Add ANTHROPIC_API_KEY to your environment (see .env.example).");
+  if (!aiStatus().ready) throw new AIConfigError(`No AI provider is configured. Add ${ANTHROPIC_KEY_HINT} to your environment (see .env.example).`);
   const db = await getDb();
   const pending = await db
     .select()
@@ -95,7 +96,7 @@ export async function analyzeAssets(scope: RunScope, brand: Brand, opts: { retry
         images = [{ mime: img.mime, base64: img.data.toString("base64") }];
       }
       const { data } = await runAgent(scope, "brand_intelligence", `Analyse ${asset.kind}: ${asset.name}`, { assetId: asset.id, mime: asset.mime }, () =>
-        llm().structured({
+        llm().structured({ route: "brand.assets",
           system: AGENTS.brand_intelligence.system,
           prompt: text ? `${prompt}\n\n${UNTRUSTED_NOTE}\n\n<asset_text name="${asset.name}">\n${text}\n</asset_text>` : prompt,
           images,
@@ -192,7 +193,7 @@ CONTENT:
 - rationale: what you based the profile on, and the biggest uncertainties.`;
 
   const { runId, data } = await runAgent(scope, "brand_intelligence", "Generate Brand Intelligence Profile", { brandId: brand.id, assetsAnalyzed: assetRun.analyzed, assetsFailed: assetRun.failed, website: Boolean(site) }, () =>
-    llm().structured({ system: AGENTS.brand_intelligence.system, prompt, schema: BrandProfileV2, effort: AGENTS.brand_intelligence.effort, mock: () => mockProfile(brand) }),
+    llm().structured({ route: "brand.profile", system: AGENTS.brand_intelligence.system, prompt, schema: BrandProfileV2, effort: AGENTS.brand_intelligence.effort, mock: () => mockProfile(brand) }),
   );
 
   const { latest } = await latestProfile(brand.id);
@@ -380,7 +381,7 @@ function mockProfile(brand: Brand): BrandProfileV2 {
       contentOpportunities: [],
     },
     competitors: brand.competitors.map((name) => ({ name, positioning: "", howWeDiffer: "", source: "provided" as const })),
-    openQuestions: ["Mock provider: connect ANTHROPIC_API_KEY for a real analysis."],
+    openQuestions: ["Mock provider: connect BRANDPILOT_ANTHROPIC_API_KEY for a real analysis."],
     rationale: "Mock provider: echoes onboarding answers only. No analysis was performed.",
   };
 }

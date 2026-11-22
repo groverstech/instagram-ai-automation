@@ -11,6 +11,16 @@ import type { Brand, Creative } from "../db/schema";
 
 type Font = { name: string; data: ArrayBuffer; weight: 400 | 600 | 700; style: "normal" };
 
+/** Font files may only come from Google's font CDN over HTTPS (outbound allowlist). */
+export function isGoogleFontFile(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    return u.protocol === "https:" && u.hostname === "fonts.gstatic.com" && !u.username && !u.password && (u.port === "" || u.port === "443");
+  } catch {
+    return false;
+  }
+}
+
 const fontCache = new Map<string, Promise<ArrayBuffer | null>>();
 
 /** Fetch a Google Font as WOFF (Satori can't read WOFF2). Cached per family+weight. */
@@ -27,8 +37,9 @@ function googleFont(family: string, weight: number): Promise<ArrayBuffer | null>
           }).then((r) => (r.ok ? r.text() : ""));
           const latin = css.split("/* latin */")[1] ?? css;
           const url = latin.match(/src:\s*url\(([^)]+)\)/)?.[1];
-          if (!url) return null;
-          const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+          // Only fetch font files from Google's font CDN, whatever the CSS response says.
+          if (!url || !isGoogleFontFile(url)) return null;
+          const res = await fetch(url, { signal: AbortSignal.timeout(8000), redirect: "error" });
           return res.ok ? await res.arrayBuffer() : null;
         } catch {
           return null;

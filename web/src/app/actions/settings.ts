@@ -6,13 +6,15 @@ import { AccessError, requireWorkspaceRole } from "@/server/auth/guard";
 import { getSession } from "@/server/auth/session";
 import { changeRoleFor, inviteMemberFor, removeMemberFor, setMemberBrandsFor } from "@/server/members";
 import { safe } from "@/server/action";
+import { audit } from "@/server/audit";
 import type { Role } from "@/lib/roles";
 
 export async function updateWorkspace(workspaceId: string, input: { name: string; type: "creator" | "business" | "agency" }) {
   return safe(async () => {
-    await requireWorkspaceRole(workspaceId, "admin");
+    const { session } = await requireWorkspaceRole(workspaceId, "admin");
     const db = await getDb();
     await db.update(schema.workspaces).set({ name: input.name.trim() || "Workspace", type: input.type }).where(eq(schema.workspaces.id, workspaceId));
+    await audit({ action: "workspace.update", workspaceId, actorUserId: session.user.id, targetType: "workspace", targetId: workspaceId, details: { type: input.type } });
     revalidatePath("/settings");
   });
 }

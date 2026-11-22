@@ -4,7 +4,9 @@ import { and, asc, desc, eq } from "drizzle-orm";
 import { addDays, format as fmt, parseISO, startOfDay } from "date-fns";
 import { z } from "zod";
 import { getDb, schema } from "../db/client";
-import { anthropicClient, mockActive, MODEL } from "../ai/llm";
+import { anthropicMessage, mockActive, MODEL } from "../ai/llm";
+import { addUsage } from "../ai/pricing";
+import type { Usage } from "../ai/llm";
 import { buildContext, renderContext } from "./context";
 import { createCampaign } from "./campaign";
 import { generateCreatives } from "./creative";
@@ -197,8 +199,9 @@ export async function chat(scope: RunScope, brand: Brand, message: string): Prom
   const { data } = await runAgent(scope, "assistant", message.slice(0, 80), { message }, async (runId) => {
     const sub = { ...scope, parentId: runId };
     const mock = mockActive();
-    const out = mock ? await mockChat(sub, brand, message) : await claudeChat(sub, brand, history.slice(-12), message);
-    return { data: out, provider: mock ? "mock" : `anthropic:${MODEL}` };
+    if (mock) return { data: await mockChat(sub, brand, message), provider: "mock" };
+    const { usage, ...out } = await claudeChat(sub, brand, history.slice(-12), message);
+    return { data: out, usage, provider: `anthropic:${MODEL}` };
   });
   await db.insert(schema.assistantMessages).values({ brandId: brand.id, userId: scope.userId, role: "assistant", content: data.text, actions: data.actions });
   return data;
@@ -227,20 +230,25 @@ ${renderContext(ctx)}`;
   }
 
   const actions: Action[] = [];
+  let usage: Usage = {};
   for (let step = 0; step < 6; step++) {
-    const res = await anthropicClient().beta.messages.create({
-      model: MODEL,
-      max_tokens: 16000,
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
-      thinking: { type: "adaptive" },
-      output_config: { effort: "medium" },
-      system,
-      tools: TOOLS,
-      tool_choice: { type: "auto" },
-      messages: merged,
-    });
-    if (res.stop_reason === "refusal") return { text: "I can't help with that request. Try rephrasing what you need.", actions };
+    // Through the executor (llm.ts): each step is accounted, capped and recorded like any text request.
+    // Server-side fallbacks when the routed model allows them here (llm.ts serverFallbacksAllowed).
+    const { message: res, usage: stepUsage } = await anthropicMessage(
+      "advisor.chat",
+      {
+        max_tokens: 16000,
+        thinking: { type: "adaptive" },
+        output_config: { effort: "medium" },
+        system,
+        tools: TOOLS,
+        tool_choice: { type: "auto" },
+        messages: merged,
+      },
+      { serverFallbacks: true },
+    );
+    usage = addUsage(usage, stepUsage);
+    if (res.stop_reason === "refusal") return { text: "I can't help with that request. Try rephrasing what you need.", actions, usage };
     merged.push({ role: "assistant", content: res.content });
     const uses = res.content.filter((b): b is Anthropic.Beta.BetaToolUseBlock => b.type === "tool_use");
     if (res.stop_reason !== "tool_use" || !uses.length) {
@@ -249,7 +257,7 @@ ${renderContext(ctx)}`;
         .map((b) => b.text)
         .join("\n")
         .trim();
-      return { text: text || "Done.", actions: dedupe(actions) };
+      return { text: text || "Done.", actions: dedupe(actions), usage };
     }
     const results = await Promise.all(
       uses.map(async (u): Promise<Anthropic.Beta.BetaToolResultBlockParam> => {
@@ -265,7 +273,7 @@ ${renderContext(ctx)}`;
     );
     merged.push({ role: "user", content: results });
   }
-  return { text: "I ran several steps; review the results using the links below.", actions: dedupe(actions) };
+  return { text: "I ran several steps; review the results using the links below.", actions: dedupe(actions), usage };
 }
 
 /** Deterministic router for AI_PROVIDER=mock (tests and offline UI work). */

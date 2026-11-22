@@ -11,6 +11,16 @@ export class AccessError extends Error {
   }
 }
 
+/**
+ * Record a refused access in the audit log, against the organisation that owns the resource (so
+ * its owners see cross-tenant and out-of-scope attempts), then return the error to throw.
+ */
+async function denied(session: SessionUser, target: { workspaceId: string | null; brandId?: string | null; type: string; id: string }, reason: string, err: AccessError) {
+  const { audit } = await import("../audit");
+  await audit({ action: "access.denied", outcome: "denied", workspaceId: target.workspaceId, brandId: target.brandId ?? null, actorUserId: session.user.id, targetType: target.type, targetId: target.id, details: { reason } });
+  return err;
+}
+
 export async function requireUser(): Promise<SessionUser> {
   const s = await getSession();
   if (!s) redirect("/login");
@@ -67,8 +77,13 @@ export async function requireBrandForUser(session: SessionUser, brandId: string,
     .where(eq(schema.brands.id, brandId))
     .limit(1);
   const r = rows[0];
-  if (!r || !inBrandScope(r.brandIds, r.brand.id)) throw new AccessError();
-  if (!roleAtLeast(r.role, min)) throw new AccessError(`This action needs the ${min} role or higher.`);
+  if (!r || !inBrandScope(r.brandIds, r.brand.id)) {
+    const [owner] = r ? [r.brand] : await db.select({ workspaceId: schema.brands.workspaceId }).from(schema.brands).where(eq(schema.brands.id, brandId)).limit(1);
+    // Unknown brand ids aren't recorded: there's no organisation to attribute them to.
+    if (!owner) throw new AccessError();
+    throw await denied(session, { workspaceId: owner.workspaceId, brandId, type: "brand", id: brandId }, r ? "outside_brand_scope" : "not_a_member", new AccessError());
+  }
+  if (!roleAtLeast(r.role, min)) throw await denied(session, { workspaceId: r.brand.workspaceId, brandId, type: "brand", id: brandId }, `needs_${min}`, new AccessError(`This action needs the ${min} role or higher.`));
   return { session, brand: r.brand, role: r.role };
 }
 
@@ -100,8 +115,12 @@ export async function requireWorkspaceRoleForUser(session: SessionUser, workspac
       ),
     )
     .limit(1);
-  if (!m || !roleAtLeast(m.role, min)) throw new AccessError();
+  if (!m || !roleAtLeast(m.role, min)) {
+    const [ws] = await db.select({ id: schema.workspaces.id }).from(schema.workspaces).where(eq(schema.workspaces.id, workspaceId)).limit(1);
+    if (!ws) throw new AccessError();
+    throw await denied(session, { workspaceId, type: "workspace", id: workspaceId }, m ? `needs_${min}` : "not_a_member", new AccessError());
+  }
   // Brand-scoped (client) members can't administer the workspace as a whole.
-  if (Array.isArray(m.brandIds) && roleAtLeast(min, "admin")) throw new AccessError("Your access is limited to specific brands.");
+  if (Array.isArray(m.brandIds) && roleAtLeast(min, "admin")) throw await denied(session, { workspaceId, type: "workspace", id: workspaceId }, "outside_brand_scope", new AccessError("Your access is limited to specific brands."));
   return { session, role: m.role, brandIds: m.brandIds };
 }

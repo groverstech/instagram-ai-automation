@@ -6,6 +6,7 @@ import { BillingError } from "./billing";
 import { UploadError } from "./assets";
 import { RateLimitError } from "./ratelimit";
 import { log } from "./log";
+import { captureError, isInternalError } from "./monitoring";
 import { UserFacingError } from "./jobs/engine";
 import { MemberError } from "./members";
 
@@ -28,8 +29,10 @@ export async function safe<T>(fn: () => Promise<T>): Promise<Result<T>> {
       log.error("action.ai_failed", { error: e instanceof Error ? e.message : String(e) });
       return { ok: false, error: ai };
     }
-    log.error("action.failed", { error: e instanceof Error ? e.message : String(e), stack: e instanceof Error ? e.stack?.split("\n").slice(0, 6).join("\n") : undefined });
-    const msg = e instanceof Error ? e.message : "Something went wrong.";
+    const ref = captureError(e, { where: "server_action" });
+    // Database, network and filesystem errors carry internal detail: never show their messages.
+    if (isInternalError(e) || !(e instanceof Error)) return { ok: false, error: `Something went wrong on our side. Please try again. (Reference ${ref})` };
+    const msg = e.message || "Something went wrong.";
     return { ok: false, error: msg.length > 400 ? msg.slice(0, 400) + "…" : msg };
   }
 }

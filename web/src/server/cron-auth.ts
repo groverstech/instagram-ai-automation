@@ -1,4 +1,5 @@
 import "server-only";
+import { clientIp } from "./client-ip";
 import crypto from "node:crypto";
 import { RateLimitError, enforce } from "./ratelimit";
 import { log } from "./log";
@@ -18,7 +19,7 @@ export type CronAuth = { ok: true } | { ok: false; status: 401 | 429 | 503; retr
  * client IP in Postgres (shared across instances); hashed IPs only, never the presented token.
  */
 export async function authenticateCron(req: Request, secret = process.env.CRON_SECRET): Promise<CronAuth> {
-  const ip = (req.headers.get("x-forwarded-for")?.split(",")[0] ?? req.headers.get("x-real-ip") ?? "unknown").trim();
+  const ip = clientIp(req.headers);
   const ipKey = crypto.createHash("sha256").update(`cron:${ip}`).digest("hex").slice(0, 32);
   if (!secret || secret.length < MIN_CRON_SECRET) {
     log.warn("cron.not_configured", { reason: secret ? "secret_too_short" : "secret_missing" });

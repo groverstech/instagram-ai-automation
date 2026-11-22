@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { clientIp } from "@/server/client-ip";
 
 /**
  * Coarse per-IP flood protection in front of the app. Returns HTTP 429 with Retry-After.
@@ -20,22 +21,39 @@ function take(key: string, limit: number, now: number) {
   return cur.n > limit ? Math.ceil((cur.start + WINDOW_MS - now) / 1000) : 0;
 }
 
+/** A request ID for tracing: keep a well-formed one from the load balancer, otherwise make one. */
+function requestId(req: NextRequest) {
+  const given = req.headers.get("x-request-id");
+  return given && /^[\w.-]{8,128}$/.test(given) ? given : crypto.randomUUID();
+}
+
+/** Continue to the app with the request ID on both the forwarded request and the response. */
+function next(req: NextRequest, id: string) {
+  const headers = new Headers(req.headers);
+  headers.set("x-request-id", id);
+  const res = NextResponse.next({ request: { headers } });
+  res.headers.set("x-request-id", id);
+  return res;
+}
+
 export function middleware(req: NextRequest) {
   const path = req.nextUrl.pathname;
+  const id = requestId(req);
   // Machine-to-machine endpoints with their own authentication.
-  if (path === "/api/billing/webhook" || path === "/api/cron/tick") return NextResponse.next();
+  // Health checks are polled by load balancers and monitors from a few addresses.
+  if (path === "/api/billing/webhook" || path === "/api/cron/tick" || path.startsWith("/api/health/")) return next(req, id);
   const mutating = !["GET", "HEAD", "OPTIONS"].includes(req.method);
-  if (!mutating && !path.startsWith("/api/")) return NextResponse.next();
-  const ip = (req.headers.get("x-forwarded-for")?.split(",")[0] ?? req.headers.get("x-real-ip") ?? "unknown").trim();
+  if (!mutating && !path.startsWith("/api/")) return next(req, id);
+  const ip = clientIp(req.headers);
   const kind = mutating ? "mutate" : "api";
   const retryAfter = take(`${kind}:${ip}`, LIMITS[kind], Date.now());
   if (retryAfter) {
     return NextResponse.json(
       { error: "Too many requests. Please slow down and try again shortly.", retryAfter },
-      { status: 429, headers: { "retry-after": String(retryAfter) } },
+      { status: 429, headers: { "retry-after": String(retryAfter), "x-request-id": id } },
     );
   }
-  return NextResponse.next();
+  return next(req, id);
 }
 
 export const config = {

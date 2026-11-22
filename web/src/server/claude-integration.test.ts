@@ -32,6 +32,9 @@ globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
   captured.push({ url, headers, body });
   return respond(body);
 }) as typeof fetch;
+// Every provider request in this suite must go through the executor's accounting (a pending usage
+// row written first): the paid-request guard blocks any that doesn't (paid-run-guard.ts).
+await (await import("./ai/paid-run-guard")).installPaidRequestGuard();
 
 const message = (text: string, extra: Record<string, unknown> = {}) =>
   new Response(
@@ -118,15 +121,17 @@ describe("Brand Intelligence on the real Anthropic provider path", () => {
 
     for (const c of captured) {
       expect(c.url).toBe("https://api.anthropic.com/v1/messages");
-      // SDK v1 sends API keys as a bearer token.
-      expect(c.headers["authorization"]).toBe("Bearer sk-ant-test-not-a-real-key");
+      // The API key goes in x-api-key, with no prefix; no Authorization header (llm.ts anthropicAuth).
+      expect(c.headers["x-api-key"]).toBe("sk-ant-test-not-a-real-key");
+      expect(c.headers["authorization"]).toBeUndefined();
       expect(c.headers["anthropic-version"]).toBeTruthy();
       expect(c.headers["anthropic-beta"]).toContain("server-side-fallback-2026-07-01");
       expect(c.body).toMatchObject({ model: "claude-opus-5-5", fallbacks: "default", thinking: { type: "adaptive" } });
       const fmt = (c.body.output_config as { format: { type: string; schema: { additionalProperties: boolean } } }).format;
       expect(fmt.type).toBe("json_schema");
       expect(fmt.schema.additionalProperties).toBe(false);
-      expect(typeof c.body.system).toBe("string");
+      // The agent's system prompt is one block marked for prompt caching (it repeats across calls).
+      expect(c.body.system).toEqual([{ type: "text", text: expect.any(String), cache_control: { type: "ephemeral" } }]);
     }
     // 1st request: vision analysis of the logo with an image block
     const visionContent = (captured[0].body.messages as { content: { type: string; source?: { media_type: string } }[] }[])[0].content;

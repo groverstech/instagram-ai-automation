@@ -5,4 +5,4 @@ import "server-only";
  */
 import "../strategist/workflow";
 import "../creative/jobs";
-export { recoverDueTasks, runJob } from "./engine";
+export { inFlightCount, recoverDueTasks, runJob } from "./engine";

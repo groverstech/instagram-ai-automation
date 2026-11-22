@@ -1,4 +1,5 @@
 "use server";
+import { audit } from "@/server/audit";
 import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
@@ -184,9 +185,10 @@ export async function syncMetricsAction(brandId: string) {
 
 export async function disconnectAccount(brandId: string, accountId: string) {
   return safe(async () => {
-    await requireBrand(brandId, "admin");
+    const { session, brand } = await requireBrand(brandId, "admin");
     const db = await getDb();
-    await db.delete(schema.socialAccounts).where(and(eq(schema.socialAccounts.id, accountId), eq(schema.socialAccounts.brandId, brandId)));
+    const [gone] = await db.delete(schema.socialAccounts).where(and(eq(schema.socialAccounts.id, accountId), eq(schema.socialAccounts.brandId, brandId))).returning({ platform: schema.socialAccounts.platform });
+    if (gone) await audit({ action: "social.disconnect", workspaceId: brand.workspaceId, brandId, actorUserId: session.user.id, targetType: "social_account", targetId: accountId, details: { platform: gone.platform } });
     await db.update(schema.posts).set({ socialAccountId: null }).where(and(eq(schema.posts.socialAccountId, accountId), eq(schema.posts.brandId, brandId)));
     revalidatePath("/accounts");
   });

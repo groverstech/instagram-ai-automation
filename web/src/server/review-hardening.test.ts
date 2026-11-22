@@ -156,6 +156,7 @@ describe("AI failures don't poison assets", () => {
     const saved = { p: env.AI_PROVIDER, k: env.ANTHROPIC_API_KEY, t: env.ANTHROPIC_AUTH_TOKEN };
     env.AI_PROVIDER = "";
     delete env.ANTHROPIC_API_KEY;
+    delete env.BRANDPILOT_ANTHROPIC_API_KEY;
     delete env.ANTHROPIC_AUTH_TOKEN;
     try {
       await expect(generateBrandProfile({ brandId: brand.id, userId: "u" }, brand)).rejects.toBeInstanceOf(AIConfigError);

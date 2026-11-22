@@ -1,5 +1,7 @@
 "use server";
-import { pruneCreativeFiles } from "@/server/creative/visuals";
+import { audit } from "@/server/audit";
+import { aiEdit, aiVariation, pruneCreativeFiles } from "@/server/creative/visuals";
+import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { parseISO, startOfDay, addDays } from "date-fns";
@@ -109,6 +111,30 @@ export async function regenerateImageAction(brandId: string, creativeId: string)
   });
 }
 
+/**
+ * A variation of the creative's AI image (OpenAI image edits): same subject and mood, a fresh
+ * composition, optionally steered by `direction`. Editors only; counts as heavy AI work.
+ */
+export async function imageVariationAction(brandId: string, creativeId: string, direction: string) {
+  const dir = z.string().max(300, "Keep the direction under 300 characters.").parse(direction ?? "");
+  return aiAction(brandId, "ai_heavy", async ({ brand, scope }) => {
+    await aiVariation(scope, brand, await ownCreative(brandId, creativeId), dir);
+    revalidatePath("/creative-studio");
+  });
+}
+
+/**
+ * A precise edit of the creative's AI image (OpenAI image edits, GPT Image 2.6 Sunburst by
+ * default): changes what the instruction names, keeps everything else. Editors only; heavy AI.
+ */
+export async function imageEditAction(brandId: string, creativeId: string, instruction: string) {
+  const what = z.string().trim().min(3, "Describe the change you want.").max(300, "Keep the instruction under 300 characters.").parse(instruction ?? "");
+  return aiAction(brandId, "ai_heavy", async ({ brand, scope }) => {
+    await aiEdit(scope, brand, await ownCreative(brandId, creativeId), what);
+    revalidatePath("/creative-studio");
+  });
+}
+
 export async function updateCreativeAction(brandId: string, creativeId: string, patch: unknown) {
   return safe(async () => {
     await requireBrand(brandId, "editor");
@@ -120,8 +146,9 @@ export async function updateCreativeAction(brandId: string, creativeId: string, 
 export async function setCreativeStatusAction(brandId: string, creativeId: string, status: "approved" | "rejected" | "draft", force = false) {
   return safe(async () => {
     // Approving past blocking brand-check issues is an admin decision.
-    await requireBrand(brandId, force ? "admin" : "editor");
+    const { session, brand } = await requireBrand(brandId, force ? "admin" : "editor");
     await setCreativeStatus(brandId, creativeId, status, { force });
+    if (force && status === "approved") await audit({ action: "creative.approve_override", workspaceId: brand.workspaceId, brandId, actorUserId: session.user.id, targetType: "creative", targetId: creativeId });
     revalidatePath("/creative-studio");
   });
 }
