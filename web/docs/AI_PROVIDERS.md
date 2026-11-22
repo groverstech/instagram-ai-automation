@@ -87,7 +87,7 @@ SDK retries are **off**, so every request that reaches the network is seen, reco
 | 529 / overloaded | `overloaded` | Retried with exponential backoff and jitter. |
 | 5xx, 409 | `server` | Retried, unless the provider says `x-should-retry: false`. |
 | Timeout, dropped connection | `timeout`, `network` | **Outcome unknown**: the provider may have processed and billed it. Text: retried. **Images: not retried**, so an image is never paid for twice without the user deciding. |
-| Refusal | `refusal` | Billed, recorded as refused, not retried. Anthropic server-side fallbacks are on for models that support them. |
+| Refusal | `refusal` | Billed, recorded as refused, not retried. Anthropic server-side fallbacks are on for models that support them, except under a spending cap for a model whose fallback-target list isn't confirmed (Opus 5.5; see the note on server-side fallbacks). |
 | Content policy (`moderation_blocked`) | `content_policy` | Recorded as refused, not retried; the user edits the art direction. |
 | Truncated or invalid output | `output_invalid` | Billed, retried. |
 
@@ -159,10 +159,37 @@ If a response reports no usage, the attempt is recorded as **unpriced** rather t
 | **Price table** `ai_prices` (migration 0009): one row per model with the rates and the date they take effect | Any catalogued model, e.g. negotiated contract rates. Changes apply within a minute, **without a code change or redeploy**. | `ai_prices:<source>` |
 | Environment: `AI_PRICE_INPUT_PER_MTOK`, `AI_PRICE_OUTPUT_PER_MTOK`, `AI_PRICE_WEB_SEARCH_PER_1K`; `OPENAI_IMAGE_PRICE_TEXT_INPUT_PER_MTOK`, `_IMAGE_INPUT_PER_MTOK`, `_OUTPUT_PER_MTOK` | Contract rates set per deployment | `config` |
 | **Anthropic list prices**, retrieved 2026-11-10 | Opus 5.5, Sonnet 5.5, Haiku 5.5 (including its higher rate above 100k prompt tokens): input, output, cache reads, 5-minute and 1-hour cache writes; web search $10 per 1,000 | `anthropic-list-2026-11-10` |
+| **Anthropic list prices for fallback models**, from the Claude API reference's pricing table (dated 2026-11-03, read 2026-11-21) | The server-side fallback targets Opus 5, Opus 4.8 ($5 / $25 per MTok) and Sonnet 5 ($2 / $10): priced only, not selectable for routes; cache reads 0.1x input, cache writes 1.25x / 2x | `anthropic-list-2026-11-03` |
 | **OpenAI list prices**, retrieved 2026-11-11 from the official pricing page | GPT Image 2.6 and 2.5 Flare and Sunburst, per 1M tokens: text input $5, image input $8, image output $30 | `openai-list-2026-11-11` |
 | none of the above, a fallback model not in the catalog, or no usage reported | — | `unpriced` |
 
 Notes:
+- **Server-side fallbacks.** When the routed model declines and a fallback model answers in the same
+  request, Anthropic reports each attempt in `usage.iterations` (the declined one as `message`, the
+  serving one as `fallback_message`); the top-level `usage` covers only the serving attempt, and each
+  attempt is billed at its own model's rates. If every model in the chain refuses there is no
+  `fallback_message`, but the `message` entries name more than one model; a `fallback` content block
+  also marks each switch. In every case the response is priced per model from the iterations alone,
+  each attempt once (a switch whose attempts can't be told apart is left unpriced, so it counts at its
+  reserve)
+  (`usageOf()` in `llm.ts`, `byModel` in `pricing.ts`), so the declined attempt is counted; the ledger
+  row's units hold the totals plus each model's tokens (`claude-opus-5-5:outputTokens`, …). If any
+  attempt's model is unknown or unpriced, the whole attempt is `unpriced` (and counts at its reserve).
+  Declined attempts are counted even when Anthropic doesn't bill a decline before any output: an
+  over-estimate is the safe side for the spending cap. Web searches are reported for the serving
+  attempt only and are attributed to it.
+- **Fallback eligibility under a cap.** A model's fallback targets (`SERVER_FALLBACK_TARGETS`) are used
+  for the reserve only when the list is confirmed exact (`FALLBACK_TARGETS_CONFIRMED`): Sonnet 5.5
+  (Sonnet 5 only, per the Claude API reference). Opus 5.5's list is **not** confirmed: the reference
+  says to read `allowed_fallback_models` from the Models API and only to "expect" Opus 5 and Opus 4.8,
+  and that hasn't been checked. So, while a spending cap is in force (`AI_SPEND_CAP_USD` set, or a cap
+  required), Opus 5.5 requests are sent **without** server-side fallbacks and reserved for Opus 5.5
+  alone (a refusal comes back as a refusal); a raw request that still asks for them in any form
+  (`"default"`, an explicit list, or the `server-side-fallback` beta) is refused before it is sent,
+  never sent without the fallbacks it asked for. Sonnet 5.5, whose list is confirmed, keeps its
+  fallbacks under a cap (including explicit lists). Without a cap, nothing changes. To enable Opus 5.5
+  fallbacks under a cap, confirm its `allowed_fallback_models` (a separately approved Models API call)
+  and add it to `FALLBACK_TARGETS_CONFIRMED`.
 - OpenAI publishes cached-input rates (text $1.25, image $2), but they apply only through the Responses
   API, not to direct Images API calls, so they're not used here.
 - OpenAI publishes no rate for image-model text output. If a response reports any, it's recorded and
@@ -232,9 +259,13 @@ request**: a request is sent only if
 `committed spend (incl. every pending attempt at its reserve) + this request's worst case ≤ cap`.
 
 - Worst cases: for text, the estimated prompt (about 3 characters per token, all priced at the
-  highest input rate) plus the full output-token limit, plus web-search fees and results (raw
-  Messages calls such as the assistant's tool loop are priced at the most expensive catalog text
-  model, since server-side fallbacks may answer); for images, `AI_SPEND_CAP_IMAGE_RESERVE_USD`
+  highest input rate) plus the full output-token limit, plus web-search fees and results (with
+  server-side fallbacks, the routed model plus every fallback target it may hand over to, since each
+  may run once and is billed at its own rates; raw Messages calls such as the assistant's tool loop
+  include the models the request's `fallbacks` asks for, each at its own `max_tokens`, when the routed
+  model may use fallbacks here). If any model that may run has no price (or fast mode is requested, which
+  isn't priced), the worst case is unknown and, with a cap in force, the text request is refused
+  before it is sent; for images, `AI_SPEND_CAP_IMAGE_RESERVE_USD`
   (default $1.00, far above OpenAI's published per-image output costs).
 - Attempts that may have been billed but have no price (pending, unknown outcome, unpriced) count
   at their reserve (stored on the row; older rows: `AI_SPEND_CAP_TEXT_RESERVE_USD`, default $0.50,

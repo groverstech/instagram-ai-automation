@@ -188,10 +188,10 @@ describe("Anthropic: successful generation and usage tracking", () => {
   });
 
   it("records a model served by a server-side fallback that has no catalogued price as unpriced", async () => {
-    anthropic = () => message({ answer: "ok" }, { model: "claude-opus-4-8" });
+    anthropic = () => message({ answer: "ok" }, { model: "claude-opus-4-7" });
     const out = await ask();
     const [ev] = await eventsOf(out.runId);
-    expect(ev).toMatchObject({ outcome: "success", model: "claude-opus-4-8", costUsd: null, priceSource: "unpriced" });
+    expect(ev).toMatchObject({ outcome: "success", model: "claude-opus-4-7", costUsd: null, priceSource: "unpriced" });
     expect(ev.units).toMatchObject({ inputTokens: 1000, outputTokens: 500 });
   });
 });

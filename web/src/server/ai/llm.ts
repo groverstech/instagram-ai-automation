@@ -3,7 +3,8 @@ import Anthropic from "@anthropic-ai/sdk";
 import { betaZodOutputFormat } from "@anthropic-ai/sdk/helpers/beta/zod";
 import type { z } from "zod";
 import { mockActive } from "./mode";
-import { TEXT_MODELS } from "./catalog";
+import { FALLBACK_TARGETS_CONFIRMED, FALLBACK_TEXT_MODELS, SERVER_FALLBACK_TARGETS, TEXT_MODELS } from "./catalog";
+import { spendCapInForce } from "./spend-cap";
 import { AIConfigError, AIOutputError, AIRefusalError } from "./errors";
 import { ANTHROPIC_KEY_HINT, anthropicConfigured, resolveAnthropicApiKey } from "./anthropic-key";
 import { baseRoute, resolveRoute, type Effort, type ResolvedRoute, type RouteKey } from "./routes";
@@ -56,6 +57,12 @@ export type Usage = {
   webSearches?: number;
   model?: string;
   /**
+   * Per-model token usage when more than one model ran in one request: a server-side fallback, where
+   * the routed model declined and another answered. The token fields above are then the totals, and
+   * each part is priced at its own model's rates (pricing.ts textCost).
+   */
+  byModel?: TextUsagePart[];
+  /**
    * Requests whose outcome is unknown: the request may have reached the provider (and been billed)
    * but no response reached the app (connection dropped, timeout, worker died). Not priced.
    */
@@ -74,6 +81,17 @@ export type Usage = {
   /** Images generated without a configured price: counted, not priced. */
   unpricedImages?: number;
   imageModel?: string;
+};
+
+/** One model's share of a request's text usage. `model` is undefined when the provider didn't say (then unpriced). */
+export type TextUsagePart = {
+  model?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  cacheWrite1hTokens?: number;
+  webSearches?: number;
 };
 
 /** A search result the model actually received from the web search tool. */
@@ -158,8 +176,19 @@ function userContent(prompt: string, images?: ImageInput[]): Anthropic.Beta.Beta
  * effort, server-side refusal fallbacks where the model supports them, and the agent's system
  * prompt marked for prompt caching (it is identical across calls of the same agent).
  */
+/**
+ * Whether requests to this model may ask for server-side fallbacks: the model supports them, and
+ * either its fallback-target list is confirmed (FALLBACK_TARGETS_CONFIRMED) or no spending cap is in
+ * force. Under a cap, an unconfirmed list means the fallback chain can't be fully priced and reserved,
+ * so the request is sent without fallbacks (a refusal is then returned as a refusal).
+ */
+export function serverFallbacksAllowed(model: string, env: Record<string, string | undefined> = process.env): boolean {
+  if (!(TEXT_MODELS[model]?.serverFallback ?? false)) return false;
+  return FALLBACK_TARGETS_CONFIRMED.has(model) || !spendCapInForce(env);
+}
+
 function common(route: ResolvedRoute, system: string, effort: Effort) {
-  const fallback = TEXT_MODELS[route.model]?.serverFallback ?? false;
+  const fallback = serverFallbacksAllowed(route.model);
   return {
     model: route.model,
     ...(fallback ? { betas: [FALLBACK_BETA], fallbacks: "default" as const } : {}),
@@ -171,9 +200,30 @@ function common(route: ResolvedRoute, system: string, effort: Effort) {
 
 const requestIdOf = (res: unknown) => (res as { _request_id?: string | null })._request_id ?? null;
 
-function usageOf(res: Anthropic.Beta.BetaMessage): Usage {
+/**
+ * Token usage of one response. Normally the top-level `usage`. When more than one model ran in the
+ * request (a server-side fallback), the top-level fields cover only the attempt that produced the
+ * returned message, while every attempt is billed at the rates of the model that ran it (Anthropic:
+ * "usage.iterations is the per-attempt source of truth"). That's the case when `usage.iterations` has
+ * a `fallback_message` entry (a fallback model answered) or its `message` entries name more than one
+ * model (every model in the chain refused, so there is no `fallback_message`). Then the totals and a
+ * per-model breakdown come from the iterations alone, each attempt counted once and priced at its own
+ * model's rates; the top-level figures are not added (they repeat the last attempt).
+ * Declined attempts are counted even if Anthropic doesn't bill a decline before any output: an
+ * over-estimate is safer for the spending cap than an under-estimate.
+ * Web searches are reported only for the final attempt, so they're attributed to it.
+ * A single model's server-tool loop (several `message` entries, one model) keeps the top-level usage.
+ */
+export function usageOf(res: Anthropic.Beta.BetaMessage): Usage {
   const u = res.usage;
-  return {
+  const attempts = (u.iterations ?? []).filter(
+    (it): it is Anthropic.Beta.BetaMessageIterationUsage | Anthropic.Beta.BetaFallbackMessageIterationUsage => it.type === "message" || it.type === "fallback_message",
+  );
+  const models = new Set(attempts.map((it) => it.model).filter((m): m is string => !!m));
+  // A `fallback` content block marks each switch between models; it is the signal when the iterations
+  // don't name the models (their `model` may be null).
+  const switched = (res.content ?? []).some((b) => b.type === "fallback");
+  const top: Usage = {
     inputTokens: u.input_tokens,
     outputTokens: u.output_tokens,
     cacheReadTokens: u.cache_read_input_tokens ?? 0,
@@ -183,6 +233,34 @@ function usageOf(res: Anthropic.Beta.BetaMessage): Usage {
     // The model that actually served it (a server-side fallback may differ from the route's).
     model: res.model,
   };
+  if (attempts.some((it) => it.type === "fallback_message") || models.size > 1 || switched) {
+    // Models switched but no per-attempt usage to break it down: the top level covers only the last
+    // attempt, so the attempt is left unpriced (counted at its reserve) rather than under-counted.
+    if (!attempts.length) return { ...top, byModel: [{ ...top, model: undefined }] };
+    const last = attempts.length - 1;
+    const parts: TextUsagePart[] = attempts.map((i, n) => ({
+      model: i.model ?? undefined,
+      inputTokens: i.input_tokens,
+      outputTokens: i.output_tokens,
+      cacheReadTokens: i.cache_read_input_tokens ?? 0,
+      cacheWriteTokens: i.cache_creation_input_tokens ?? 0,
+      cacheWrite1hTokens: i.cache_creation?.ephemeral_1h_input_tokens || undefined,
+      webSearches: n === last ? (u.server_tool_use?.web_search_requests ?? 0) : 0,
+    }));
+    const total = (k: "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens") => parts.reduce((s, p) => s + (p[k] ?? 0), 0);
+    const w1h = parts.reduce((s, p) => s + (p.cacheWrite1hTokens ?? 0), 0);
+    return {
+      inputTokens: total("inputTokens"),
+      outputTokens: total("outputTokens"),
+      cacheReadTokens: total("cacheReadTokens"),
+      cacheWriteTokens: total("cacheWriteTokens"),
+      cacheWrite1hTokens: w1h || undefined,
+      webSearches: u.server_tool_use?.web_search_requests ?? 0,
+      model: res.model,
+      byModel: parts,
+    };
+  }
+  return top;
 }
 
 async function routed(key: RouteKey): Promise<ResolvedRoute> {
@@ -208,8 +286,15 @@ export function textWorstCaseUsd(
 }
 
 /**
- * Worst case across the models that can answer: with server-side fallbacks ("fallbacks: default")
- * another catalog model may answer, so it is priced at the most expensive one.
+ * Worst case of one request with server-side fallbacks ("fallbacks: default"): the routed model may
+ * decline after producing output (billed), then each fallback target may run once (each billed at its
+ * own rates), so the worst case is the routed model's plus every target's (SERVER_FALLBACK_TARGETS).
+ * A model with fallbacks but no listed targets is priced against every known model, as a safe bound.
+ * If the routed model or any target can't be priced, the worst case is unknown: null, never an
+ * under-estimate. Under a spending cap, a model whose target list isn't confirmed exact
+ * (FALLBACK_TARGETS_CONFIRMED) also has no known worst case with fallbacks: the list may be
+ * incomplete. With a cap in force, a text request without a worst case is refused before it is sent
+ * (spend-cap.ts openAttempt).
  */
 export function routeWorstCaseUsd(
   model: string,
@@ -217,8 +302,17 @@ export function routeWorstCaseUsd(
   cost: (u: Usage) => { usd: number | null },
   fallbacks = TEXT_MODELS[model]?.serverFallback ?? false,
 ): number | null {
-  const models = fallbacks ? [model, ...Object.keys(TEXT_MODELS)] : [model];
-  return models.map((m) => textWorstCaseUsd(m, req, cost)).reduce<number | null>((max, v) => (v === null ? max : max === null ? v : Math.max(max, v)), null);
+  const primary = textWorstCaseUsd(model, req, cost);
+  if (!fallbacks || primary === null) return primary;
+  if (!FALLBACK_TARGETS_CONFIRMED.has(model) && spendCapInForce()) return null;
+  const targets = SERVER_FALLBACK_TARGETS[model] ?? [...Object.keys(TEXT_MODELS), ...Object.keys(FALLBACK_TEXT_MODELS)].filter((m) => m !== model);
+  let total = primary;
+  for (const m of targets) {
+    const w = textWorstCaseUsd(m, req, cost);
+    if (w === null) return null;
+    total += w;
+  }
+  return total;
 }
 
 const textPricing = async (worst?: { model: string; chars: number; images?: ImageInput[]; maxTokens: number; searches?: number; fallbacks?: boolean }) => {
@@ -233,6 +327,14 @@ const textPricing = async (worst?: { model: string; chars: number; images?: Imag
       cacheWriteTokens: u.cacheWriteTokens ?? 0,
       cacheWrite1hTokens: u.cacheWrite1hTokens ?? 0,
       webSearches: u.webSearches ?? 0,
+      // A fallback-served request: each model's tokens too ("claude-opus-5-5:outputTokens"), for audit.
+      ...(u.byModel ?? []).reduce<Record<string, number>>((acc, p) => {
+        for (const k of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"] as const) {
+          const key = `${p.model ?? "unknown"}:${k}`;
+          acc[key] = (acc[key] ?? 0) + (p[k] ?? 0);
+        }
+        return acc;
+      }, {}),
     }),
   };
 };
@@ -248,7 +350,7 @@ const anthropicProvider: LLMProvider = {
     const format = betaZodOutputFormat(req.schema) as unknown as { schema: Record<string, unknown> };
     const { effort, ...params } = common(route, req.system, route.effort ?? req.effort ?? "medium");
     const maxTokens = Math.min(req.maxTokens ?? 16000, 16000);
-    const worst = { model: route.model, chars: req.system.length + req.prompt.length + JSON.stringify(format.schema).length, images: req.images, maxTokens };
+    const worst = { model: route.model, chars: req.system.length + req.prompt.length + JSON.stringify(format.schema).length, images: req.images, maxTokens, fallbacks: serverFallbacksAllowed(route.model) };
     const out = await execute(route, await textPricing(worst), async () => {
       const res = await anthropic().beta.messages.create(
         {
@@ -286,7 +388,7 @@ const anthropicProvider: LLMProvider = {
     const route = await routed(req.route);
     const { execute } = await import("./call");
     const { effort, ...params } = common(route, req.system, route.effort ?? "medium");
-    const worst = { model: route.model, chars: req.system.length + req.prompt.length, maxTokens: 16000, searches: req.maxSearches ?? 5 };
+    const worst = { model: route.model, chars: req.system.length + req.prompt.length, maxTokens: 16000, searches: req.maxSearches ?? 5, fallbacks: serverFallbacksAllowed(route.model) };
     const out = await execute(route, await textPricing(worst), async () => {
       const res = await anthropic().beta.messages.create(
         {
@@ -394,23 +496,69 @@ export function aiStatus() {
 }
 
 /**
+ * Worst case of one raw Messages request, from what the request asks for (the SDK's `fallbacks`:
+ * omitted / null, "default", or a list of `{ model, max_tokens?, speed?, … }` entries):
+ * - no fallbacks requested, or a routed model without server-side fallbacks (the API rejects the
+ *   request, so nothing more can be billed): the routed model alone;
+ * - "default" (or an empty list): the routed model plus its catalog targets (routeWorstCaseUsd);
+ * - a list: the routed model plus each named model, each at its own `max_tokens` (it replaces the
+ *   request's for that attempt) and its own rates;
+ * - fast mode (`speed: "fast"` on the request or an entry): not priced in the catalog, so unknown;
+ * - server-side fallbacks asked for in any form (`fallbacks` set to anything, or a
+ *   `server-side-fallback-*` beta) for a model that may not use them here (serverFallbacksAllowed:
+ *   e.g. Opus 5.5 under a spending cap, whose target list isn't confirmed): unknown, so the request is
+ *   refused rather than sent; it is never silently sent without the fallbacks it asked for.
+ * Unknown (null) whenever any model that may run can't be priced; with a cap in force such a request
+ * is refused before it is sent (spend-cap.ts openAttempt).
+ */
+export function rawMessageWorstCaseUsd(
+  model: string,
+  body: { fallbacks?: Anthropic.Beta.BetaFallbacksParam | null; speed?: string | null; betas?: ReadonlyArray<string> | null },
+  req: { chars: number; maxTokens: number },
+  cost: (u: Usage) => { usd: number | null },
+): number | null {
+  if (body.speed === "fast") return null;
+  const f = body.fallbacks;
+  const supported = TEXT_MODELS[model]?.serverFallback ?? true;
+  const asksForFallbacks = (f !== undefined && f !== null) || (body.betas ?? []).some((b) => String(b).startsWith("server-side-fallback"));
+  if (asksForFallbacks && supported && !serverFallbacksAllowed(model)) return null;
+  if (f === undefined || f === null || !supported) return routeWorstCaseUsd(model, req, cost, false);
+  if (!Array.isArray(f) || f.length === 0) return routeWorstCaseUsd(model, req, cost, true);
+  let total = textWorstCaseUsd(model, req, cost);
+  for (const entry of f) {
+    if (total === null || entry.speed === "fast") return null;
+    const w = textWorstCaseUsd(entry.model, { ...req, maxTokens: entry.max_tokens ?? req.maxTokens }, cost);
+    if (w === null) return null;
+    total += w;
+  }
+  return total;
+}
+
+/**
  * One raw Messages API request (tool-use loops such as the assistant), through the executor like
  * every other text request: usage recorded as pending before sending (or refused), spending cap,
  * circuit breaker, retries and the usage ledger. Provider code must never call the client directly.
  *
- * The worst-case reserve is priced at the most expensive catalog text model, since server-side
- * fallbacks can answer with another model.
+ * `opts.serverFallbacks`: ask for server-side fallbacks ("default") when the routed model allows
+ * them here (serverFallbacksAllowed); otherwise the request is sent without them.
+ * The worst-case reserve is rawMessageWorstCaseUsd(): the routed model, plus the fallback models the
+ * request asks for when the routed model supports server-side fallbacks.
  */
 export async function anthropicMessage(
   routeKey: RouteKey,
-  body: Omit<Anthropic.Beta.MessageCreateParamsNonStreaming, "model">,
+  request: Omit<Anthropic.Beta.MessageCreateParamsNonStreaming, "model">,
+  opts: { serverFallbacks?: boolean } = {},
 ): Promise<{ message: Anthropic.Beta.BetaMessage; usage: Usage; provider: string }> {
   const route = await routed(routeKey);
+  const body =
+    opts.serverFallbacks && serverFallbacksAllowed(route.model)
+      ? { ...request, betas: [...new Set([...(request.betas ?? []), FALLBACK_BETA])], fallbacks: "default" as const }
+      : request;
   const { execute } = await import("./call");
   const maxTokens = Math.min(body.max_tokens, 16000);
   const chars = JSON.stringify({ system: body.system, messages: body.messages, tools: body.tools }).length;
-  // Fallbacks may be requested in the body itself: price at the most expensive catalog model.
-  const pricing = await textPricing({ model: route.model, chars, maxTokens, fallbacks: true });
+  const { textCost } = await import("./pricing");
+  const pricing = { ...(await textPricing()), worstCaseUsd: rawMessageWorstCaseUsd(route.model, body, { chars, maxTokens }, textCost) };
   const out = await execute(route, pricing, async () => {
     const res = await anthropic().beta.messages.create({ ...body, model: route.model, max_tokens: maxTokens }, { timeout: route.timeoutMs });
     return { value: res, usage: usageOf(res), requestId: requestIdOf(res) };

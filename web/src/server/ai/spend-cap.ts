@@ -52,6 +52,9 @@ export const SPEND_CAP_SINCE_FORMAT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d
 export const spendCapRequired = (env: Env = process.env) =>
   /^(1|true|yes)$/i.test(env.AI_SPEND_CAP_REQUIRED?.trim() ?? "") || (env.DEPLOY_ENV ?? "").trim().toLowerCase() === "staging";
 
+/** A spending cap applies to this process: one is required, or AI_SPEND_CAP_USD is set. */
+export const spendCapInForce = (env: Env = process.env) => spendCapRequired(env) || isSet(env.AI_SPEND_CAP_USD);
+
 /**
  * Reads and validates the cap. Fails closed: a cap that is set but malformed, or a start time that
  * is set but malformed, is an error (never "no cap" or "start of month"). In required mode the cap
@@ -205,8 +208,15 @@ export async function openAttempt(
   if (!parsed.ok) throw new AISpendCapConfigError(parsed.reason);
   if (!(await flushUnsettled())) throw new AIAccountingError("an earlier request's usage couldn't be recorded yet");
   const cfg = spendCapConfig(env);
+  const priced = worstCaseUsd !== null && Number.isFinite(worstCaseUsd) && worstCaseUsd >= 0;
+  // A text request always has a computed worst case; none means a model it may use (the routed model or
+  // a fallback target) has no price. Under a cap, a fixed fallback reserve could under-count it: refuse.
+  // Images use their configured reserve (AI_SPEND_CAP_IMAGE_RESERVE_USD) by design.
+  if (!priced && route.kind !== "image" && parsed.capUsd !== null) {
+    throw new AISpendCapConfigError("unable to cover this request (a model it may use has no price, so its worst-case cost is unknown)");
+  }
   const fallback = route.kind === "image" ? cfg.imageReserveUsd : cfg.textReserveUsd;
-  const reserve = worstCaseUsd !== null && Number.isFinite(worstCaseUsd) && worstCaseUsd >= 0 ? worstCaseUsd : fallback;
+  const reserve = priced ? worstCaseUsd! : fallback;
   let db: DB;
   try {
     db = await getDb();

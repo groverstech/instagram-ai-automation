@@ -3,6 +3,8 @@ import type { Usage } from "./llm";
 import {
   ANTHROPIC_PRICE_SOURCE,
   ANTHROPIC_WEB_SEARCH_PER_1K,
+  FALLBACK_PRICE_SOURCE,
+  FALLBACK_TEXT_MODELS,
   IMAGE_MODEL_INFO,
   OPENAI_PRICE_SOURCE,
   TEXT_MODELS,
@@ -75,6 +77,11 @@ export function setPriceOverrides(list: PriceOverride[]) {
 
 export type TextUnits = {
   model?: string;
+  /**
+   * Per-model usage when more than one model ran in one request (a server-side fallback). Each
+   * part is priced at its own model's rates; any unpriceable part makes the whole unpriced.
+   */
+  byModel?: TextUnits[];
   inputTokens?: number;
   outputTokens?: number;
   cacheReadTokens?: number;
@@ -85,7 +92,12 @@ export type TextUnits = {
 };
 
 export function textCost(u: TextUnits, env: Env = process.env): Priced {
-  const entry = u.model ? TEXT_MODELS[u.model] : undefined;
+  if (u.byModel?.length) {
+    const priced = u.byModel.map((p) => textCost({ ...p, byModel: undefined }, env));
+    if (priced.some((p) => p.usd === null)) return { usd: null, source: UNPRICED };
+    return { usd: round(priced.reduce((s, p) => s + p.usd!, 0)), source: [...new Set(priced.map((p) => p.source))].join("; ") };
+  }
+  const entry = u.model ? (TEXT_MODELS[u.model] ?? FALLBACK_TEXT_MODELS[u.model]) : undefined;
   const o = u.model ? overrides.get(u.model) : undefined;
   if (!entry && !o) return { usd: null, source: UNPRICED };
   const promptTokens = (u.inputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0);
@@ -114,7 +126,8 @@ export function textCost(u: TextUnits, env: Env = process.env): Priced {
   // Every unit used needs a rate; otherwise the call is unpriced rather than under-counted.
   if (parts.some(([n, rate]) => n > 0 && rate === undefined)) return { usd: null, source: UNPRICED };
   const usd = parts.reduce((s, [n, rate]) => s + n * (rate ?? 0), 0) / 1_000_000 + ((u.webSearches ?? 0) * p.webSearchPer1k) / 1000;
-  const source = o ? o.source : inEnv !== undefined || outEnv !== undefined || ((u.webSearches ?? 0) > 0 && searchEnv !== undefined) ? "config" : ANTHROPIC_PRICE_SOURCE;
+  const listSource = TEXT_MODELS[u.model!] ? ANTHROPIC_PRICE_SOURCE : FALLBACK_PRICE_SOURCE;
+  const source = o ? o.source : inEnv !== undefined || outEnv !== undefined || ((u.webSearches ?? 0) > 0 && searchEnv !== undefined) ? "config" : listSource;
   return { usd: round(usd), source };
 }
 
@@ -199,5 +212,16 @@ export function addUsage(a: Usage, b: Usage | undefined): Usage {
     unpricedImages: sum(a.unpricedImages, b.unpricedImages),
     model: b.model ?? a.model,
     imageModel: b.imageModel ?? a.imageModel,
+    // Once more than one model is involved, keep each model's tokens apart so each is priced at its own rates.
+    ...(a.byModel || b.byModel ? { byModel: [...textParts(a), ...textParts(b)] } : {}),
   };
+}
+
+/** A usage's text tokens as per-model parts (its own breakdown, or one part for its single model). */
+function textParts(u: Usage): TextUnits[] {
+  if (u.byModel) return u.byModel;
+  const has = (u.inputTokens ?? 0) + (u.outputTokens ?? 0) + (u.cacheReadTokens ?? 0) + (u.cacheWriteTokens ?? 0) + (u.webSearches ?? 0) > 0;
+  return u.model && has
+    ? [{ model: u.model, inputTokens: u.inputTokens, outputTokens: u.outputTokens, cacheReadTokens: u.cacheReadTokens, cacheWriteTokens: u.cacheWriteTokens, cacheWrite1hTokens: u.cacheWrite1hTokens, webSearches: u.webSearches }]
+    : [];
 }

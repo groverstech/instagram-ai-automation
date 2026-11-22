@@ -233,17 +233,20 @@ ${renderContext(ctx)}`;
   let usage: Usage = {};
   for (let step = 0; step < 6; step++) {
     // Through the executor (llm.ts): each step is accounted, capped and recorded like any text request.
-    const { message: res, usage: stepUsage } = await anthropicMessage("advisor.chat", {
-      max_tokens: 16000,
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
-      thinking: { type: "adaptive" },
-      output_config: { effort: "medium" },
-      system,
-      tools: TOOLS,
-      tool_choice: { type: "auto" },
-      messages: merged,
-    });
+    // Server-side fallbacks when the routed model allows them here (llm.ts serverFallbacksAllowed).
+    const { message: res, usage: stepUsage } = await anthropicMessage(
+      "advisor.chat",
+      {
+        max_tokens: 16000,
+        thinking: { type: "adaptive" },
+        output_config: { effort: "medium" },
+        system,
+        tools: TOOLS,
+        tool_choice: { type: "auto" },
+        messages: merged,
+      },
+      { serverFallbacks: true },
+    );
     usage = addUsage(usage, stepUsage);
     if (res.stop_reason === "refusal") return { text: "I can't help with that request. Try rephrasing what you need.", actions, usage };
     merged.push({ role: "assistant", content: res.content });

@@ -68,6 +68,47 @@ export const TEXT_MODELS: Record<string, TextModel> = {
   },
 };
 
+/**
+ * Models that may answer through a server-side fallback (`fallbacks: "default"`) but can't be chosen
+ * for a route. Priced so a fallback-served attempt is costed rather than left unpriced, and so the
+ * spending cap's worst case can include them. Source: Anthropic's Claude API reference (its model
+ * pricing table, dated 2026-11-03, read 2026-11-21): Opus 5 and Opus 4.8 $5 in / $25 out, Sonnet 5
+ * $2 / $10; its prompt-caching guide: cache reads 0.1x input on these models, cache writes 1.25x
+ * (5-minute) and 2x (1-hour). Recorded with their own price source (FALLBACK_PRICE_SOURCE).
+ */
+export const FALLBACK_PRICE_SOURCE = "anthropic-list-2026-11-03";
+export const FALLBACK_TEXT_MODELS: Record<string, { label: string; price: TextPrice }> = {
+  "claude-opus-5": { label: "Claude Opus 5", price: { input: 5, output: 25, cacheRead: 0.5, cacheWrite5m: 6.25, cacheWrite1h: 10 } },
+  "claude-opus-4-8": { label: "Claude Opus 4.8", price: { input: 5, output: 25, cacheRead: 0.5, cacheWrite5m: 6.25, cacheWrite1h: 10 } },
+  "claude-sonnet-5": { label: "Claude Sonnet 5", price: { input: 2, output: 10, cacheRead: 0.2, cacheWrite5m: 2.5, cacheWrite1h: 4 } },
+};
+
+/**
+ * The models a server-side fallback may hand a request to, per routed model (Anthropic's
+ * `allowed_fallback_models`; with "default" Anthropic picks among them by refusal category). From the
+ * Claude API reference: Opus 5.5 → Opus 5, Opus 4.8 ("expect Claude Opus 5 / claude-opus-4-8"; the
+ * authoritative list is `allowed_fallback_models` on the model's /v1/models entry, not yet checked
+ * live); Sonnet 5.5 → Sonnet 5 (its only fallback target). A fallback to a model outside this list is
+ * still recorded: priced if catalogued, otherwise unpriced and counted at its reserve.
+ * Each may run at most once in a chain, after the routed model, so the spending cap's worst case
+ * for one request is the routed model's plus every target's (routeWorstCaseUsd).
+ */
+export const SERVER_FALLBACK_TARGETS: Record<string, string[]> = {
+  "claude-opus-5-5": ["claude-opus-5", "claude-opus-4-8"],
+  "claude-sonnet-5-5": ["claude-sonnet-5"],
+};
+
+/**
+ * Routed models whose fallback-target list above is confirmed exact, not merely expected. Sonnet 5.5:
+ * the Claude API reference states its fallbacks "may name only `claude-sonnet-5`". Opus 5.5 is NOT
+ * confirmed: the reference says to read `allowed_fallback_models` from the Models API and only to
+ * "expect" Opus 5 and Opus 4.8. Under a spending cap, a model whose list isn't confirmed is sent
+ * without server-side fallbacks (llm.ts serverFallbacksAllowed), and a request that still asks for
+ * them in any form ("default", a list, or the fallback beta) is refused before it is sent. Add a model here only
+ * once its list has been checked against `allowed_fallback_models`.
+ */
+export const FALLBACK_TARGETS_CONFIRMED: ReadonlySet<string> = new Set(["claude-sonnet-5-5"]);
+
 /** Anthropic web search: USD per 1,000 searches (failed searches aren't billed). */
 export const ANTHROPIC_WEB_SEARCH_PER_1K = 10;
 
