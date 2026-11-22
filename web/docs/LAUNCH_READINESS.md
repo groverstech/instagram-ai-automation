@@ -59,7 +59,7 @@ production-grade deployment, with the security, data and operations gates below 
 | S4 | Rate limits, quotas and spend caps enforced server-side | **Partial** | Rate limits, plan run quota, fail-closed AI ledger and deployment-wide cap (PR 4.1). Missing: organisation and brand limits, kill switch and tripwire (F12) | Code |
 | S5 | Sign-up doesn't reveal registered emails (F1) | **Not started** | Needs the email provider (O3) | Owner, then code |
 | S6 | Strict Content Security Policy (F2) | **In progress** | PR #16: per-request nonce, `script-src 'self' 'nonce-…' 'strict-dynamic'`, no `unsafe-inline`; every script carries the nonce, no violations, full regression passes | Code |
-| S7 | MFA for owners and admins (F3) | **Not started** | Required "before the first external agency or paying customer". Planned (§4) | Code |
+| S7 | MFA for owners and admins (F3) | **In progress** | PR #17 (F3a): TOTP with recovery codes, required for owners and admins in staging and production. F3b (a fresh second factor for sensitive actions, sign out everywhere) next | Code |
 | S8 | Row-level security pilot and independent isolation check (F8) | **Not started** | RLS pilot in PR 4.9; independent review | Code, External |
 | S9 | Penetration test with findings fixed or accepted (F9) | **Not started** | After the beta build is feature-complete | Owner, External |
 | S10 | Egress firewall and metadata protection (F7) | **Not started** | With the hosting platform | Owner |
@@ -104,6 +104,7 @@ production-grade deployment, with the security, data and operations gates below 
 | O3 | Transactional email (plan defect D8) | **Partial** | Interface and `log` driver; provider pending; refuses in staging and production | Owner, then code |
 | O4 | Uptime checks, alert routing, dead-job alerting | **Not started** | Health endpoints exist; alerting needs O1 and O2 | Owner, then code |
 | O5 | Status page | **Not started** | Third-party service | Owner |
+| O7 | Dependency audit clean | **Not started** | `npm audit --omit=dev`: two findings in the `postcss` bundled with Next.js 15.5 (on `main` before these PRs); the fix is a major Next.js upgrade. Evaluate and upgrade in its own PR | Code |
 | O6 | Scaling beyond one instance (F5) | **Owner** | A single-instance beta needs the owner's approval; otherwise R2 and shared rate limits first | Owner |
 
 ### Legal and product
@@ -126,7 +127,7 @@ started without waiting; each item is its own PR.
 | 1 | **PR 4.3 Platform readiness**, in three stacked PRs: **4.3a** (#12) legal pages, Meta callbacks, honest capabilities, JPEG media; **4.3b** (#13) self-service deletion; **4.3c** (#14) Meta submission pack and reviewer account | P1, P2, P3, P7, D3 | Legal text before any submission; the `business_management` decision | All three in review |
 | 2 | Emergency pause | R2 | — | In review (#15) |
 | 3 | Strict CSP (F2) | S6 | — | In review (#16) |
-| 4 | MFA (F3) | S7 | — | Queued |
+| 4 | MFA (F3) | S7 | — | F3a in review (#17); F3b next |
 | 5 | PR 4.5 Configurable plans and credits, shadow mode; organisation and brand AI limits and alerts | R3, A4 (part) | Commercial inputs can come later: everything is configuration | Queued |
 | 6 | AI kill switch and tripwire (F12) | A4 | — | Queued |
 | 7 | Audit-log retention and export (F4), tenant export | D4, D5 | — | Queued |
@@ -162,3 +163,4 @@ Each session appends one line: date, what was merged or opened, gates changed, n
 | 22 Nov 2026 | Opened #14 (4.3c: Meta submission pack, `reviewer:setup`). Finding: the Meta review and single-image beta publishing don't depend on R2 for a single-instance beta. Next: emergency pause (R2), then strict CSP (F2). |
 | 22 Nov 2026 | Opened #15 (emergency pause, R2; stacked on #14 for migration numbering). 378/378 tests; regression 19/16/10/20. Next: strict CSP (F2, S6). |
 | 22 Nov 2026 | Opened #16 (strict CSP, F2; from `main`). 349/349 tests; regression 19/16/10/20 under the policy. Next: MFA (F3, S7). |
+| 22 Nov 2026 | Opened #17 (MFA F3a; stacked on #15). 386/386 tests; regression 19/16/10/20; browser checks in optional and required modes. Recorded O7 (Next.js postcss advisory). Next: F3b, then PR 4.5 (credits shadow mode). |
