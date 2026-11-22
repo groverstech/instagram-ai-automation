@@ -1,7 +1,7 @@
 # AI spending controls: current state and production architecture
 
 Status: PR 4.1 implements the foundation (one accounted path for every paid request, a fail-closed
-usage ledger, a deployment-wide hard cap for validation and staging). This document describes how
+usage ledger, a deployment-wide cap on *estimated* spend for validation and staging). This document describes how
 the production controls build on it. A global cap is **not** meant to be the only control: it is
 the last line of defence, below per-organisation and per-brand limits and credits.
 
@@ -12,7 +12,7 @@ the last line of defence, below per-organisation and per-brand limits and credit
 | Single executor | `src/server/ai/call.ts` | Every paid provider attempt runs through `execute()`: circuit breaker, retries, accounting. |
 | Fail-closed ledger | `src/server/ai/spend-cap.ts`, `usage_events` | A `pending` row with the attempt's worst-case `reserve_usd` is committed **before** sending, under an advisory lock; refused if it can't be written; settled in place afterwards. |
 | Attribution | `src/server/ai/context.ts`, `agents/orchestrator.ts` | Each row carries organisation (`workspace_id`), brand, user, task and run. |
-| Hard cap | `AI_SPEND_CAP_*` | Deployment-wide ceiling; required in staging and for paid operator commands. |
+| Spending cap | `AI_SPEND_CAP_*` | Deployment-wide ceiling on **estimated** spend (list prices and per-attempt reserves); required in staging and for paid operator commands. Requests are refused before sending once it would be exceeded, but an attempt that costs more than its reserve (images, research, unusual inputs) can take actual spend past it. It is not a provider billing limit: the provider-side limits (prepaid balance, project budgets) are the hard stop. |
 | Network guard | `src/server/ai/paid-run-guard.ts` | In staging and paid commands, provider requests without an open attempt are blocked at `fetch`. |
 | Monthly organisation limit | `src/server/quota.ts` | Soft limit checked before each AI action (estimated cost this month). |
 

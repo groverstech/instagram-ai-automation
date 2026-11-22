@@ -252,7 +252,7 @@ npm run ai:billing -- reconcile openai    cost-export.csv  --since … --until �
 
 ### Spending cap and run log (validation budgets)
 
-`AI_SPEND_CAP_USD` sets a hard cap on estimated AI spending for the whole deployment, counted from
+`AI_SPEND_CAP_USD` sets a cap on estimated AI spending for the whole deployment, counted from
 `AI_SPEND_CAP_SINCE` (default: the start of the month). It's checked **before every provider
 request**: a request is sent only if
 
@@ -363,7 +363,7 @@ if it isn't active.
   lock, so the cap holds across the web app and workers.
 - **Production**: every paid request is accounted fail-closed as above (no request without a durable
   pending row), the circuit breaker, plan limits and the optional monthly spending limit apply, and
-  `AI_SPEND_CAP_REQUIRED=true` opts into the hard cap with the same boot checks and guard. A hard cap
+  `AI_SPEND_CAP_REQUIRED=true` opts into the spending cap with the same boot checks and guard. The cap
   isn't on by default in production, because reaching it stops all AI features for every customer:
   that is a product decision.
 - This change doesn't enable publishing or autonomous AI actions: the assistant still only creates
@@ -423,7 +423,7 @@ clears both variables (and `ANTHROPIC_AUTH_TOKEN`) before each test file.
 | `AI_CIRCUIT_THRESHOLD` / `AI_CIRCUIT_OPEN_MS` | 5 / 30000 | Circuit breaker |
 | Price variables | — | See "How costs are calculated". The retired `IMAGE_PRICE_USD*` variables are ignored, with a warning at boot. |
 | `AI_MONTHLY_COST_LIMIT_USD`, `AI_MONTHLY_COST_LIMIT_USD_<PLAN>` | — | Optional spending limit |
-| `AI_SPEND_CAP_USD`, `AI_SPEND_CAP_SINCE` | — | Hard cap for the whole deployment, checked before every request (validation budgets). Since: UTC, e.g. `2026-11-14T00:00:00Z`. Required by `test:live` and `ai:check-anthropic` |
+| `AI_SPEND_CAP_USD`, `AI_SPEND_CAP_SINCE` | — | Cap on estimated spend for the whole deployment, checked before every request (validation budgets; provider-side limits stay the hard stop). Since: UTC, e.g. `2026-11-14T00:00:00Z`. Required by `test:live` and `ai:check-anthropic` |
 | `AI_SPEND_CAP_REQUIRED` | — | `true`: refuse every provider request unless a valid cap is set (always on in staging; paid commands set it themselves) |
 | `AI_SPEND_LEDGER_SINGLE_SESSION` | — | `true`: lets paid operator commands run on a local (non-durable) ledger, covering only this machine's spending |
 | `AI_SPEND_CAP_IMAGE_RESERVE_USD`, `AI_SPEND_CAP_TEXT_RESERVE_USD` | 1.00 / 0.50 | Worst-case reserve for an image request; fallback reserve for an unpriced text attempt |

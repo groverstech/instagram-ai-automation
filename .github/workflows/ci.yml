@@ -97,7 +97,7 @@ jobs:
             echo "ALLOW_LOCAL_STORAGE_IN_PRODUCTION=true"
             echo "TRUSTED_PROXY_HOPS=1"
             echo "RUN_JOBS_IN_PROCESS=false"
-            # Staging always runs under a hard AI spending cap; web and worker refuse to start without it.
+            # Staging always runs under an AI spending cap; web and worker refuse to start without it.
             echo "AI_SPEND_CAP_REQUIRED=true"
             echo "AI_SPEND_CAP_USD=1"
             echo "AI_SPEND_CAP_SINCE=2026-01-01T00:00:00Z"
@@ -129,6 +129,54 @@ jobs:
           curl -fsI localhost:3000/login | grep -i "x-frame-options: DENY"
           docker stop -t 30 web
           test "$(docker inspect -f '{{.State.ExitCode}}' web)" = "0"
+
+      - name: Queued jobs run on Postgres (worker, cron route, in-process scheduler)
+        # FOLLOW_UPS F13: every jobs tick failed on Postgres while the roles still started and stopped
+        # cleanly. Each entry point must take a real queued job from "queued" to "done".
+        run: |
+          psqlq() { docker run --rm --network host pgvector/pgvector:pg16 psql "$DB" -v ON_ERROR_STOP=1 -qtAc "$1"; }
+          # A metric sync for a brand with no connected accounts: a real job that needs no network.
+          enqueue() { psqlq "insert into jobs (id, type, payload) values (gen_random_uuid()::text, 'sync_metrics', '{\"brandId\":\"ci-$1\"}') returning id"; }
+          wait_done() {
+            for i in $(seq 1 "$2"); do
+              test "$(psqlq "select status from jobs where id = '$1'")" = "done" && return 0
+              sleep 1
+            done
+            psqlq "select status, attempts, last_error from jobs where id = '$1'"
+            return 1
+          }
+          fail() { docker logs "$1" 2>&1 | tail -50; exit 1; }
+
+          # 1. Standalone worker.
+          JOB=$(enqueue worker)
+          docker run -d --name jobs-worker --network host --env-file "$RUNNER_TEMP/staging.env" -e WORKER_INTERVAL_MS=1000 brandpilot:ci worker
+          wait_done "$JOB" 60 || fail jobs-worker
+          docker stop -t 30 jobs-worker
+          test "$(docker inspect -f '{{.State.ExitCode}}' jobs-worker)" = "0"
+          if docker logs jobs-worker 2>&1 | grep -q 'tick_failed'; then fail jobs-worker; fi
+
+          # 2. Cron route: refuses a wrong secret without running anything, runs the job with the right one.
+          CRON_SECRET=$(openssl rand -hex 32)
+          docker run -d --name jobs-cron --network host --env-file "$RUNNER_TEMP/staging.env" -e PORT=3003 -e CRON_SECRET="$CRON_SECRET" brandpilot:ci
+          for i in $(seq 1 60); do curl -fs -o /dev/null localhost:3003/api/health/live && break; sleep 2; done
+          JOB=$(enqueue cron)
+          test "$(curl -s -o /dev/null -w '%{http_code}' -H 'Authorization: Bearer wrong' localhost:3003/api/cron/tick)" = "401"
+          test "$(psqlq "select status from jobs where id = '$JOB'")" = "queued"
+          curl -fsS -H "Authorization: Bearer $CRON_SECRET" localhost:3003/api/cron/tick | tee tick.json; echo
+          grep -q "\"id\":\"$JOB\",\"ok\":true" tick.json || fail jobs-cron
+          wait_done "$JOB" 5 || fail jobs-cron
+          docker stop -t 30 jobs-cron
+
+          # 3. In-process scheduler in the web role (a tick every 30 s).
+          JOB=$(enqueue inprocess)
+          docker run -d --name jobs-inprocess --network host --env-file "$RUNNER_TEMP/staging.env" -e PORT=3004 -e RUN_JOBS_IN_PROCESS=true brandpilot:ci
+          wait_done "$JOB" 120 || fail jobs-inprocess
+          if docker logs jobs-inprocess 2>&1 | grep -q 'tick_failed'; then fail jobs-inprocess; fi
+          docker stop -t 30 jobs-inprocess
+
+      - name: Remove job-check containers
+        if: always()
+        run: docker rm -f jobs-worker jobs-cron jobs-inprocess > /dev/null 2>&1 || true
 
       - name: Worker role shuts down gracefully on SIGTERM
         run: |
