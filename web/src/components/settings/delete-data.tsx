@@ -63,7 +63,7 @@ export function DeleteData({ workspace, brands, canDeleteBrand, isOwner, plan }:
           </Button>
         </div>
         <p className="text-[11px] text-faint">
-          Kept after deletion, without names, text or files: AI usage records (for billing) and the Security log. See the <a href="/data-deletion" className="underline">data deletion</a> page.
+          Kept after deletion, without names, text or files: AI usage records (for billing) and security records. See the <a href="/data-deletion" className="underline">data deletion</a> page.
         </p>
       </CardBody>
 
