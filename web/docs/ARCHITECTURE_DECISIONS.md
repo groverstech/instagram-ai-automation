@@ -154,8 +154,11 @@ marked **pending**.
     and in the database (global, plan, brand), and validated against the catalog. Opus 5.5 stays
     the default.
   - One executor (`call.ts`) for both providers, with SDK retries off. It retries with backoff,
-    honours `retry-after` and `x-should-retry`, never retries an image whose outcome is unknown, and
-    has a per-provider circuit breaker.
+    honours `retry-after` and `x-should-retry`, never itself retries an image whose outcome is
+    unknown, and has a per-provider circuit breaker. A background creative job can still be
+    re-queued after such a failure (up to 3 attempts), so the same image may be requested and
+    charged for again; each attempt is reserved and settled to the ledger, and the reserve is an
+    estimate, not a guaranteed maximum.
   - `usage_events` records every attempt with its outcome, units, estimated cost, price source and
     the provider's request ID, attributed through an async context.
   - The job engine retries only transient failures.

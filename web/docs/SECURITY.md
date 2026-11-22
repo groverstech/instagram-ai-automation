@@ -132,7 +132,11 @@ An append-only `audit_events` table records:
   - per-user and per-organisation AI rate limits and concurrency leases;
   - the plan's monthly run limit;
   - an optional monthly spending limit;
-  - images with an unknown outcome are never retried automatically.
+  - the AI executor never retries an image request whose outcome is unknown (e.g. a timeout); a
+    background creative job can still be re-queued after such a failure (up to 3 attempts), so the
+    same image may be requested and charged for again. Each attempt is reserved before it is sent
+    and its reported usage settled to the ledger; the reserve is an estimate, not a guaranteed
+    maximum, and the settled cost can exceed it.
 - **Prompt injection:** brand material is passed to models as labelled data, never as instructions
   (existing agent prompts).
 - **Real-provider validation is pending** (FOLLOW_UPS F10).
