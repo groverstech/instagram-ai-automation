@@ -1,7 +1,9 @@
 # BrandPilot: production and Phase 4 plan
 
-**Status:** planning only. Nothing in this folder is implemented yet. Phase 4 work starts only
-after explicit approval, and each major deliverable ships as its own pull request.
+**Status:** approved design reference (product direction approved 8 Nov 2026). These documents
+describe the plan; they don't track progress. **What's done and what remains is in
+[LAUNCH_READINESS.md](../LAUNCH_READINESS.md).** Each major deliverable ships as its own pull
+request, and decisions recorded in merged PRs supersede details here.
 
 **Start here:** [Phase 4 plan: Production Readiness & Platform Foundation](PHASE4_PLAN.md). It is
 the detailed plan awaiting approval: six workstreams in 10 PRs, each with architecture,
