@@ -1,5 +1,6 @@
 import { tick } from "@/server/jobs/handlers";
 import { authenticateCron } from "@/server/cron-auth";
+import { captureError } from "@/server/monitoring";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,6 +18,13 @@ export async function GET(req: Request) {
     const body = auth.status === 503 ? "Cron is not configured" : auth.status === 429 ? "Too many failed attempts" : "Unauthorized";
     return new Response(body, { status: auth.status, headers: { ...NO_STORE, ...(auth.retryAfter ? { "retry-after": String(auth.retryAfter) } : {}) } });
   }
-  const results = await tick();
-  return Response.json({ ran: results.length, results }, { headers: NO_STORE });
+  try {
+    const results = await tick();
+    return Response.json({ ran: results.length, results }, { headers: NO_STORE });
+  } catch (e) {
+    // The scheduler sees the failure (500) and the server log has the details under the reference;
+    // database and system messages never go back in the response.
+    const reference = captureError(e, { where: "cron.tick" });
+    return Response.json({ error: "Scheduler tick failed", reference }, { status: 500, headers: NO_STORE });
+  }
 }
