@@ -82,9 +82,33 @@ brand scope, members' sign-ins only from joining, refusals and their audit recor
 
 HSTS (2 years), `X-Content-Type-Options: nosniff`, `Referrer-Policy:
 strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, `Permissions-Policy` (camera,
-microphone, geolocation, payment, USB off), `Cross-Origin-Opener-Policy: same-origin`, and a CSP
-of `frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'`. No
+microphone, geolocation, payment, USB off) and `Cross-Origin-Opener-Policy: same-origin`. No
 `X-Powered-By`.
+
+**Content Security Policy (F2).** Every page and API response carries a strict, per-request policy
+from `src/middleware.ts`:
+
+```
+default-src 'self'; script-src 'self' 'nonce-<per request>' 'strict-dynamic';
+style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:;
+connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; manifest-src 'self';
+frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'
+```
+
+- **Scripts:** the nonce is 128 random bits, new on every request. Next.js reads the policy from the
+  forwarded request and puts the nonce on its own scripts; `'strict-dynamic'` lets those load the
+  app's chunks. There's **no `'unsafe-inline'` for scripts**, so injected markup can't run code.
+  `'unsafe-eval'` is added in development only, for Next's dev tooling.
+- **Rendering:** every page renders per request (`dynamic = "force-dynamic"` in the root layout), so
+  every page gets a nonce. A prerendered page would have none and be blocked.
+- **Styles** keep `'unsafe-inline'`: the app sets inline style attributes (brand colours, layout).
+  Styles can't run scripts, and with `default-src 'self'` and `connect-src 'self'` they can't
+  exfiltrate data either.
+- **Images:** `img-src https:` because connected social accounts' avatars come from the platforms'
+  CDNs.
+- **Static files** (`/_next/static`, icons, manifest) are outside the middleware and keep the minimal
+  policy from `next.config.mjs` (`frame-ancestors 'none'; base-uri 'self'; form-action 'self';
+  object-src 'none'`). Browsers enforce every policy sent, so pages get both.
 
 ## Audit log
 
@@ -194,7 +218,7 @@ export) are recorded in [FOLLOW_UPS.md](FOLLOW_UPS.md). **None is implemented ye
 | Item | Status |
 |---|---|
 | Sign-up reveals whether an email is registered ("account already exists") | Accepted for now (sign-up is rate-limited per IP). The fix needs email verification, which needs an email provider. |
-| CSP `script-src` | Not set: Next's inline scripts need per-request nonces. Follow-up. |
+| CSP `script-src` | Strict, with per-request nonces (F2), see HTTP headers. `style-src` keeps `'unsafe-inline'` for inline style attributes. |
 | Multi-factor authentication | **Not implemented: a known security enhancement.** Recommended stage: its own PR after PR 4.6 (which brings the email provider needed for recovery and security notifications) and **before the first external agency or paying customer is onboarded**, so before the PR 4.9 penetration test. Scope: TOTP with hashed one-time recovery codes; required for owners and admins and optional for others; a fresh second factor for sensitive actions (role and member changes, billing, social connections); "sign out everywhere"; every MFA event in the audit log. |
 | "Sign out everywhere" and session revocation on password change | No password-change flow exists yet; add both together. |
 | Row-Level Security | Defence in depth planned (PR 4.9 pilot). Application-level isolation is tested. |

@@ -27,12 +27,49 @@ function requestId(req: NextRequest) {
   return given && /^[\w.-]{8,128}$/.test(given) ? given : crypto.randomUUID();
 }
 
-/** Continue to the app with the request ID on both the forwarded request and the response. */
+/**
+ * Strict Content Security Policy (FOLLOW_UPS F2). Scripts run only with this request's nonce:
+ * Next.js reads the policy from the forwarded request header and adds the nonce to its own
+ * scripts; 'strict-dynamic' lets those load the app's chunks. No 'unsafe-inline' for scripts.
+ * 'unsafe-eval' only in development (Next's dev tooling needs it). Styles keep 'unsafe-inline'
+ * because the app uses inline style attributes (brand colours, layout), which can't run code.
+ */
+export function contentSecurityPolicy(nonce: string, dev = process.env.NODE_ENV !== "production") {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${dev ? " 'unsafe-eval'" : ""}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "font-src 'self' data:",
+    "connect-src 'self'",
+    "media-src 'self' blob:",
+    "worker-src 'self' blob:",
+    "manifest-src 'self'",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+  ].join("; ");
+}
+
+/** A fresh, unguessable nonce per request (128 bits, base64). */
+function newNonce() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes));
+}
+
+/** Continue to the app with the request ID and the CSP (with its nonce) on the forwarded request and the response. */
 function next(req: NextRequest, id: string) {
+  const nonce = newNonce();
+  const policy = contentSecurityPolicy(nonce);
   const headers = new Headers(req.headers);
   headers.set("x-request-id", id);
+  headers.set("x-nonce", nonce);
+  headers.set("content-security-policy", policy);
   const res = NextResponse.next({ request: { headers } });
   res.headers.set("x-request-id", id);
+  res.headers.set("content-security-policy", policy);
   return res;
 }
 

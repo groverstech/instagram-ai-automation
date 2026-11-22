@@ -11,7 +11,7 @@ const { enforce, withAiSlot, RateLimitError, RULES, CONCURRENCY } = await import
 const { checkUploadForm, MAX_FILES_PER_UPLOAD } = await import("./assets");
 const { redact } = await import("./log");
 const { safe } = await import("./action");
-const { middleware, config: mwConfig } = await import("../middleware");
+const { middleware, config: mwConfig, contentSecurityPolicy } = await import("../middleware");
 
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
 const pub = (address = "93.184.215.14") => async () => [{ address, family: 4 as const }];
@@ -293,6 +293,25 @@ describe("edge middleware", () => {
     expect(middleware(req("/brand", "POST", "198.51.100.9")).status).not.toBe(429);
     expect(middleware(req("/brand", "GET")).status).not.toBe(429);
     expect(middleware(req("/api/billing/webhook")).status).not.toBe(429);
+  });
+
+  it("sends a strict, per-request-nonce Content Security Policy (F2) and passes the nonce to Next.js", () => {
+    const a = middleware(req("/dashboard", "GET", "192.0.2.10"));
+    const b = middleware(req("/dashboard", "GET", "192.0.2.10"));
+    const policy = a.headers.get("content-security-policy")!;
+    const nonce = /'nonce-([A-Za-z0-9+/=]+)'/.exec(policy)![1];
+    expect(Buffer.from(nonce, "base64")).toHaveLength(16); // 128 bits
+    expect(b.headers.get("content-security-policy")).not.toContain(nonce); // fresh per request
+    const script = policy.split("; ").find((d) => d.startsWith("script-src"))!;
+    expect(script).toBe(`script-src 'self' 'nonce-${nonce}' 'strict-dynamic' 'unsafe-eval'`); // tests run in development mode
+    expect(script).not.toContain("unsafe-inline");
+    for (const d of ["default-src 'self'", "object-src 'none'", "base-uri 'self'", "frame-ancestors 'none'", "form-action 'self'", "connect-src 'self'"]) expect(policy).toContain(d);
+    // Next.js reads the policy from the forwarded request headers to put the nonce on its scripts.
+    expect(a.headers.get("x-middleware-request-content-security-policy")).toBe(policy);
+    expect(a.headers.get("x-middleware-request-x-nonce")).toBe(nonce);
+    // Production: no 'unsafe-eval'.
+    expect(contentSecurityPolicy("abc", false)).toContain("script-src 'self' 'nonce-abc' 'strict-dynamic'; ");
+    expect(contentSecurityPolicy("abc", false)).not.toContain("unsafe-eval");
   });
 
   it("never runs on static, icon, manifest or asset-link paths (PWA/TWA)", () => {

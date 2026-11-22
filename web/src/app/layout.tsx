@@ -19,6 +19,10 @@ export const metadata: Metadata = {
   description: "A brand-aware AI social media marketing manager: strategy, creatives, copy, campaigns, calendar and analytics.",
 };
 
+// Every page renders per request, so Next.js can put this request's CSP nonce on its scripts
+// (src/middleware.ts). A statically prerendered page would carry no nonce and be blocked.
+export const dynamic = "force-dynamic";
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${inter.variable} ${display.variable}`}>
