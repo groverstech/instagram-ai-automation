@@ -266,23 +266,81 @@ describe("the assistant's tool-use loop (formerly a direct client call)", () => 
 });
 
 describe("concurrency and retries", () => {
+  /**
+   * Starts `n` concurrent `ask()`s while the provider holds every request it receives. Resolves once
+   * each request has either reached the provider or been refused, so every cap check has run while
+   * the sent requests' full reserves still count. Only then may the test release the provider: if a
+   * held request settled earlier, its reserve would drop to its (much smaller) actual cost and a
+   * later request could legitimately fit, which a fixed delay can't rule out on a loaded machine.
+   * No timer decides the outcome; a 10 s guard fails the test instead of letting it hang.
+   */
+  async function concurrentAsks(n: number) {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let arrived = 0;
+    let allArrived!: () => void;
+    const barrier = new Promise<void>((r) => (allArrived = r));
+    const arrive = () => {
+      if (++arrived === n) allArrived();
+    };
+    handler = async () => {
+      arrive(); // reached the provider: its pending reserve is committed
+      await gate;
+      return ok();
+    };
+    const all = Array.from({ length: n }, () =>
+      outcome(ask()).then((r) => {
+        if (r !== "ok") arrive(); // refused before sending (a sent request only finishes after release)
+        return r;
+      }),
+    );
+    let guard: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      barrier,
+      new Promise((_, reject) => (guard = setTimeout(() => reject(new Error(`only ${arrived} of ${n} requests reached the cap check`)), 10_000))),
+    ]).finally(() => clearTimeout(guard));
+    return { release, all };
+  }
+
   it("concurrent requests: only those whose worst cases fit under the cap are sent", async () => {
     const since = new Date();
     process.env.AI_SPEND_CAP_USD = String(cappedWorst * 1.5); // room for one worst case, not two
     process.env.AI_SPEND_CAP_SINCE = since.toISOString();
-    let release!: () => void;
-    const gate = new Promise<void>((r) => (release = r));
-    handler = async () => {
-      await gate; // hold the first request in flight while the others try
-      return ok();
-    };
-    const all = Array.from({ length: 5 }, () => outcome(ask()));
-    await new Promise((r) => setTimeout(r, 50));
+    const { release, all } = await concurrentAsks(5);
+    // Every request has been decided while the sent one is still in flight, holding its full reserve.
+    expect(networkCalls).toBe(1);
+    const held = await spend.committedSpendUsd(since);
+    expect(held.pendingAttempts).toBe(1);
+    expect(held.usd).toBeCloseTo(cappedWorst, 9);
     release();
     const results = await Promise.all(all);
     expect(results.filter((r) => r === "ok")).toHaveLength(1);
     expect(results.filter((r) => r !== "ok").every((e) => classify(e).kind === "spend_cap")).toBe(true);
     expect(networkCalls).toBe(1);
+    expect((await spend.committedSpendUsd(since)).pendingAttempts).toBe(0);
+    const rows = await rowsSince(since);
+    expect(rows.filter((r) => r.outcome === "success")).toHaveLength(1);
+    expect(rows.filter((r) => r.outcome === "blocked" && r.errorKind === "spend_cap" && r.reserveUsd === null)).toHaveLength(4);
+  });
+
+  it("concurrent requests: as many are sent as their worst cases fit (two of five), the rest refused", async () => {
+    const since = new Date();
+    process.env.AI_SPEND_CAP_USD = String(cappedWorst * 2.5); // room for two worst cases, not three
+    process.env.AI_SPEND_CAP_SINCE = since.toISOString();
+    const { release, all } = await concurrentAsks(5);
+    expect(networkCalls).toBe(2);
+    const held = await spend.committedSpendUsd(since);
+    expect(held.pendingAttempts).toBe(2);
+    expect(held.usd).toBeCloseTo(cappedWorst * 2, 9);
+    expect(held.usd).toBeLessThanOrEqual(cappedWorst * 2.5);
+    release();
+    const results = await Promise.all(all);
+    expect(results.filter((r) => r === "ok")).toHaveLength(2);
+    expect(results.filter((r) => r !== "ok").every((e) => classify(e).kind === "spend_cap")).toBe(true);
+    expect(networkCalls).toBe(2);
+    const rows = await rowsSince(since);
+    expect(rows.filter((r) => r.outcome === "success")).toHaveLength(2);
+    expect(rows.filter((r) => r.outcome === "blocked" && r.errorKind === "spend_cap")).toHaveLength(3);
     expect((await spend.committedSpendUsd(since)).pendingAttempts).toBe(0);
   });
 
