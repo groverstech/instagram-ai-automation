@@ -59,7 +59,7 @@ production-grade deployment, with the security, data and operations gates below 
 | S4 | Rate limits, quotas and spend caps enforced server-side | **Partial** | Rate limits, plan run quota, fail-closed AI ledger and deployment-wide cap (PR 4.1). Missing: organisation and brand limits, kill switch and tripwire (F12) | Code |
 | S5 | Sign-up doesn't reveal registered emails (F1) | **Not started** | Needs the email provider (O3) | Owner, then code |
 | S6 | Strict Content Security Policy (F2) | **In progress** | PR #16: per-request nonce, `script-src 'self' 'nonce-…' 'strict-dynamic'`, no `unsafe-inline`; every script carries the nonce, no violations, full regression passes | Code |
-| S7 | MFA for owners and admins (F3) | **In progress** | PR #17 (F3a): TOTP with recovery codes, required for owners and admins in staging and production. F3b (a fresh second factor for sensitive actions, sign out everywhere) next | Code |
+| S7 | MFA for owners and admins (F3) | **In review** | #17 (F3a): TOTP with recovery codes, required for owners and admins in staging and production. #18 (F3b): a fresh second factor (15 minutes) for member, billing, social-connection and credit-cap changes; sign out everywhere else. Security notification emails wait for the email provider | Code |
 | S8 | Row-level security pilot and independent isolation check (F8) | **Not started** | RLS pilot in PR 4.9; independent review | Code, External |
 | S9 | Penetration test with findings fixed or accepted (F9) | **Not started** | After the beta build is feature-complete | Owner, External |
 | S10 | Egress firewall and metadata protection (F7) | **Not started** | With the hosting platform | Owner |
@@ -93,7 +93,7 @@ production-grade deployment, with the security, data and operations gates below 
 | A1 | Real-provider validation with archived `test:live` report (F10) | **Owner** | Needs keys in the validation environment and approval of the paid run (USD 10 budget) | Owner |
 | A2 | Estimated costs reconciled with provider exports within 5% | **Owner** | After A1; tooling exists (`npm run ai:billing -- reconcile`); provider data supports per-model and per-day comparison only | Owner |
 | A3 | Demo mode impossible in production | **Done** | Config check and tests (PR 4.0, 4.1) | — |
-| A4 | Organisation and brand AI limits, alerts, kill switch (F12) | **Not started** | Limits and alerts with PR 4.5; kill switch and tripwire as a separate PR (§4) | Code |
+| A4 | Organisation and brand AI limits, alerts, kill switch (F12) | **In progress** | #19: organisation and brand monthly credit caps with alerts at 70, 90 and 100% (shadow: alerted, not enforced). Kill switch and tripwire next (F12) | Code |
 
 ### Operations
 
@@ -115,7 +115,7 @@ production-grade deployment, with the security, data and operations gates below 
 | L2 | Platform terms reviewed | **Owner** | — | Owner |
 | R1 | Human approval before every publish | **Done** | `schedulePost` and `publishNow` refuse unapproved posts; only admins schedule (`src/app/actions/posts.ts`) | — |
 | R2 | Emergency pause of all publishing for a brand | **In progress** | PR #15: pause (editors and above) cancels queued publishes and blocks every publishing path; resume (admins) re-queues future posts and returns missed ones to approved; tests and browser checks pass | Code |
-| R3 | Plans and limits configurable, credits in shadow mode (plan defect D5) | **Not started** | PR 4.5 | Code |
+| R3 | Plans and limits configurable, credits in shadow mode (plan defect D5) | **In review** | #19: plans table (seeded from today's values), credits from the usage ledger, `npm run credits`. Enforcement is PR 4.6 after one shadow period | Code |
 
 ## 4. Work queue
 
@@ -127,9 +127,9 @@ started without waiting; each item is its own PR.
 | 1 | **PR 4.3 Platform readiness**, in three stacked PRs: **4.3a** (#12) legal pages, Meta callbacks, honest capabilities, JPEG media; **4.3b** (#13) self-service deletion; **4.3c** (#14) Meta submission pack and reviewer account | P1, P2, P3, P7, D3 | Legal text before any submission; the `business_management` decision | All three in review |
 | 2 | Emergency pause | R2 | — | In review (#15) |
 | 3 | Strict CSP (F2) | S6 | — | In review (#16) |
-| 4 | MFA (F3) | S7 | — | F3a in review (#17); F3b next |
-| 5 | PR 4.5 Configurable plans and credits, shadow mode; organisation and brand AI limits and alerts | R3, A4 (part) | Commercial inputs can come later: everything is configuration | Queued |
-| 6 | AI kill switch and tripwire (F12) | A4 | — | Queued |
+| 4 | MFA (F3) | S7 | — | In review (#17 F3a, #18 F3b) |
+| 5 | PR 4.5 Configurable plans and credits, shadow mode; organisation and brand AI limits and alerts | R3, A4 (part) | Commercial inputs can come later: everything is configuration | In review (#19) |
+| 6 | AI kill switch and tripwire (F12) | A4 | — | Next |
 | 7 | Audit-log retention and export (F4), tenant export | D4, D5 | — | Queued |
 | 8 | PR 4.9 parts: RLS pilot, `APP_SECRET` rotation procedure | S8, S3 | — | Queued |
 | — | PR 4.2 R2 storage and CDN | D2, P3, O6 | **Authorisation**, Cloudflare account | Blocked: owner |
@@ -164,3 +164,4 @@ Each session appends one line: date, what was merged or opened, gates changed, n
 | 22 Nov 2026 | Opened #15 (emergency pause, R2; stacked on #14 for migration numbering). 378/378 tests; regression 19/16/10/20. Next: strict CSP (F2, S6). |
 | 22 Nov 2026 | Opened #16 (strict CSP, F2; from `main`). 349/349 tests; regression 19/16/10/20 under the policy. Next: MFA (F3, S7). |
 | 22 Nov 2026 | Opened #17 (MFA F3a; stacked on #15). 386/386 tests; regression 19/16/10/20; browser checks in optional and required modes. Recorded O7 (Next.js postcss advisory). Next: F3b, then PR 4.5 (credits shadow mode). |
+| 22 Nov 2026 | Opened #18 (MFA F3b; stacked on #17): 391/391 tests, CI green (45065217077), browser check 9/9, regression 19/16/10/20. Opened #19 (PR 4.5 credits shadow mode; stacked on #18): 400/400 tests, browser check 6/6, regression 19/16/10/20. Next: F12 (AI kill switch and tripwire). |
