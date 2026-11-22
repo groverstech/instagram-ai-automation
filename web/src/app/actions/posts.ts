@@ -1,10 +1,13 @@
 "use server";
 import { audit } from "@/server/audit";
+import { assertNotPaused } from "@/server/publishing-paused";
 import { revalidatePath } from "next/cache";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/server/db/client";
-import { requireBrand } from "@/server/auth/guard";
+import { AccessError, requireBrand } from "@/server/auth/guard";
+import { getSession } from "@/server/auth/session";
+import { pausePublishingFor, resumePublishingFor } from "@/server/publishing-pause";
 import { safe } from "@/server/action";
 import { approvePost, publishPost, syncMetrics } from "@/server/social/service";
 import { enqueue, cancelJobs } from "@/server/jobs/queue";
@@ -68,7 +71,7 @@ export async function updatePost(brandId: string, postId: string, patch: z.infer
 
 export async function movePost(brandId: string, postId: string, isoDate: string) {
   return safe(async () => {
-    await requireBrand(brandId, "editor");
+    const { brand } = await requireBrand(brandId, "editor");
     const p = await ownPost(brandId, postId);
     if (["publishing", "published"].includes(p.status)) throw new Error("Published posts can't be moved.");
     const target = new Date(isoDate);
@@ -78,7 +81,8 @@ export async function movePost(brandId: string, postId: string, isoDate: string)
     await db.update(schema.posts).set({ scheduledAt: target }).where(eq(schema.posts.id, postId));
     if (p.status === "scheduled") {
       await cancelJobs("publish_post", (j) => j.postId === postId);
-      await enqueue("publish_post", { postId }, target);
+      // While publishing is paused, resuming re-queues scheduled posts (publishing-pause.ts).
+      if (!brand.publishingPausedAt) await enqueue("publish_post", { postId }, target);
     }
     refresh();
   });
@@ -119,7 +123,8 @@ export async function rejectPost(brandId: string, postId: string, reason: string
 /** Human checkpoint: only admins schedule, only approved posts, only to a connected account. */
 export async function schedulePost(brandId: string, postId: string) {
   return safe(async () => {
-    await requireBrand(brandId, "admin");
+    const { brand } = await requireBrand(brandId, "admin");
+    assertNotPaused(brand);
     const p = await ownPost(brandId, postId);
     if (p.status !== "approved") throw new Error("Approve the post before scheduling it.");
     if (!p.scheduledAt) throw new Error("Pick a date and time.");
@@ -151,7 +156,8 @@ export async function unschedulePost(brandId: string, postId: string) {
 
 export async function publishNow(brandId: string, postId: string) {
   return safe(async () => {
-    await requireBrand(brandId, "admin");
+    const { brand } = await requireBrand(brandId, "admin");
+    assertNotPaused(brand);
     const p = await ownPost(brandId, postId);
     if (!["approved", "scheduled", "failed"].includes(p.status)) throw new Error("Approve the post first.");
     if (p.status === "scheduled") await cancelJobs("publish_post", (j) => j.postId === postId);
@@ -203,4 +209,28 @@ export async function setAccountBoard(brandId: string, accountId: string, boardI
     await db.update(schema.socialAccounts).set({ meta: { ...a.meta, boardId } }).where(eq(schema.socialAccounts.id, accountId));
     revalidatePath("/accounts");
   });
+}
+
+/** Emergency pause: stop all publishing for the brand at once (editors and above). */
+export async function pausePublishing(brandId: string, reason: string) {
+  return safe(async () => {
+    const r = await pausePublishingFor(await currentSession(), brandId, reason);
+    revalidatePath("/", "layout");
+    return r;
+  });
+}
+
+/** Resume publishing (admins and owners). Missed posts go back to "approved" for rescheduling. */
+export async function resumePublishing(brandId: string) {
+  return safe(async () => {
+    const r = await resumePublishingFor(await currentSession(), brandId);
+    revalidatePath("/", "layout");
+    return r;
+  });
+}
+
+async function currentSession() {
+  const s = await getSession();
+  if (!s) throw new AccessError("Not signed in.");
+  return s;
 }

@@ -28,6 +28,8 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ m
     <CalendarView
       key={format(month, "yyyy-MM")}
       brandId={brand.id}
+      brandName={brand.name}
+      publishingPaused={Boolean(brand.publishingPausedAt)}
       role={role}
       month={format(month, "yyyy-MM")}
       platforms={brand.platforms}

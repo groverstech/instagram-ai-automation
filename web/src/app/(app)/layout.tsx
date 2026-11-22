@@ -46,6 +46,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             </span>
           </div>
         )}
+        {brand.publishingPausedAt ? (
+          <div role="status" aria-label="Publishing paused" className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-danger/20 bg-danger-soft px-6 py-2 text-[12px] text-danger md:px-10">
+            <span className="rounded-full bg-danger px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white">Publishing paused</span>
+            <span>
+              Nothing is published or scheduled for {brand.name} until an admin resumes it in the <a href="/calendar" className="underline">Content Calendar</a>.
+              {brand.publishingPauseReason ? ` Reason: ${brand.publishingPauseReason}` : ""}
+            </span>
+          </div>
+        ) : null}
         <main className="mx-auto max-w-[1280px] px-4 pb-28 pt-6 sm:px-6 md:px-10 md:pt-10">{children}</main>
       </div>
       <Toaster />

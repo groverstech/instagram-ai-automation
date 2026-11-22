@@ -10,6 +10,7 @@ import { captureError, isInternalError } from "./monitoring";
 import { UserFacingError } from "./jobs/engine";
 import { MemberError } from "./members";
 import { DeletionError } from "./deletion";
+import { PublishingPausedError } from "./publishing-paused";
 
 export type Result<T = undefined> = { ok: true; data: T } | { ok: false; error: string; status?: number; retryAfter?: number };
 
@@ -20,7 +21,7 @@ export async function safe<T>(fn: () => Promise<T>): Promise<Result<T>> {
   } catch (e) {
     if (e && typeof e === "object" && "digest" in e && String((e as { digest: string }).digest).startsWith("NEXT_REDIRECT")) throw e;
     if (e instanceof RateLimitError) return { ok: false, error: e.message, status: 429, retryAfter: e.retryAfter };
-    if (e instanceof AccessError || e instanceof QuotaError || e instanceof BillingError || e instanceof UploadError || e instanceof UserFacingError || e instanceof MemberError || e instanceof DeletionError) return { ok: false, error: e.message };
+    if (e instanceof AccessError || e instanceof QuotaError || e instanceof BillingError || e instanceof UploadError || e instanceof UserFacingError || e instanceof MemberError || e instanceof DeletionError || e instanceof PublishingPausedError) return { ok: false, error: e.message };
     if (e && typeof e === "object" && (e as { name?: string }).name === "ZodError") {
       const issues = (e as { issues?: { path: (string | number)[]; message: string }[] }).issues ?? [];
       return { ok: false, error: `Please check your input: ${issues.slice(0, 3).map((i) => `${i.path.join(".") || "value"} — ${i.message}`).join("; ")}` };
