@@ -58,7 +58,7 @@ production-grade deployment, with the security, data and operations gates below 
 | S3 | OAuth tokens encrypted at rest; key rotation documented | **Partial** | AES-256-GCM in place. Rotating `APP_SECRET` today invalidates tokens (DEPLOYMENT §6), and no procedure without reconnects exists. Next: document the procedure (or add key versioning) in PR 4.9 | Code |
 | S4 | Rate limits, quotas and spend caps enforced server-side | **Partial** | Rate limits, plan run quota, fail-closed AI ledger and deployment-wide cap (PR 4.1). Missing: organisation and brand limits, kill switch and tripwire (F12) | Code |
 | S5 | Sign-up doesn't reveal registered emails (F1) | **Not started** | Needs the email provider (O3) | Owner, then code |
-| S6 | Strict Content Security Policy (F2) | **Not started** | Planned security PR (§4) | Code |
+| S6 | Strict Content Security Policy (F2) | **In progress** | PR #16: per-request nonce, `script-src 'self' 'nonce-…' 'strict-dynamic'`, no `unsafe-inline`; every script carries the nonce, no violations, full regression passes | Code |
 | S7 | MFA for owners and admins (F3) | **Not started** | Required "before the first external agency or paying customer". Planned (§4) | Code |
 | S8 | Row-level security pilot and independent isolation check (F8) | **Not started** | RLS pilot in PR 4.9; independent review | Code, External |
 | S9 | Penetration test with findings fixed or accepted (F9) | **Not started** | After the beta build is feature-complete | Owner, External |
@@ -125,7 +125,7 @@ started without waiting; each item is its own PR.
 |---|---|---|---|---|
 | 1 | **PR 4.3 Platform readiness**, in three stacked PRs: **4.3a** (#12) legal pages, Meta callbacks, honest capabilities, JPEG media; **4.3b** (#13) self-service deletion; **4.3c** (#14) Meta submission pack and reviewer account | P1, P2, P3, P7, D3 | Legal text before any submission; the `business_management` decision | All three in review |
 | 2 | Emergency pause | R2 | — | In review (#15) |
-| 3 | Strict CSP (F2) | S6 | — | Queued |
+| 3 | Strict CSP (F2) | S6 | — | In review (#16) |
 | 4 | MFA (F3) | S7 | — | Queued |
 | 5 | PR 4.5 Configurable plans and credits, shadow mode; organisation and brand AI limits and alerts | R3, A4 (part) | Commercial inputs can come later: everything is configuration | Queued |
 | 6 | AI kill switch and tripwire (F12) | A4 | — | Queued |
@@ -161,3 +161,4 @@ Each session appends one line: date, what was merged or opened, gates changed, n
 | 22 Nov 2026 | Opened #12 (4.3a: legal pages, Meta callbacks, capabilities, JPEG; CI green) and #13 (4.3b: self-service deletion, stacked on #12). Evidence: 373/373 tests on Postgres 16; browser regression 19/16/10/20 passing. Next: 4.3c (reviewer demo workspace, submission packs), then emergency pause (R2). |
 | 22 Nov 2026 | Opened #14 (4.3c: Meta submission pack, `reviewer:setup`). Finding: the Meta review and single-image beta publishing don't depend on R2 for a single-instance beta. Next: emergency pause (R2), then strict CSP (F2). |
 | 22 Nov 2026 | Opened #15 (emergency pause, R2; stacked on #14 for migration numbering). 378/378 tests; regression 19/16/10/20. Next: strict CSP (F2, S6). |
+| 22 Nov 2026 | Opened #16 (strict CSP, F2; from `main`). 349/349 tests; regression 19/16/10/20 under the policy. Next: MFA (F3, S7). |
