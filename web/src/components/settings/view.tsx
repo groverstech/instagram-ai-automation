@@ -9,7 +9,8 @@ import { changeRole, inviteMember, removeMember, setMemberBrands, updateWorkspac
 import { openBillingPortal, startCheckout } from "@/app/actions/billing";
 import { Badge, Button, Card, CardBody, CardHeader, Field, Input, Modal, Notice, PageHeader, Select } from "@/components/ui";
 import { useRun } from "@/components/hooks";
-import { PLANS, type PlanId } from "@/lib/plans";
+import type { Plan } from "@/server/credits";
+import { CreditsCard, type CreditView } from "./credits-card";
 import { ROLE_DESCRIPTIONS, roleAtLeast, type Role } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
@@ -28,6 +29,11 @@ export function SettingsView(props: {
   brandLimit: number;
   canAddBrand: boolean;
   workspace: { id: string; name: string; type: "creator" | "business" | "agency"; plan: string };
+  /** This workspace's plan and every plan, from configuration (the plans table). */
+  plan: Plan;
+  plans: Plan[];
+  /** Settings → AI credits (owners and admins with access to every brand); null otherwise. */
+  credits?: CreditView | null;
   billing: null | {
     configured: boolean;
     prices: { growth: boolean; agency: boolean };
@@ -60,7 +66,7 @@ export function SettingsView(props: {
   const isAgency = props.workspace.type === "agency";
   const brandName = (id: string) => props.brands.find((b) => b.id === id)?.name ?? "Unknown brand";
   const { run, busy } = useRun();
-  const plan = PLANS[(props.workspace.plan as PlanId) ?? "starter"] ?? PLANS.starter;
+  const plan = props.plan;
 
   return (
     <div>
@@ -83,7 +89,7 @@ export function SettingsView(props: {
           </Card>
 
           <Card>
-            <CardHeader title="Team" description={props.usage ? `${props.usage.seats} of ${plan.seats} seats` : "Your membership"} />
+            <CardHeader title="Team" description={props.usage ? `${props.usage.seats} of ${plan.limits.seats} seats` : "Your membership"} />
             <CardBody className="space-y-4">
               {isAdmin ? (
                 <div className="flex flex-wrap gap-2">
@@ -193,12 +199,12 @@ export function SettingsView(props: {
           </Card>
           {props.usage ? (
           <Card>
-            <CardHeader title="Plan & usage" action={<Badge tone="accent">{plan.label}</Badge>} />
+            <CardHeader title="Plan & usage" action={<Badge tone="accent">{plan.name}</Badge>} />
             <CardBody className="space-y-3">
-              <Meter label="AI runs this month" used={props.usage!.aiRuns} max={plan.aiRunsPerMonth} />
-              <Meter label="Brands" used={props.usage!.brands} max={plan.brands} />
-              <Meter label="Seats" used={props.usage!.seats} max={plan.seats} />
-              <Meter label="Social accounts" used={props.usage!.socialAccounts} max={plan.socialAccounts} />
+              <Meter label="AI runs this month" used={props.usage!.aiRuns} max={plan.limits.aiRunsPerMonth} />
+              <Meter label="Brands" used={props.usage!.brands} max={plan.limits.brands} />
+              <Meter label="Seats" used={props.usage!.seats} max={plan.limits.seats} />
+              <Meter label="Social accounts" used={props.usage!.socialAccounts} max={plan.limits.socialAccounts} />
             </CardBody>
           </Card>
 
@@ -208,7 +214,8 @@ export function SettingsView(props: {
               <CardBody className="text-[13px] text-muted">You have access to {props.brands.length} brand{props.brands.length === 1 ? "" : "s"} in this workspace. Plan, billing and usage are managed by the workspace owner.</CardBody>
             </Card>
           )}
-          {props.billing ? <BillingCard workspaceId={props.workspace.id} currentPlan={props.workspace.plan} isOwner={props.role === "owner"} billing={props.billing} /> : null}
+          {props.credits ? <CreditsCard workspaceId={props.workspace.id} view={props.credits} /> : null}
+          {props.billing ? <BillingCard workspaceId={props.workspace.id} currentPlan={props.workspace.plan} plans={props.plans} isOwner={props.role === "owner"} billing={props.billing} /> : null}
 
           {props.integrations ? (
           <Card>
@@ -306,7 +313,7 @@ function Row({ k, v, ok }: { k: string; v: string; ok: boolean }) {
 
 const STATUS_TONE: Record<string, string> = { active: "success", trialing: "info", past_due: "warn", unpaid: "danger", canceled: "neutral", incomplete: "warn", incomplete_expired: "neutral", paused: "neutral" };
 
-function BillingCard({ workspaceId, currentPlan, isOwner, billing }: { workspaceId: string; currentPlan: string; isOwner: boolean; billing: NonNullable<Parameters<typeof SettingsView>[0]["billing"]> }) {
+function BillingCard({ workspaceId, currentPlan, plans, isOwner, billing }: { workspaceId: string; currentPlan: string; plans: Plan[]; isOwner: boolean; billing: NonNullable<Parameters<typeof SettingsView>[0]["billing"]> }) {
   const { run, busy } = useRun();
   const subscribed = ["active", "trialing", "past_due"].includes(billing.status ?? "");
   const go = (url: string) => {
@@ -333,13 +340,13 @@ function BillingCard({ workspaceId, currentPlan, isOwner, billing }: { workspace
         ) : null}
 
         <div className="grid grid-cols-3 gap-2">
-          {(Object.keys(PLANS) as PlanId[]).map((id) => {
+          {plans.map(({ key: id, name, priceMonthlyUsd }) => {
             const current = id === currentPlan;
             const purchasable = id !== "starter" && billing.configured && billing.prices[id as "growth" | "agency"];
             return (
               <div key={id} className={cn("flex flex-col rounded-xl border p-3 text-center", current ? "border-ink" : "border-line")}>
-                <p className="text-[12px] font-medium">{PLANS[id].label}</p>
-                <p className="text-[18px] font-semibold">${PLANS[id].price}</p>
+                <p className="text-[12px] font-medium">{name}</p>
+                <p className="text-[18px] font-semibold">${priceMonthlyUsd}</p>
                 <p className="text-[10px] text-faint">/ month</p>
                 <div className="mt-2 flex-1" />
                 {current ? (
@@ -373,6 +380,8 @@ const AUDIT_LABELS: Record<string, string> = {
   "auth.signup": "Created an account",
   "auth.logout": "Signed out",
   "auth.logout_all": "Signed out of other sessions",
+  "credits.alert": "AI credit alert",
+  "credits.cap_change": "Changed an AI credit cap",
   "auth.mfa_failed": "Wrong verification code",
   "mfa.enable": "Turned on two-step verification",
   "mfa.disable": "Turned off two-step verification",

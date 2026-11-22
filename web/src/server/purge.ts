@@ -16,7 +16,10 @@ export async function purgeBrand(brandId: string): Promise<{ filesRemoved: boole
   await cancelJobs("publish_post", (p) => postIds.has(String(p.postId)));
   await cancelJobs("sync_metrics", (p) => p.brandId === brandId);
   await db.update(schema.sessions).set({ activeBrandId: null }).where(eq(schema.sessions.activeBrandId, brandId));
-  // Everything that belongs to the brand references it with ON DELETE CASCADE.
+  // Credit caps and alerts are keyed by brand id without a foreign key ("" is the organisation).
+  await db.delete(schema.creditLimits).where(eq(schema.creditLimits.brandId, brandId));
+  await db.delete(schema.usageAlerts).where(eq(schema.usageAlerts.brandId, brandId));
+  // Everything else that belongs to the brand references it with ON DELETE CASCADE.
   await db.delete(schema.brands).where(eq(schema.brands.id, brandId));
   try {
     await storage.removePrefix(`brands/${brandId}`);

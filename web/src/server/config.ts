@@ -133,6 +133,8 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   }
   const imageProvider = norm(env.IMAGE_PROVIDER) || "openai";
   if (!["openai", "none"].includes(imageProvider)) err("IMAGE_PROVIDER", "Use `openai`, or `none` to turn AI images off.");
+  const creditsMode = norm(env.CREDITS_MODE);
+  if (creditsMode && !["shadow", "off"].includes(creditsMode)) err("CREDITS_MODE", creditsMode === "enforce" ? "Credit enforcement arrives with PR 4.6. Use `shadow` (default) or `off`." : "Use `shadow` (default) or `off`.");
   else if (imageProvider === "openai" && !set(env.OPENAI_API_KEY)) {
     warn("OPENAI_API_KEY", "Not set: AI images are unavailable (brand-photo and type-led creatives still work).");
   }

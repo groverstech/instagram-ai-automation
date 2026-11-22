@@ -2,6 +2,7 @@ import "server-only";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "./db/client";
 import { assertAiQuota } from "./quota";
+import { evaluateCreditAlerts } from "./credits";
 import { acquireAiSlot, enforce, withAiSlot } from "./ratelimit";
 import type { BrandAccess } from "./auth/guard";
 import type { PlanId } from "@/lib/plans";
@@ -15,7 +16,12 @@ export async function guardedAi<T>(access: BrandAccess, kind: "ai" | "ai_heavy",
   const workspaceId = access.brand.workspaceId;
   await assertAiQuota(access.brand.id);
   await enforce(kind, { userId, workspaceId });
-  return withAiSlot({ userId, workspaceId, plan: await planOf(workspaceId) }, kind, fn);
+  try {
+    return await withAiSlot({ userId, workspaceId, plan: await planOf(workspaceId) }, kind, fn);
+  } finally {
+    // Credits (shadow mode): alert as soon as this action's usage crosses a threshold. Never throws.
+    void evaluateCreditAlerts(workspaceId);
+  }
 }
 
 export async function planOf(workspaceId: string): Promise<PlanId> {

@@ -9,6 +9,7 @@ import { auditTrailFor } from "@/server/audit";
 import { aiOverviewFor } from "@/server/ai/overview";
 import { roleAtLeast } from "@/lib/roles";
 import { accountDeletionPlan } from "@/server/deletion";
+import { creditStatusFor } from "@/server/credit-caps";
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ billing?: string }> }) {
   const { billing } = await searchParams;
@@ -26,6 +27,10 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ b
       brandLimit={view.brandLimit}
       canAddBrand={view.canAddBrand}
       workspace={{ id: ws.id, name: ws.name, type: ws.type, plan: ws.plan }}
+      plan={view.plan}
+      plans={view.plans}
+      // AI credits: organisation-wide, so owners and admins with access to every brand only.
+      credits={!view.scoped && roleAtLeast(role, "admin") ? await creditStatusFor(session, ws.id) : null}
       // Organisation-wide data (usage across all brands, billing, infrastructure) is never sent to
       // brand-scoped client users: it would reveal brands and activity outside their access.
       billing={view.scoped ? null : {
