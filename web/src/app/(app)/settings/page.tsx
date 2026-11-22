@@ -43,6 +43,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ b
       aiOverview={!view.scoped && roleAtLeast(role, "admin") ? await aiOverviewFor(session, ws.id) : null}
       members={view.members}
       accountPlan={await accountDeletionPlan(session.user.id)}
+      mfaEnabled={Boolean(session.mfaEnabled)}
       brands={view.brands}
       integrations={view.scoped ? null : { ai: aiStatus(), image: imageStatus(), embeddings: process.env.VOYAGE_API_KEY ? "Voyage AI (voyage-3.5-lite)" : "Local hashing (set VOYAGE_API_KEY for semantic embeddings)", database: process.env.DATABASE_URL ? "PostgreSQL" : "Embedded PGlite (development)" }}
     />

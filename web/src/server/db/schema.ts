@@ -25,6 +25,15 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   name: text("name").notNull(),
   passwordHash: text("password_hash").notNull(),
+  // Multi-factor authentication (F3, src/server/auth/mfa.ts). Secrets are encrypted at rest; recovery
+  // codes are stored only as keyed hashes.
+  mfaSecretEnc: text("mfa_secret_enc"),
+  /** Set during enrolment until the first code confirms the authenticator app. */
+  mfaPendingSecretEnc: text("mfa_pending_secret_enc"),
+  mfaEnabledAt: timestamp("mfa_enabled_at", { withTimezone: true }),
+  /** The last TOTP step accepted: a code can't be used twice. */
+  mfaLastStep: integer("mfa_last_step"),
+  mfaRecoveryHashes: jsonb("mfa_recovery_hashes").$type<string[]>().notNull().default([]),
   createdAt: createdAt(),
 });
 
@@ -35,6 +44,8 @@ export const sessions = pgTable("sessions", {
     .references(() => users.id, { onDelete: "cascade" }),
   activeBrandId: text("active_brand_id"),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  /** When the second factor was verified. While the user has MFA on and this is null, the session can only complete sign-in. */
+  mfaVerifiedAt: timestamp("mfa_verified_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
 

@@ -93,6 +93,11 @@ export async function logIn(_: unknown, fd: FormData): Promise<AuthFormState> {
   }
   // Upgrade older password hashes transparently now that we know the password.
   if (needsRehash(user.passwordHash)) await db.update(schema.users).set({ passwordHash: await hashPassword(password) }).where(eq(schema.users.id, user.id));
+  if (user.mfaEnabledAt) {
+    // Second step: the session can only complete sign-in until a code is verified (auth/mfa.ts).
+    await createSession(user.id, { pendingMfa: true });
+    redirect("/login/mfa");
+  }
   await audit({ action: "auth.login", actorUserId: user.id, targetType: "user", targetId: user.id, ip });
   await createSession(user.id);
   redirect("/dashboard");

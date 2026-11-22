@@ -68,7 +68,7 @@ export function migrateOnStart(env: Env = process.env): boolean {
 }
 
 const set = (v: string | undefined) => Boolean(v && v.trim());
-const BOOL_KEYS = ["MIGRATE_ON_START", "ALLOW_LOCAL_STORAGE_IN_PRODUCTION", "AI_ALLOW_MOCK_IN_PRODUCTION", "RUN_JOBS_IN_PROCESS", "AI_SPEND_CAP_REQUIRED", "AI_SPEND_LEDGER_SINGLE_SESSION"] as const;
+const BOOL_KEYS = ["MIGRATE_ON_START", "ALLOW_LOCAL_STORAGE_IN_PRODUCTION", "AI_ALLOW_MOCK_IN_PRODUCTION", "RUN_JOBS_IN_PROCESS", "AI_SPEND_CAP_REQUIRED", "AI_SPEND_LEDGER_SINGLE_SESSION", "MFA_REQUIRED_FOR_ADMINS"] as const;
 
 /** Validate the environment. Pure (takes the env as input) so it's easy to test. */
 export function checkConfig(env: Env = process.env): ConfigProblem[] {
@@ -77,6 +77,7 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   const warn = (key: string, message: string) => out.push({ level: "warning", key, message });
   const strict = isStrict(env);
   const prod = strict || env.NODE_ENV === "production";
+  if (strict && env.MFA_REQUIRED_FOR_ADMINS?.trim().toLowerCase() === "false") warn("MFA_REQUIRED_FOR_ADMINS", "Owners and admins can sign in without two-step verification. Remove this setting so it's required (FOLLOW_UPS F3).");
 
   const isProd = deployEnv(env) === "production";
   if (set(env.DEPLOY_ENV) && !knownEnv(norm(env.DEPLOY_ENV))) {
