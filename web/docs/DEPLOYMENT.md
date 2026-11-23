@@ -230,6 +230,8 @@ Full reference, including routing, retries, prices and the usage ledger:
 | `OPENAI_IMAGE_PRICE_*_PER_MTOK` | Contract rates per 1M tokens. Unset: OpenAI list prices from the catalog. Rates can also be changed without a redeploy in the `ai_prices` table ([AI_PROVIDERS.md](AI_PROVIDERS.md#how-costs-are-calculated)). `IMAGE_PRICE_USD*` is retired and ignored. |
 | `AI_TEXT_TIMEOUT_MS`, `AI_IMAGE_TIMEOUT_MS`, `AI_MAX_ATTEMPTS`, `AI_IMAGE_MAX_ATTEMPTS`, `AI_RETRY_BASE_MS`, `AI_RETRY_MAX_WAIT_MS`, `AI_CIRCUIT_THRESHOLD`, `AI_CIRCUIT_OPEN_MS` | Timeouts, retries and the circuit breaker (defaults in AI_PROVIDERS.md) |
 | `AI_MONTHLY_COST_LIMIT_USD`, `AI_MONTHLY_COST_LIMIT_USD_<PLAN>` | Optional monthly AI spending limit per organisation, from estimated cost; unset means none |
+| `AI_STOP` | Kill switch from the environment: `all`, `anthropic`, `openai`, `model:<id>` (comma-separated). Normally use `npm run ai:controls` instead, which needs no restart |
+| `AI_TRIPWIRE_USD`, `AI_TRIPWIRE_WINDOW_MIN` | Spending tripwire: estimated spend per provider in the window (default 15 minutes) above which that provider is stopped until a person resumes it. Unset means no tripwire; staging and production warn |
 | `CREDITS_MODE` | `shadow` (default) or `off`. Plans and credits are configured with `npm run credits` (docs/CREDITS.md); credits are not enforced until PR 4.6 |
 | `LIVE_REPORT_DIR` | Where `npm run test:live` writes its report; Settings shows the result |
 | `CREATIVE_BRAND_CHECK` | `off` skips the Claude vision review (deterministic checks still run) |
@@ -331,6 +333,20 @@ For large deployments, also put a CDN or WAF rate limit in front.
   the outcome the new owner records (`jobs.claim_lost`). A failed tick is logged
   (`jobs.tick_failed`, `worker.tick_failed`) and the cron route answers 500 with a reference.
 
+### Stopping AI spend (kill switch and tripwire)
+
+- **Stop:** `npm run ai:controls -- stop <all|anthropic|openai|model:<id>> --reason "<why>" --by "<you>"`.
+  - The next request in every process is refused before it's sent. Requests already in flight finish.
+  - Users see "AI features are paused by the BrandPilot team". The reason stays internal.
+  - The refused attempts appear in the usage ledger as `blocked` / `stopped`.
+- **Status:** `npm run ai:controls -- status`.
+- **Resume:** `npm run ai:controls -- resume <scope> --by "<you>"`. Both stop and resume are recorded as `ai.stop` / `ai.resume`.
+- **Tripwire:**
+  - It trips when a provider's estimated spend in the last `AI_TRIPWIRE_WINDOW_MIN` minutes would pass `AI_TRIPWIRE_USD`.
+  - It stops that provider with a `tripwire` stop and reports `AI spending tripwire: …` to the error monitor. Page on it.
+  - It never clears itself. Look at `npm run ai:billing -- log --since <window start>`, fix the cause, then resume.
+- **Without the database:** set `AI_STOP=all` and restart. An unreadable `AI_STOP` refuses every request.
+
 ### Logging, errors and monitoring
 
 - **Logs:** one JSON object per line on stdout and stderr (`ts`, `level`, `event`, fields). Ship
@@ -410,7 +426,8 @@ None is implemented yet.
 - [ ] Egress firewall blocks private ranges and metadata endpoints.
 - [ ] `TRUSTED_PROXY_HOPS` / `CLIENT_IP_HEADER` match the real proxy chain (check one login's audit
       entry is attributed correctly).
-- [ ] Logs shipped; the alerts in §9 configured; Anthropic and Stripe spend alerts set.
+- [ ] Logs shipped; the alerts in §9 configured (including the `AI spending tripwire` error); Anthropic and Stripe spend alerts set.
+- [ ] `AI_TRIPWIRE_USD` set well above normal spend per window; `npm run ai:controls -- stop all` and `resume all` rehearsed once.
 - [ ] Real-provider validation run (`npm run test:live` plus the manual checks) with production
       keys.
 - [ ] One live brand analysed, and one strategy generated, end to end with real keys.

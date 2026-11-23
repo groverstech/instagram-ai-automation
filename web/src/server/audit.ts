@@ -46,6 +46,8 @@ export type AuditAction =
   | "credits.cap_change"
   | "config.plan_update"
   | "config.credits_update"
+  | "ai.stop"
+  | "ai.resume"
   | "creative.approve_override"
   | "access.denied"
   | "audit.view";

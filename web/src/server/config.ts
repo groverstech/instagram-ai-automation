@@ -133,6 +133,13 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   }
   const imageProvider = norm(env.IMAGE_PROVIDER) || "openai";
   if (!["openai", "none"].includes(imageProvider)) err("IMAGE_PROVIDER", "Use `openai`, or `none` to turn AI images off.");
+  // AI kill switch and tripwire (ai/controls.ts).
+  for (const sc of (env.AI_STOP ?? "").split(",").map((x) => x.trim()).filter(Boolean)) {
+    if (!/^(all|anthropic|openai|provider:(anthropic|openai)|model:[\w.\-:/]{1,100})$/.test(sc)) err("AI_STOP", `"${sc}" isn't a scope. Use all, anthropic, openai or model:<id>. While it's set, every AI request is refused.`);
+  }
+  if ((env.AI_TRIPWIRE_USD ?? "").trim() !== "" && !(Number(env.AI_TRIPWIRE_USD) > 0)) err("AI_TRIPWIRE_USD", "Use a dollar amount above 0, or leave it unset for no tripwire.");
+  if ((env.AI_TRIPWIRE_WINDOW_MIN ?? "").trim() !== "" && !(Number(env.AI_TRIPWIRE_WINDOW_MIN) >= 1 && Number(env.AI_TRIPWIRE_WINDOW_MIN) <= 1440)) err("AI_TRIPWIRE_WINDOW_MIN", "Use a number of minutes from 1 to 1440.");
+  if (strict && (env.AI_TRIPWIRE_USD ?? "").trim() === "") warn("AI_TRIPWIRE_USD", "No AI spending tripwire: a runaway loop or abuse isn't stopped automatically. Set it well above normal spend per window (docs/AI_SPEND_CONTROLS.md).");
   const creditsMode = norm(env.CREDITS_MODE);
   if (creditsMode && !["shadow", "off"].includes(creditsMode)) err("CREDITS_MODE", creditsMode === "enforce" ? "Credit enforcement arrives with PR 4.6. Use `shadow` (default) or `off`." : "Use `shadow` (default) or `off`.");
   else if (imageProvider === "openai" && !set(env.OPENAI_API_KEY)) {
