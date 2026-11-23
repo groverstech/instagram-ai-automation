@@ -26,7 +26,7 @@ type Handler = (payload: Record<string, unknown>) => Promise<unknown>;
  * holding the lock: crash, deploy, kill). Return true to skip re-running it. Used for jobs with
  * external side effects that can't be safely repeated without checking first (publishing).
  */
-export type InterruptedHook = (payload: Record<string, unknown>) => Promise<boolean>;
+export type InterruptedHook = (payload: Record<string, unknown>) => Promise<boolean | "resolved">;
 
 /** A lock older than this means the worker holding it stopped (crash, deploy, kill). */
 export const STALE_LOCK_MS = 10 * 60 * 1000;
@@ -77,7 +77,14 @@ export async function runDueJobs(handlers: Record<string, Handler>, limit = 10, 
     const settle = async (set: Partial<typeof schema.jobs.$inferInsert>) => (await db.update(schema.jobs).set({ ...set, lockedAt: null }).where(held).returning({ id: schema.jobs.id })).length > 0;
     // Re-claimed from a worker that stopped mid-run: let the type decide whether re-running is safe.
     const interrupted = before === "running" ? onInterrupted[job.type] : undefined;
-    if (interrupted && (await interrupted(job.payload).catch(() => true))) {
+    const verdict = interrupted ? await interrupted(job.payload).catch(() => true as const) : false;
+    // "resolved": the hook settled the job's work itself (e.g. found the post on the platform).
+    if (verdict === "resolved") {
+      await settle({ status: "done", lastError: "Interrupted; the outcome was checked and settled." });
+      results.push({ id, ok: true });
+      continue;
+    }
+    if (verdict) {
       await settle({ status: "failed", lastError: "Interrupted; not retried automatically (outcome unknown)." });
       reportDeadJob(job, "interrupted");
       results.push({ id, ok: false, error: "interrupted" });

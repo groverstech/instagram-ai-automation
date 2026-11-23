@@ -19,7 +19,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ c
       appUrl={appUrl()}
       connected={sp.connected}
       error={sp.error}
-      accounts={accounts.map((a) => ({ id: a.id, platform: a.platform, name: a.name, handle: a.handle, avatarUrl: a.avatarUrl, status: a.status, expiresAt: a.expiresAt, createdAt: a.createdAt, boards: (a.meta.boards as { id: string; name: string }[] | undefined) ?? null, boardId: (a.meta.boardId as string | undefined) ?? null }))}
+      accounts={accounts.map((a) => ({ id: a.id, platform: a.platform, name: a.name, handle: a.handle, avatarUrl: a.avatarUrl, status: a.status, needsReconnect: a.status === "expired" || a.health.status === "needs_reconnect", expiresAt: a.expiresAt, createdAt: a.createdAt, boards: (a.meta.boards as { id: string; name: string }[] | undefined) ?? null, boardId: (a.meta.boardId as string | undefined) ?? null }))}
     />
   );
 }

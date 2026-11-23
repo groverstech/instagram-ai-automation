@@ -3,6 +3,10 @@ import { PlatformError, type SocialProvider, type TokenSet, type DiscoveredAccou
 
 const V = process.env.META_GRAPH_VERSION ?? "v23.0";
 const G = `https://graph.facebook.com/${V}`;
+
+/** Captions compared as published: platforms may trim or normalise line endings and spaces. */
+const norm = (t: string | undefined | null) => (t ?? "").replace(/\r\n?/g, "\n").replace(/[ \t]+/g, " ").trim();
+export const sameText = (a: string | undefined | null, b: string) => norm(a) !== "" && norm(a) === norm(b);
 const SCOPES = [
   "pages_show_list",
   "pages_read_engagement",
@@ -79,13 +83,21 @@ export const facebook: SocialProvider = {
       }),
     );
   },
-  async publish(account, input) {
+  async publish(account, input, ctx) {
+    ctx?.finalSend(); // one request: it either creates the post or it doesn't
     const r = await jsonFetch<{ id: string; post_id?: string }>(`${G}/${account.externalId}/photos`, {
       method: "POST",
       body: form({ url: input.imageUrl, message: input.caption, access_token: account.accessToken }),
     });
     const postId = r.post_id ?? r.id;
     return { externalId: postId, url: `https://www.facebook.com/${postId}` };
+  },
+  async findRecentPost(account, { caption, since }) {
+    const r = await jsonFetch<{ data?: { id: string; message?: string; created_time?: string; permalink_url?: string }[] }>(
+      `${G}/${account.externalId}/published_posts?${form({ fields: "id,message,created_time,permalink_url", since: String(Math.floor(since.getTime() / 1000)), limit: "50", access_token: account.accessToken })}`,
+    );
+    const hit = (r.data ?? []).find((p) => sameText(p.message, caption) && (!p.created_time || new Date(p.created_time) >= since));
+    return hit ? { externalId: hit.id, url: hit.permalink_url ?? `https://www.facebook.com/${hit.id}` } : null;
   },
   async postMetrics(account, externalId) {
     const r = await jsonFetch<{ reactions?: { summary?: { total_count?: number } }; comments?: { summary?: { total_count?: number } }; shares?: { count?: number } }>(
@@ -144,11 +156,17 @@ export const instagram: SocialProvider = {
         }),
       );
   },
-  async publish(account, input) {
-    const container = await jsonFetch<{ id: string }>(`${G}/${account.externalId}/media`, {
-      method: "POST",
-      body: form({ image_url: input.imageUrl, caption: input.caption, access_token: account.accessToken }),
-    });
+  async publish(account, input, ctx) {
+    // A container from an earlier attempt of this post is reused: it can't have been published
+    // (reconciliation checked), and creating another would leave two.
+    const resumed = typeof ctx?.resume.creationId === "string" ? (ctx.resume.creationId as string) : null;
+    const container = resumed
+      ? { id: resumed }
+      : await jsonFetch<{ id: string }>(`${G}/${account.externalId}/media`, {
+          method: "POST",
+          body: form({ image_url: input.imageUrl, caption: input.caption, access_token: account.accessToken }),
+        });
+    if (!resumed) await ctx?.progress({ creationId: container.id });
     // Wait for Instagram to fetch and process the image.
     for (let i = 0; i < 10; i++) {
       const s = await jsonFetch<{ status_code?: string; status?: string }>(`${G}/${container.id}?${form({ fields: "status_code,status", access_token: account.accessToken })}`);
@@ -156,12 +174,20 @@ export const instagram: SocialProvider = {
       if (s.status_code === "ERROR" || s.status_code === "EXPIRED") throw new PlatformError(`Instagram couldn't process the image: ${s.status ?? s.status_code}`);
       await new Promise((r) => setTimeout(r, 2000));
     }
+    ctx?.finalSend();
     const pub = await jsonFetch<{ id: string }>(`${G}/${account.externalId}/media_publish`, {
       method: "POST",
       body: form({ creation_id: container.id, access_token: account.accessToken }),
     });
     const info = await jsonFetch<{ permalink?: string }>(`${G}/${pub.id}?${form({ fields: "permalink", access_token: account.accessToken })}`).catch(() => ({ permalink: undefined }));
     return { externalId: pub.id, url: info.permalink };
+  },
+  async findRecentPost(account, { caption, since }) {
+    const r = await jsonFetch<{ data?: { id: string; caption?: string; timestamp?: string; permalink?: string }[] }>(
+      `${G}/${account.externalId}/media?${form({ fields: "id,caption,timestamp,permalink", limit: "50", access_token: account.accessToken })}`,
+    );
+    const hit = (r.data ?? []).find((m) => sameText(m.caption, caption) && (!m.timestamp || new Date(m.timestamp) >= since));
+    return hit ? { externalId: hit.id, url: hit.permalink } : null;
   },
   async postMetrics(account, externalId) {
     const base = await jsonFetch<{ like_count?: number; comments_count?: number }>(`${G}/${externalId}?${form({ fields: "like_count,comments_count", access_token: account.accessToken })}`);

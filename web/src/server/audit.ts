@@ -47,6 +47,7 @@ export type AuditAction =
   | "social.deauthorized"
   | "publishing.pause"
   | "publishing.resume"
+  | "post.publish_outcome_marked"
   | "billing.checkout_started"
   | "billing.plan_changed"
   | "credits.alert"

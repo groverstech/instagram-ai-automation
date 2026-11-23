@@ -347,8 +347,15 @@ For large deployments, also put a CDN or WAF rate limit in front.
   2–3 minutes after a crash, idempotent steps, and retries with backoff for temporary provider
   errors.
 - **Publishing:** the claim is atomic, so a post is published once even when "publish now" and the
-  scheduler race. A publish interrupted mid-flight is **not** retried automatically; the post is
-  flagged for a human to check the platform first.
+  scheduler race. Every attempt is recorded in `publish_attempts` before anything is sent (PR 4.4a).
+  An attempt that got no answer, or whose worker stopped, is **never re-sent blindly**: on Instagram
+  and Facebook the worker or "Check Instagram/Facebook" (post panel, admins) reads the account and
+  either marks the post published or confirms it's safe to publish again (a check waits 2 minutes
+  after the attempt); on other platforms a person marks the outcome. Logs: `publish.outcome_unknown`,
+  `publish.reconciled`.
+- **Token health:** when a platform rejects an account's token (or it expires), the account shows
+  "Reconnect" in Social Accounts, its publishes fail at once with that message, and metric syncs
+  skip it (`social.needs_reconnect`). Connecting the account again clears it.
 - **Jobs queue** (`jobs`: publishing, metric syncs): any number of workers, the in-process
   scheduler and the cron route can run at once; each due job is claimed by one runner with a single
   conditional update, oldest first. A failed job is retried with backoff (1 minute × attempt, 3
