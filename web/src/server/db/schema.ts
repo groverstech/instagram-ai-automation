@@ -396,6 +396,8 @@ export const posts = pgTable(
   (t) => [index("posts_brand_sched_idx").on(t.brandId, t.scheduledAt)],
 );
 
+export type AccountHealth = { status?: "ok" | "needs_reconnect"; reason?: string; at?: string };
+
 export const socialAccounts = pgTable(
   "social_accounts",
   {
@@ -423,6 +425,13 @@ export const socialAccounts = pgTable(
     platformUserId: text("platform_user_id"),
     /** Set when the platform tells us the person removed the app (deauthorise callback). */
     deauthorizedAt: timestamp("deauthorized_at", { withTimezone: true }),
+    /**
+     * Token health (PR 4.4a): set when the platform rejects the token (expired, revoked, password
+     * changed) or it expires, so the account shows "Reconnect" and publishing fails fast instead of
+     * at the scheduled time. Cleared when the account is reconnected.
+     */
+    health: jsonb("health").$type<AccountHealth>().notNull().default({}),
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex("acct_brand_platform_ext").on(t.brandId, t.platform, t.externalId), index("acct_platform_user").on(t.platform, t.platformUserId)],
@@ -879,4 +888,38 @@ export const passwordResets = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("password_resets_user_idx").on(t.userId)],
+);
+
+/**
+ * Publish-attempt ledger (PR 4.4a; docs/plan/PHASE4_PLAN.md WS3). One row per attempt to publish a
+ * post, written as `sending` **before** anything is sent to the platform and settled afterwards:
+ *   succeeded   the platform returned the post id
+ *   failed      the platform refused it (nothing was published), or a check found it isn't there
+ *   unknown     sent, but no answer (timeout, network, 5xx): it may or may not have gone out
+ *   reconciled  an unknown or interrupted attempt that a check found on the platform
+ * A post whose latest attempt is `sending` (interrupted) or `unknown` can't be published again until
+ * a check (findRecentPost) settles it, so nothing is posted twice. No tokens are stored here.
+ */
+export type PublishAttemptStatus = "sending" | "succeeded" | "failed" | "unknown" | "reconciled";
+export const publishAttempts = pgTable(
+  "publish_attempts",
+  {
+    id: id(),
+    postId: text("post_id")
+      .notNull()
+      .references(() => posts.id, { onDelete: "cascade" }),
+    socialAccountId: text("social_account_id").references(() => socialAccounts.id, { onDelete: "set null" }),
+    platform: text("platform").notNull(),
+    attempt: integer("attempt").notNull(),
+    /** `post:<postId>:<attempt>`: unique, so two runners can't both start the same attempt. */
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    status: text("status").$type<PublishAttemptStatus>().notNull().default("sending"),
+    /** Progress the platform reported (e.g. Instagram's container id), so a retry can resume. */
+    progress: jsonb("progress").$type<Record<string, unknown>>().notNull().default({}),
+    externalId: text("external_id"),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [index("publish_attempts_post").on(t.postId, t.attempt)],
 );

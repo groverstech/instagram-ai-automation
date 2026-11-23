@@ -2,10 +2,12 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { addDays, addMonths, addWeeks, endOfMonth, endOfWeek, format, isSameDay, isSameMonth, isToday, parse, startOfMonth, startOfWeek } from "date-fns";
-import { AlertTriangle, CalendarClock, Check, ChevronLeft, ChevronRight, ExternalLink, Palette, PenLine, Send, Sparkles, Trash2, Undo2, X } from "lucide-react";
+import { AlertTriangle, CalendarClock, Check, ChevronLeft, ChevronRight, ExternalLink, Palette, PenLine, SearchCheck, Send, Sparkles, Trash2, Undo2, X } from "lucide-react";
 import {
   approvePostAction,
+  checkPublishAction,
   deletePost,
+  markPublishOutcomeAction,
   movePost,
   publishNow,
   rejectPost,
@@ -24,6 +26,8 @@ import { FORMATS, OBJECTIVES, PLATFORMS, STYLES, objectiveLabel, platformColor }
 import { roleAtLeast, type Role } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
+const platformLabel = (id: string) => PLATFORMS.find((p) => p.id === id)?.label ?? id;
+
 type Post = {
   id: string;
   title: string | null;
@@ -40,6 +44,8 @@ type Post = {
   socialAccountId: string | null;
   externalUrl: string | null;
   publishError: string | null;
+  /** The last attempt may have gone out: check the platform ("auto") or ask a person ("manual"). */
+  check: "auto" | "manual" | null;
   rationale: string | null;
   brief: string;
   hooks: string[];
@@ -292,6 +298,24 @@ function PostPanel({ post, brandId, role, accounts, creatives, campaignName, onC
         {post.status === "failed" && post.publishError ? (
           <Notice tone="danger"><span className="flex gap-2"><AlertTriangle className="mt-0.5 size-4 shrink-0" />{post.publishError}</span></Notice>
         ) : null}
+        {isAdmin && post.status === "failed" && post.check === "auto" ? (
+          <Button className="w-full" variant="secondary" loading={busy("check")} onClick={() => run(() => checkPublishAction(brandId, post.id), { key: "check", success: "Checked" })}>
+            <SearchCheck /> Check {platformLabel(post.platform)}
+          </Button>
+        ) : null}
+        {isAdmin && post.status === "failed" && post.check === "manual" ? (
+          <div className="space-y-2">
+            <p className="text-[12px] text-muted">BrandPilot can&apos;t check {platformLabel(post.platform)} automatically. Look on the account, then tell BrandPilot what you found.</p>
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="secondary" loading={busy("went")} onClick={() => confirm("Mark this post as published? It won't be sent again.") && run(() => markPublishOutcomeAction(brandId, post.id, true), { key: "went", success: "Marked as published" })}>
+                It went out
+              </Button>
+              <Button variant="secondary" loading={busy("notwent")} onClick={() => confirm("Mark this post as not published? You can then publish it again.") && run(() => markPublishOutcomeAction(brandId, post.id, false), { key: "notwent", success: "Marked as not published" })}>
+                It didn&apos;t go out
+              </Button>
+            </div>
+          </div>
+        ) : null}
         {post.status === "published" && post.externalUrl ? (
           <a href={post.externalUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-xl bg-success-soft px-3 py-2 text-[13px] font-medium text-success">
             View live post <ExternalLink className="size-3.5" />
@@ -414,7 +438,7 @@ function PostPanel({ post, brandId, role, accounts, creatives, campaignName, onC
                 </Button>
               </div>
             ) : null}
-            {!dirty && isAdmin && ["approved", "failed"].includes(post.status) ? (
+            {!dirty && isAdmin && ["approved", "failed"].includes(post.status) && !post.check ? (
               <div className="grid grid-cols-2 gap-2">
                 <Button variant="accent" loading={busy("sched")} onClick={() => run(() => schedulePost(brandId, post.id), { key: "sched", success: "Scheduled. It will publish at the set time." })}>
                   <CalendarClock /> Schedule

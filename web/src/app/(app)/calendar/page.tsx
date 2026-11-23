@@ -5,6 +5,7 @@ import { getDb, schema } from "@/server/db/client";
 import { withTenant } from "@/server/db/tenant";
 import { CalendarView } from "@/components/calendar/view";
 import { PROVIDERS } from "@/server/social/registry";
+import { checksNeeded } from "@/server/social/publish-ledger";
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ m?: string; post?: string }> }) {
   const sp = await searchParams;
@@ -30,6 +31,8 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ m
     if (p) focus = p;
   }
   const all = focus && !posts.some((p) => p.id === focus!.id) ? [...posts, focus] : posts;
+  // Failed posts whose last attempt may have gone out need a check before publishing again (PR 4.4a).
+  const checks = await checksNeeded(all.filter((p) => p.status === "failed"));
   return (
     <CalendarView
       key={format(month, "yyyy-MM")}
@@ -59,6 +62,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ m
         socialAccountId: p.socialAccountId,
         externalUrl: p.externalUrl,
         publishError: p.publishError,
+        check: checks[p.id] ?? null,
         rationale: p.rationale,
         brief: String((p.copy as { brief?: string }).brief ?? ""),
         hooks: ((p.copy as { hooks?: string[] }).hooks ?? []) as string[],
