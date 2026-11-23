@@ -13,21 +13,25 @@ Two Claude Code sessions work on the mandate: **A** (`session_017ArpCNvaij8Z6GvK
 | [#16](https://github.com/groverstech/instagram-ai-automation/pull/16) | Strict CSP | `feature/strict-csp` → `main` | `3259597` | 45060385217 green | A |
 | [#27](https://github.com/groverstech/instagram-ai-automation/pull/27) | Enforce required MFA on actions and API routes; step-up for deletion; config fix | `fix/required-mfa-enforcement` → #26 | `52e9415` | 45169193918 green | B |
 | [#29](https://github.com/groverstech/instagram-ai-automation/pull/29) | Invitation-only sign-up (`SIGNUP_MODE`, `beta_invites`, migration 0017) | `feature/invite-only-signup` → #27 | `495d693` | 45170143027 green | B |
-| [#28](https://github.com/groverstech/instagram-ai-automation/pull/28) | Reviewer account with MFA pre-enrolled (F-A1) | `fix/reviewer-mfa` → #29 | `580f63c` | 45180174897 (running at writing) | A |
-| [#30](https://github.com/groverstech/instagram-ai-automation/pull/30) | Account recovery (S11; migration 0018) | `feature/account-recovery` → #28 | `507c5d5` | 45180294021 (running at writing) | A |
-| [#31](https://github.com/groverstech/instagram-ai-automation/pull/31) | Organisation export memory bound (D6) | `fix/export-memory` → #30 | `02c89b2` | 45180297592 (running at writing) | A |
+| [#28](https://github.com/groverstech/instagram-ai-automation/pull/28) | Reviewer account with MFA pre-enrolled (F-A1) | `fix/reviewer-mfa` → #29 | `580f63c` | 45180174897 green | A |
+| [#30](https://github.com/groverstech/instagram-ai-automation/pull/30) | Account recovery (S11; migration 0018) | `feature/account-recovery` → #28 | `507c5d5` | 45180294021 green | A |
+| [#31](https://github.com/groverstech/instagram-ai-automation/pull/31) | Organisation export memory bound (D6) | `fix/export-memory` → #30 | `02c89b2` | 45180297592 green | A |
+| [#32](https://github.com/groverstech/instagram-ai-automation/pull/32) | RLS: refuse to start in strict mode when the role bypasses RLS (R-P0-7) | `fix/rls-strict-refusal` → #31 | `be65893` | 45181093942 green | A |
+| [#33](https://github.com/groverstech/instagram-ai-automation/pull/33) | PR 4.4a: publish-attempt ledger, reconciliation, token health (migration 0019) | `feature/p4-publish-ledger` → #31 | `1caf11b` | 45182458277 green | B |
+| [#34](https://github.com/groverstech/instagram-ai-automation/pull/34) | Social sandbox and the full lifecycle journey in CI (Q1, R-P0-4) | `feature/sandbox-lifecycle` → #32 | `2ffc201` | 45183763244 (running at writing) | A |
 
-**Stack order:** main → #12 → #13 → #14 → #15 → #17 → #18 → #19 → #20 → #21 → #22 → #23 → #24 → #25 → #26 → #27 → #29 → #28 → #30 → #31. #11 and #16 are independent.
+**Stack order:** main → #12 → #13 → #14 → #15 → #17 → #18 → #19 → #20 → #21 → #22 → #23 → #24 → #25 → #26 → #27 → #29 → #28 → #30 → #31, then two lines from #31: **#32 → #34** (A) and **#33** (B). Session A proposed that #33 merges `feature/sandbox-lifecycle` and retargets onto #34, so the line is linear again and the lifecycle journey covers the ledger. #11 and #16 are independent.
 
-**Migrations:** 0011 (#12), 0012 (#15), 0013 (#17), 0014 (#19), 0015 (#20), 0016 (#25), 0017 (#29), 0018 (#30); **0019 is reserved for session B's PR 4.4a**.
+**Migrations:** 0011 (#12), 0012 (#15), 0013 (#17), 0014 (#19), 0015 (#20), 0016 (#25), 0017 (#29), 0018 (#30), 0019 (#33). **Next free: 0020**; agree it between sessions before use.
 
 ## 2. Active work
 
 | Item | Owner | Status |
 |---|---|---|
-| R-P0-4: sandbox platform plus the full lifecycle E2E | A | Next |
-| RLS: refuse to start in strict mode with `RLS_PILOT=on` and a superuser/`BYPASSRLS` role | A | Queued |
-| R-P1-1: PR 4.4a publish ledger, idempotency, reconciliation, token health | B | Agreed; stacks on `fix/export-memory`, migration 0019 |
+| R-P0-4: sandbox platform plus the full lifecycle E2E | A | In review #34 (CI and regression running) |
+| R-P0-7: RLS strict-mode refusal | A | In review #32 |
+| R-P1-1: PR 4.4a | B | In review #33; relinearise onto #34 (proposed) |
+| R-P1-7: PR 4.9 remainder (load test, ASVS L2 review) | A | Next |
 
 ## 3. Known problems
 
@@ -65,3 +69,4 @@ The browser regression scripts live in the session scratchpad. They aren't in th
 | 23 Nov 2026 | #25 CI green (45115332161). Opened #26 (O4 code part; stacked on #25): 433/433 tests, regression 19/16/10/20. Corrected statuses of S6, D3, P1, P2, P3, P7 and R2 to In review. All authorised code work is now in review; what remains needs owner decisions, infrastructure or external parties. |
 | 23 Nov 2026 | Full-mandate reconciliation. Verified all 16 open PRs (heads, bases, CI on head SHAs; no reviews yet) and the stack + #16 integration (434/434, regression 19/16/10/20, CSP feature checks clean). Added PRIVATE_BETA_LAUNCH_AUDIT.md, PRIVATE_BETA_ROADMAP.md and PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md; the gate tables moved to the checklist. New findings: reviewer vs MFA (P8), no account recovery (S11), export memory (D6), no lifecycle E2E (Q1). Next: R-P0-1 to R-P0-4. |
 | 23 Nov 2026 | Session B opened #27 (required MFA enforced on actions and routes) and #29 (invitation-only sign-up, 0017). Session A opened #28 (reviewer MFA), #30 (account recovery, 0018 after renumbering) and #31 (export memory), restacked by merging after #29 (no force-push). Top of stack 453/453 on PG16. Added PRIVATE_BETA_DECISIONS_REQUIRED.md and PRIVATE_BETA_PROGRESS.md; decisions and checkpoints moved out of LAUNCH_READINESS.md. Next (A): RLS strict-mode refusal, sandbox lifecycle E2E. Next (B): PR 4.4a on `fix/export-memory`, migration 0019. |
+| 23 Nov 2026 | Opened #32 (RLS strict-mode refusal) and #34 (social sandbox, plus the lifecycle journey: 10/10 locally, now a CI step). Session B opened #33 (PR 4.4a, 0019). CI green on #28, #30, #31, #32 and #33. Next (A): R-P1-7 load test and ASVS review; credit enforcement stays owner-gated (D-17). |

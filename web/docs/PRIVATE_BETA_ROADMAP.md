@@ -21,8 +21,8 @@ Effort is in engineering days for one engineer, including tests and review.
 | R-P0-3 | **In review #31.** Organisation export memory bound (F-A3) | Up to 500 MB per request held in memory | Lower file budget and one export at a time per instance; test | 0.5 | #22 |
 | R-P0-5 | **In review #27 (session B).** Required MFA enforced on server actions and API routes (F-A9) | Bypass of mandatory MFA | Guards and step-up refuse un-enrolled owners and admins where MFA is required; tests | done | — |
 | R-P0-6 | **In review #29 (session B).** Invitation-only sign-up (F-A10) | Open sign-up | `SIGNUP_MODE`, beta list, uniform refusal; tests | done | — |
-| R-P0-7 | Refuse to start in strict mode when `RLS_PILOT=on` and the role bypasses RLS | The pilot would silently do nothing | Start-up fails with a clear message; test | 0.5 | #25 |
-| R-P0-4 | **Lifecycle E2E with a sandbox platform** (F-A4) | No automated proof the journey works through publish and metrics | `SANDBOX` social provider, refused in staging and production, labelled "Simulated". Browser journey: account → organisation → brand → profile → strategy → calendar → content → visual → submit → approve → schedule → publish (job) → metrics → analytics. Runs in CI | 2–3 | R-P0-0 not needed (stack) |
+| R-P0-7 | **In review #32.** Refuse to start in strict mode when `RLS_PILOT=on` and the role bypasses RLS | The pilot would silently do nothing | Start-up fails with a clear message; test | 0.5 | #25 |
+| R-P0-4 | **In review #34.** Lifecycle E2E with a sandbox platform (F-A4) | No automated proof the journey works through publish and metrics | `SANDBOX` social provider, refused in staging and production, labelled "Simulated". Browser journey: account → organisation → brand → profile → strategy → calendar → content → visual → submit → approve → schedule → publish (job) → metrics → analytics. Runs in CI | 2–3 | R-P0-0 not needed (stack) |
 
 ### Owner (approval or vendor needed)
 
@@ -44,7 +44,7 @@ Effort is in engineering days for one engineer, including tests and review.
 
 | ID | Work | Approved in | Can start now? | Effort |
 |---|---|---|---|---|
-| R-P1-1 | **Taken by session B** (stacks on #31, migration 0019). PR 4.4a: publish-attempt ledger, idempotency keys, read-back reconciliation before retry, token-health tracking and reconnect prompts** for the existing single-image publishers | Plan WS3 (4.4) | **Yes:** none of it needs R2 | 3–4 |
+| R-P1-1 | **In review #33 (session B)**, migration 0019. PR 4.4a: publish-attempt ledger, idempotency keys, read-back reconciliation before retry, token-health tracking and reconnect prompts** for the existing single-image publishers | Plan WS3 (4.4) | **Yes:** none of it needs R2 | 3–4 |
 | R-P1-2 | PR 4.4b: carousels, Reels, Stories, Facebook multi-photo and video | Plan WS3 (4.4) | No: needs PR 4.2 public media | 3 |
 | R-P1-3 | PR 4.2: R2 storage and CDN | Plan WS2 | **No: not authorised** | 4–5 |
 | R-P1-4 | PR 4.6: credit enforcement, grants on `invoice.paid`, top-up packs | Plan WS4 | Code yes, behind a flag. Activation needs one shadow billing period and your credit values | 4–5 |
