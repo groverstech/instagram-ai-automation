@@ -93,7 +93,7 @@ production-grade deployment, with the security, data and operations gates below 
 | A1 | Real-provider validation with archived `test:live` report (F10) | **Owner** | Needs keys in the validation environment and approval of the paid run (USD 10 budget) | Owner |
 | A2 | Estimated costs reconciled with provider exports within 5% | **Owner** | After A1; tooling exists (`npm run ai:billing -- reconcile`); provider data supports per-model and per-day comparison only | Owner |
 | A3 | Demo mode impossible in production | **Done** | Config check and tests (PR 4.0, 4.1) | — |
-| A4 | Organisation and brand AI limits, alerts, kill switch (F12) | **In progress** | #19: organisation and brand monthly credit caps with alerts at 70, 90 and 100% (shadow: alerted, not enforced). Kill switch and tripwire next (F12) | Code |
+| A4 | Organisation and brand AI limits, alerts, kill switch (F12) | **In review** | #19: organisation and brand monthly credit caps with alerts at 70, 90 and 100% (shadow: alerted, not enforced). #20: kill switch (`npm run ai:controls`, `AI_STOP`) and per-provider spending tripwire, checked before sending. Production `AI_TRIPWIRE_USD` value is an owner setting | Code, Owner |
 
 ### Operations
 
@@ -129,8 +129,8 @@ started without waiting; each item is its own PR.
 | 3 | Strict CSP (F2) | S6 | — | In review (#16) |
 | 4 | MFA (F3) | S7 | — | In review (#17 F3a, #18 F3b) |
 | 5 | PR 4.5 Configurable plans and credits, shadow mode; organisation and brand AI limits and alerts | R3, A4 (part) | Commercial inputs can come later: everything is configuration | In review (#19) |
-| 6 | AI kill switch and tripwire (F12) | A4 | — | Next |
-| 7 | Audit-log retention and export (F4), tenant export | D4, D5 | — | Queued |
+| 6 | AI kill switch and tripwire (F12) | A4 | — | In review (#20) |
+| 7 | Audit-log retention and export (F4), tenant export | D4, D5 | — | Next |
 | 8 | PR 4.9 parts: RLS pilot, `APP_SECRET` rotation procedure | S8, S3 | — | Queued |
 | — | PR 4.2 R2 storage and CDN | D2, P3, O6 | **Authorisation**, Cloudflare account | Blocked: owner |
 | — | PR 4.4 Instagram and Facebook publishing (ledger, idempotency, reconciliation, carousels, Reels) | P5, P6 | PR 4.2 for video and scale; Meta app and test accounts | Blocked: 4.2 and owner. Single-image publishing already works without it on one instance (#14 finding) |
@@ -165,3 +165,4 @@ Each session appends one line: date, what was merged or opened, gates changed, n
 | 22 Nov 2026 | Opened #16 (strict CSP, F2; from `main`). 349/349 tests; regression 19/16/10/20 under the policy. Next: MFA (F3, S7). |
 | 22 Nov 2026 | Opened #17 (MFA F3a; stacked on #15). 386/386 tests; regression 19/16/10/20; browser checks in optional and required modes. Recorded O7 (Next.js postcss advisory). Next: F3b, then PR 4.5 (credits shadow mode). |
 | 22 Nov 2026 | Opened #18 (MFA F3b; stacked on #17): 391/391 tests, CI green (45065217077), browser check 9/9, regression 19/16/10/20. Opened #19 (PR 4.5 credits shadow mode; stacked on #18): 400/400 tests, browser check 6/6, regression 19/16/10/20. Next: F12 (AI kill switch and tripwire). |
+| 23 Nov 2026 | #19 CI green (45067038811). Opened #20 (F12 kill switch and tripwire; stacked on #19): 407/407 tests, regression 19/16/10/20. Next: F4 (audit-log retention and export) and tenant export. |
