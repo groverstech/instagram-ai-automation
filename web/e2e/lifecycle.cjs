@@ -197,7 +197,14 @@ const mailLink = async (to, pathPart) => {
   await auto.getByText("In effect: Assisted", { exact: true }).waitFor();
   await auto.getByText(/Not available during the private beta/).waitFor();
   if (!(await auto.locator('input[value="autonomous"]').isDisabled())) fail("Autonomous should be unavailable");
-  log("autonomy: Assisted in effect; Autonomous unavailable (platform switch off)");
+  await auto.scrollIntoViewIfNeeded();
+  await auto.screenshot({ path: `${S}/05-autonomy.png` });
+  await p.setViewportSize({ width: 390, height: 844 });
+  await p.waitForTimeout(300);
+  if (await p.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)) fail("Settings scrolls sideways at phone width");
+  await auto.screenshot({ path: `${S}/05-autonomy-mobile.png` });
+  await p.setViewportSize({ width: 1440, height: 1000 });
+  log("autonomy: Assisted in effect; Autonomous unavailable (platform switch off); no sideways scroll at phone width");
 
   // Organisation export includes the post and its publish history, and no secrets.
   const exp = await p.request.get(B + `/api/workspace/export?workspace=${sql("select id from workspaces where name='Kora Studio'")}`);
@@ -221,6 +228,7 @@ const mailLink = async (to, pathPart) => {
   q.on("pageerror", (e) => errs.push("teammate: " + e.message));
   await q.goto(inv.link);
   await q.getByRole("heading", { name: "Join Kora Studio" }).waitFor();
+  await q.screenshot({ path: `${S}/06-invite.png` });
   await q.getByRole("link", { name: /Create an account with mira@kora.test/ }).click();
   await q.fill("input[name=name]", "Mira K"); await q.fill("input[name=email]", "mira@kora.test");
   await q.fill("input[name=password]", "supersecret2"); await q.fill("input[name=workspace]", "unused");
