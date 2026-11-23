@@ -47,12 +47,14 @@ Effort is in engineering days for one engineer, including tests and review.
 | R-P1-1 | **In review #33 (session B)**, migration 0019. PR 4.4a: publish-attempt ledger, idempotency keys, read-back reconciliation before retry, token-health tracking and reconnect prompts** for the existing single-image publishers | Plan WS3 (4.4) | **Yes:** none of it needs R2 | 3–4 |
 | R-P1-2 | PR 4.4b: carousels, Reels, Stories, Facebook multi-photo and video | Plan WS3 (4.4) | No: needs PR 4.2 public media | 3 |
 | R-P1-3 | PR 4.2: R2 storage and CDN | Plan WS2 | **No: not authorised** | 4–5 |
-| R-P1-4 | PR 4.6: credit enforcement, grants on `invoice.paid`, top-up packs | Plan WS4 | Code yes, behind a flag. Activation needs one shadow billing period and your credit values | 4–5 |
+| R-P1-4 | **In review #38.** PR 4.6: credit enforcement behind `CREDITS_MODE=enforce` (off), grants and reconciliation. Stripe top-up products wait for your prices | Plan WS4 | Built. Activation: D-17 | done (code) |
 | R-P1-5 | PR 4.7: LinkedIn organisations | Plan WS3 | No: needs LinkedIn API approval | 4 |
 | R-P1-6 | PR 4.8: YouTube | Plan WS3 | No: needs Google approvals and 4.2 | 5 |
 | R-P1-7 | **In review #35** (load test, ASVS L2 self-review). PR 4.9 remainder: load test, OWASP ASVS L2 review, DR drill | Plan WS5 | Load test and ASVS review: yes (local). DR drill: needs hosting | 3 |
-| R-P1-8 | Email verification and invitation emails | Plan P4-0 (invite emails) | Code yes; delivery needs O3 | 1.5 |
-| R-P1-9 | Sign-up enumeration fix (S5/F1) | FOLLOW_UPS F1 | Needs O3 | 1 |
+| R-P1-8 | **In review #39.** Email verification and invitation emails (plus security notifications; Postmark/Resend adapters) | Plan P4-0 (invite emails) | Built; delivery needs D-7 | done (code) |
+| R-P1-9 | Sign-up enumeration fix (S5/F1) | FOLLOW_UPS F1 | Needs O3: sign-up still says "already exists" (invite-only limits exposure) | 1 |
+| R-P1-10 | **In review #36.** `publish_attempts` in RLS and the export | Gap from #33 | Built | done |
+| R-P1-11 | **In review #37.** Autonomy levels (Advisor, Assisted, Autonomous off) | Product decision 3; D-3 resolution | Built; Autonomous activation is D-28 | done (code) |
 
 **PR 4.6 isn't mandatory for an invite-only beta.** Hard limits already exist without it:
 - the plan's monthly AI-run quota (enforced);

@@ -17,27 +17,26 @@ Two Claude Code sessions work on the mandate: **A** (`session_017ArpCNvaij8Z6GvK
 | [#30](https://github.com/groverstech/instagram-ai-automation/pull/30) | Account recovery (S11; migration 0018) | `feature/account-recovery` → #28 | `507c5d5` | 45180294021 green | A |
 | [#31](https://github.com/groverstech/instagram-ai-automation/pull/31) | Organisation export memory bound (D6) | `fix/export-memory` → #30 | `02c89b2` | 45180297592 green | A |
 | [#32](https://github.com/groverstech/instagram-ai-automation/pull/32) | RLS: refuse to start in strict mode when the role bypasses RLS (R-P0-7) | `fix/rls-strict-refusal` → #31 | `be65893` | 45181093942 green | A |
-| [#33](https://github.com/groverstech/instagram-ai-automation/pull/33) | PR 4.4a: publish-attempt ledger, reconciliation, token health (migration 0019); sandbox gains finalSend and findRecentPost | `feature/p4-publish-ledger` → #34 (retargeted) | `dd068a3` | running at writing (`1caf11b` was green: 45182458277) | B |
+| [#33](https://github.com/groverstech/instagram-ai-automation/pull/33) | PR 4.4a: publish-attempt ledger, reconciliation, token health (migration 0019); sandbox gains finalSend and findRecentPost | `feature/p4-publish-ledger` → #34 (retargeted) | `dd068a3` | 45184903930 green | B |
 | [#34](https://github.com/groverstech/instagram-ai-automation/pull/34) | Social sandbox and the full lifecycle journey in CI (Q1, R-P0-4) | `feature/sandbox-lifecycle` → #32 | `2ffc201` | 45183763244 green (includes the lifecycle step) | A |
-| [#35](https://github.com/groverstech/instagram-ai-automation/pull/35) | Load test and ASVS L2 self-review (R-P1-7) | `docs/load-asvs-review` → #33 (retargeted; #33 merged in) | `e97d37b` | running at writing | A |
+| [#35](https://github.com/groverstech/instagram-ai-automation/pull/35) | Load test and ASVS L2 self-review (R-P1-7) | `docs/load-asvs-review` → #33 (retargeted; #33 merged in) | `e97d37b` | 45186220958 green | A |
+| [#36](https://github.com/groverstech/instagram-ai-automation/pull/36) | `publish_attempts` under RLS (migration 0020), in the organisation export, and a per-post publishing history | `feature/publish-attempts-isolation` → #35 | `a53cf9e` | 45203675000 green | A |
+| [#37](https://github.com/groverstech/instagram-ai-automation/pull/37) | Autonomy levels: Advisor, Assisted (default), Autonomous behind `AUTONOMOUS_PUBLISHING` (off); policy engine, three gates, safeguards, `agent_actions` (migration 0021) | `feature/autonomy-levels` → #36 | `f0518e9` | 45205797867 green | A |
+| [#38](https://github.com/groverstech/instagram-ai-automation/pull/38) | PR 4.6: credit enforcement behind `CREDITS_MODE=enforce` (off); grants (migration 0022); reconciliation | `feature/credit-enforcement` → #37 | `a085bc8` | 45207079864 green | A |
+| [#39](https://github.com/groverstech/instagram-ai-automation/pull/39) | Email verification, invitation emails, security notifications; Postmark/Resend adapters (migration 0023); extended lifecycle E2E | `feature/email-verification-invites` → #38 | `26ce58a` | see the final report (`1949acd` was green: 45236031111) | A |
 
-**Stack order:** main → #12 → #13 → #14 → #15 → #17 → #18 → #19 → #20 → #21 → #22 → #23 → #24 → #25 → #26 → #27 → #29 → #28 → #30 → #31, → #32 → #34 → #33 → #35. **Linear again**: #33 merged `feature/sandbox-lifecycle` and was retargeted onto #34; #35 merged #33 and was retargeted onto it. The lifecycle journey now goes through the publish ledger. #11 and #16 are independent.
+**Stack order:** main → #12 → #13 → #14 → #15 → #17 → #18 → #19 → #20 → #21 → #22 → #23 → #24 → #25 → #26 → #27 → #29 → #28 → #30 → #31 → #32 → #34 → #33 → #35 → #36 → #37 → #38 → #39. **Linear**: #33 merged `feature/sandbox-lifecycle` and was retargeted onto #34; #35 merged #33 and was retargeted onto it. The lifecycle journey now goes through the publish ledger. #11 and #16 are independent.
 
-**Migrations:** 0011 (#12), 0012 (#15), 0013 (#17), 0014 (#19), 0015 (#20), 0016 (#25), 0017 (#29), 0018 (#30), 0019 (#33). **Next free: 0020**; agree it between sessions before use.
+**Migrations:** 0011 (#12), 0012 (#15), 0013 (#17), 0014 (#19), 0015 (#20), 0016 (#25), 0017 (#29), 0018 (#30), 0019 (#33), 0020 (#36), 0021 (#37), 0022 (#38), 0023 (#39). **Next free: 0024.**
 
 ## 2. Active work
 
-| Item | Owner | Status |
-|---|---|---|
-| R-P0-4: sandbox platform plus the full lifecycle E2E | A | In review #34: CI green, regression 19/16/10/20 |
-| R-P0-7: RLS strict-mode refusal | A | In review #32 |
-| R-P1-1: PR 4.4a | B | In review #33; relinearise onto #34 (proposed) |
-| R-P1-7: PR 4.9 remainder (load test, ASVS L2 review) | A | In review #35. The DR drill needs hosting |
+None in progress: every authorised engineering item is in review (#12–#39). What remains needs owner decisions, infrastructure or external parties: see [PRIVATE_BETA_DECISIONS_REQUIRED.md](PRIVATE_BETA_DECISIONS_REQUIRED.md).
 
 ## 3. Known problems
 
-- **Gaps from #33 (session B):**
-  - `publish_attempts` isn't in the RLS pilot or the organisation export (#22). Add both when RLS is extended and in the next export change.
+- **Resolved:** the #33 gaps (`publish_attempts` in the RLS pilot and the organisation export) are fixed in #36.
+- **Lifecycle runner (fixed in #39):** the E2E runner left the Next.js child process running after a run, so the next local run reached a stale server against a dropped database. The server now runs in its own process group, and the runner refuses a busy port.
 
 - **Local test Postgres** (this session's environment) stops when the worker restarts, or is killed without a clean shutdown. Restart with `pg_ctlcluster 16 main start`. GitHub CI is unaffected.
 - **Fixed-window rate-limit tests** can straddle a 15-minute boundary under load. The clock is now pinned in `auth-forms` (#20), `deletion` and `account-recovery` (#30); the fix on older branches lands as the stack merges.
@@ -76,3 +75,4 @@ The browser regression scripts live in the session scratchpad. They aren't in th
 | 23 Nov 2026 | Opened #32 (RLS strict-mode refusal) and #34 (social sandbox, plus the lifecycle journey: 10/10 locally, now a CI step). Session B opened #33 (PR 4.4a, 0019). CI green on #28, #30, #31, #32 and #33. Next (A): R-P1-7 load test and ASVS review; credit enforcement stays owner-gated (D-17). |
 | 23 Nov 2026 | #34 CI green including the new lifecycle step (45183763244); regression 19/16/10/20 on the #34 build. Opened #35: load test (no errors at 10 and 25 concurrent clients; calendar ~20 pages/s, CPU-bound) and ASVS L2 self-review (gaps become decisions D-26 and D-27). |
 | 23 Nov 2026 | Stack relinearised: #31 → #32 → #34 → #33 → #35 (merges only). Top of stack 472/472 on PG16. Session B has stopped new work and handed the next items back. Decisions: added autonomy levels and the plan-status confirmation to D-3. |
+| 23 Nov 2026 | Full completion mandate. Verified: nothing merged; CI green on #33 (45184903930) and #35 (45186220958). Opened #36 (publish_attempts RLS + export + history, 0020), #37 (autonomy levels, 0021), #38 (PR 4.6 credit enforcement, off; 0022) and #39 (email verification, invitations, notifications, provider adapters; 0023; extended lifecycle E2E). Full suite 512/512 on PG16; lifecycle journey passes end to end, including verification, invitation, export and autonomy checks. The Phase 4 plan is recorded as the approved baseline, with the autonomy levels added. |

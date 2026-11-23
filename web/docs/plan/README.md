@@ -6,7 +6,9 @@ describe the plan; they don't track progress. **What's done and what remains is 
 request, and decisions recorded in merged PRs supersede details here.
 
 **Start here:** [Phase 4 plan: Production Readiness & Platform Foundation](PHASE4_PLAN.md). It is
-the detailed plan awaiting approval: six workstreams in 10 PRs, each with architecture,
+the **approved first-release baseline** (confirmed by the owner, 23 Nov 2026), together with the
+three autonomy levels from product decision 3 (document 6), which the owner added to the
+first-release scope the same day. Six workstreams in 10 PRs, each with architecture,
 database changes, dependencies, external API requirements, effort, testing, acceptance criteria
 and risks. Documents 1–9 below are the detailed reference it builds on.
 

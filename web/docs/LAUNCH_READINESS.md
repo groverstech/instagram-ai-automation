@@ -42,9 +42,9 @@ production-grade deployment, with the security, data and operations gates below 
   controls.
 - **Not in the beta:**
   - LinkedIn and YouTube publishing: they wait for platform approvals and are shown as "coming soon";
-  - autonomous publishing: the first release keeps human approval for everything, and the
-    Advisor, Assisted and Autonomous levels are not in the Phase 4 plan;
-  - paid credit enforcement: PR 4.6 runs after a shadow billing period;
+  - autonomous publishing: the three levels are built (#37), but the beta runs at Assisted (a
+    person approves every post); Autonomous stays off until the owner authorises it (D-28);
+  - credit enforcement: built (#38) but off; it is turned on after a shadow period (D-17);
   - TikTok and X.
 
 ## 3. Launch gates, roadmap and audit

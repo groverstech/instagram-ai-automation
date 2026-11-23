@@ -7,7 +7,7 @@ Costs are indicative (late 2026 list prices as remembered, **not verified**). Ch
 ## 1. Merges (blocks everything)
 
 **D-1. Review and merge the open PRs.**
-- **What:** 21 PRs: #11 (docs), #16, and the stack #12 → #31. None has a review yet.
+- **What:** 29 PRs: #11 (docs), #16, and the stack #12 → #39 (order in PRIVATE_BETA_PROGRESS.md §1). None has a review yet.
 - **Recommendation:**
   - review in stack order;
   - merge #11 and #16 first;
@@ -28,9 +28,9 @@ Costs are indicative (late 2026 list prices as remembered, **not verified**). Ch
 | Cross-brand agency reporting | 2–3 days | Defer. Today: organisation usage and credits by brand |
 | Smart scheduling, competitor monitoring, autonomous agents (P4-2, P4-4, P4-6) | Each 4+ days | Defer |
 
-| **Autonomy levels: Advisor, Assisted, Autonomous** (approved product decision 3, 8 Nov) | 6–10 days, including per-brand policy, guardrails and audit | The approved Phase 4 plan builds no autonomy levels; only the emergency pause exists (#15), and every post needs human approval. Recommendation: beta at "human approves everything" (effectively Advisor/Assisted), Autonomous after the beta |
-
-**Also confirm the plan's status:** `plan/README.md` still calls `PHASE4_PLAN.md` "the detailed plan awaiting approval". Please confirm it is the approved first-release scope, or say what's different.
+**Resolved (23 Nov):**
+- You confirmed the Phase 4 plan as the approved first-release baseline. `plan/README.md` now says so.
+- You added the three autonomy levels to the scope. They are built in #37: Assisted is the default, and Autonomous is unavailable until D-28.
 
 **Your choice:** add any of these to the first release (they become P1 and are built), or confirm they're deferred.
 
@@ -41,7 +41,7 @@ Costs are indicative (late 2026 list prices as remembered, **not verified**). Ch
 | D-4 | Hosting (O1) | A: container platform (Fly.io, Render, Railway) with managed Postgres. B: AWS (ECS, RDS) | A: one web and one worker instance; Postgres with PITR | ~USD 50–150 a month | Yes |
 | D-5 | Production database role | An ordinary role (no superuser, no `BYPASSRLS`) for the app, and a privileged role only for `db:migrate` | Yes, from day one | None | Yes |
 | D-6 | Row-level security trial | `RLS_PILOT=on` on staging, then production | Yes, after D-5 | None | Recommended |
-| D-7 | Email provider (O3) | Postmark, Resend, Amazon SES | Postmark or Resend | ~USD 0–20 a month | Yes: password reset (#30), invitations, sign-up privacy (S5) |
+| D-7 | Email provider (O3) | Postmark or Resend: both adapters are built and tested against stubs (#39). Amazon SES would need an adapter | Postmark or Resend; go-live steps in `docs/EMAIL.md` (domain DNS, key in the secret store, egress) | ~USD 0–20 a month | Yes: email verification is required in production, plus invitations and password reset |
 | D-8 | Error tracking and uptime (O2, O4) | Sentry plus Better Stack or UptimeRobot | Sentry; uptime checks on `/api/health/ready` and `/api/health/jobs` | ~USD 0–30 a month | Yes |
 | D-9 | Object storage: authorise PR 4.2 (R2) | Authorise now, or accept a single-instance beta on local disk with backups | Accept a single instance for the beta (D-10); authorise 4.2 before scaling or before carousels and Reels | R2 ~USD 0–15 a month at beta scale | No, if D-10 is accepted |
 | D-10 | Single-instance beta (F5) | Accept, or require 4.2 first | Accept, with a restore drill | — | — |
@@ -56,8 +56,10 @@ Costs are indicative (late 2026 list prices as remembered, **not verified**). Ch
 | D-14 | `AI_MONTHLY_COST_LIMIT_USD` (per organisation, or per plan) | Set per plan; for example USD 20 for beta organisations | Yes |
 | D-15 | Provider-side budgets (Anthropic and OpenAI consoles) | Monthly budget at the expected total; **no auto-reload** | Yes |
 | D-16 | `AUDIT_RETENTION_DAYS` | 400 (default), or per your privacy notice | No |
-| D-17 | Credit value and plan allowances | Set before paid plans (PR 4.6), not before the beta | No |
+| D-17 | Credit value, plan allowances, failed-attempt policy, then **turning enforcement on** (`CREDITS_MODE=enforce`, built in #38) after a shadow period | Run the beta in shadow; compare with `npm run credits -- shadow` and `-- reconcile`; enforce before paid plans | No |
 | D-18 | `SIGNUP_MODE` and the beta list (#29) | `invite_only` (the default in production); add invitees with `npm run beta:invite` | Yes (the list) |
+
+| D-28 | **Autonomous publishing** (`AUTONOMOUS_PUBLISHING=on`, built in #37) | Keep off for the beta. Before turning it on: two weeks on test accounts (one brand Assisted, one Autonomous) with zero unapproved restricted posts, zero duplicates and zero cap overruns; then per brand, by owners, with step-up | No (it stays off) |
 
 ### Account policy (from the ASVS L2 self-review, #35)
 
