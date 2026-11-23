@@ -60,7 +60,7 @@ production-grade deployment, with the security, data and operations gates below 
 | S5 | Sign-up doesn't reveal registered emails (F1) | **Not started** | Needs the email provider (O3) | Owner, then code |
 | S6 | Strict Content Security Policy (F2) | **In progress** | PR #16: per-request nonce, `script-src 'self' 'nonce-…' 'strict-dynamic'`, no `unsafe-inline`; every script carries the nonce, no violations, full regression passes | Code |
 | S7 | MFA for owners and admins (F3) | **In review** | #17 (F3a): TOTP with recovery codes, required for owners and admins in staging and production. #18 (F3b): a fresh second factor (15 minutes) for member, billing, social-connection and credit-cap changes; sign out everywhere else. Security notification emails wait for the email provider | Code |
-| S8 | Row-level security pilot and independent isolation check (F8) | **Not started** | RLS pilot in PR 4.9; independent review | Code, External |
+| S8 | Row-level security pilot and independent isolation check (F8) | **In review** | #25: policies on brands, posts and creatives behind `RLS_PILOT`; randomised cross-tenant tests as an ordinary role; cost measured (no measurable query overhead; 3 round trips per `withTenant`); findings and recommendation in `docs/RLS_PILOT.md`; a campaign-page filter gap found and fixed. Production needs an ordinary DB role (owner); the independent review remains (external) | Code, Owner, External |
 | S9 | Penetration test with findings fixed or accepted (F9) | **Not started** | After the beta build is feature-complete | Owner, External |
 | S10 | Egress firewall and metadata protection (F7) | **Not started** | With the hosting platform | Owner |
 
@@ -104,7 +104,7 @@ production-grade deployment, with the security, data and operations gates below 
 | O3 | Transactional email (plan defect D8) | **Partial** | Interface and `log` driver; provider pending; refuses in staging and production | Owner, then code |
 | O4 | Uptime checks, alert routing, dead-job alerting | **Not started** | Health endpoints exist; alerting needs O1 and O2 | Owner, then code |
 | O5 | Status page | **Not started** | Third-party service | Owner |
-| O7 | Dependency audit clean | **Not started** | `npm audit --omit=dev`: two findings in the `postcss` bundled with Next.js 15.5 (on `main` before these PRs); the fix is a major Next.js upgrade. Evaluate and upgrade in its own PR | Code |
+| O7 | Dependency audit clean | **In review** | #24: npm override points Next.js 15.5 at the project's patched postcss 8.5.32; `npm audit --omit=dev` 0 vulnerabilities; compiled CSS byte-identical. The Next.js 16 upgrade stays a separate decision | Code |
 | O6 | Scaling beyond one instance (F5) | **Owner** | A single-instance beta needs the owner's approval; otherwise R2 and shared rate limits first | Owner |
 
 ### Legal and product
@@ -131,7 +131,7 @@ started without waiting; each item is its own PR.
 | 5 | PR 4.5 Configurable plans and credits, shadow mode; organisation and brand AI limits and alerts | R3, A4 (part) | Commercial inputs can come later: everything is configuration | In review (#19) |
 | 6 | AI kill switch and tripwire (F12) | A4 | — | In review (#20) |
 | 7 | Audit-log retention and export (F4), tenant export | D4, D5 | — | In review (#21, #22) |
-| 8 | PR 4.9 parts: RLS pilot, `APP_SECRET` rotation procedure | S8, S3 | — | Rotation in review (#23); RLS pilot next |
+| 8 | PR 4.9 parts: RLS pilot, `APP_SECRET` rotation procedure | S8, S3 | — | In review (#23, #25) |
 | — | PR 4.2 R2 storage and CDN | D2, P3, O6 | **Authorisation**, Cloudflare account | Blocked: owner |
 | — | PR 4.4 Instagram and Facebook publishing (ledger, idempotency, reconciliation, carousels, Reels) | P5, P6 | PR 4.2 for video and scale; Meta app and test accounts | Blocked: 4.2 and owner. Single-image publishing already works without it on one instance (#14 finding) |
 | — | Real-provider validation | A1, A2 | Keys in the validation environment; approval of the paid run | Blocked: owner |
@@ -169,3 +169,4 @@ Each session appends one line: date, what was merged or opened, gates changed, n
 | 23 Nov 2026 | #20 CI was red on a pre-existing flaky test (the login limiter's fixed 15-minute window straddled during the run); fixed by pinning the clock (c22bb34), CI green (45108409393). Opened #21 (F4; stacked on #20): 413/413 tests, browser check 7/7, regression 19/16/10/20. Next: tenant data export (D4). |
 | 23 Nov 2026 | #21 CI green (45109461233). Opened #22 (D4 organisation data export; stacked on #21): 418/418 tests, browser check 4/4, regression 19/16/10/20. Next: `APP_SECRET` rotation without reconnects (S3). |
 | 23 Nov 2026 | #22 CI green (45110486063). Opened #23 (S3 `APP_SECRET` rotation; stacked on #22): 424/424 tests, end-to-end rotation check 6/6, regression 19/16/10/20. O7: npm override points Next.js at the project's patched postcss (audit clean, CSS byte-identical); PR next. Then: RLS pilot (S8). |
+| 23 Nov 2026 | #23 and #24 CI green (45112480510, 45113497809). Opened #24 (O7 postcss override) and #25 (S8 RLS pilot; stacked on #24): 430/430 tests, RLS browser check 6/6 as an ordinary role, regression 19/16/10/20. The authorised code queue is now in review; the remaining gates need owner decisions, infrastructure or external parties (see Owner decisions). |
