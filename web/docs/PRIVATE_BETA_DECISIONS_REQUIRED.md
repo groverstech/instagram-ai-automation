@@ -55,6 +55,13 @@ Costs are indicative (late 2026 list prices as remembered, **not verified**). Ch
 | D-17 | Credit value and plan allowances | Set before paid plans (PR 4.6), not before the beta | No |
 | D-18 | `SIGNUP_MODE` and the beta list (#29) | `invite_only` (the default in production); add invitees with `npm run beta:invite` | Yes (the list) |
 
+### Account policy (from the ASVS L2 self-review, #35)
+
+| ID | Decision | Options | Recommendation | Blocks beta? |
+|---|---|---|---|---|
+| D-26 | Password policy: the minimum is 8; ASVS L2 asks for 12, plus a breached-password check | (a) a 12-character minimum for new passwords and resets, existing passwords unchanged; (b) also check against breached passwords: Have I Been Pwned k-anonymity API (free, one outbound request per password change; only a 5-character hash prefix leaves the server) or a bundled top-100k list; (c) keep 8 | (a) plus the HIBP check. About 1 day | No, but recommended |
+| D-27 | Session length: 30 days absolute, no idle timeout | (a) owners and admins: 12-hour idle and 7-day absolute; others: 30 days; (b) the same for everyone; (c) keep 30 days (step-up already protects sensitive actions) | (a). About 0.5 day | No, but recommended |
+
 ## 5. External parties
 
 | ID | Item | Recommendation | Blocks beta? |

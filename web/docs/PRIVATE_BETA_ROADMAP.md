@@ -50,7 +50,7 @@ Effort is in engineering days for one engineer, including tests and review.
 | R-P1-4 | PR 4.6: credit enforcement, grants on `invoice.paid`, top-up packs | Plan WS4 | Code yes, behind a flag. Activation needs one shadow billing period and your credit values | 4–5 |
 | R-P1-5 | PR 4.7: LinkedIn organisations | Plan WS3 | No: needs LinkedIn API approval | 4 |
 | R-P1-6 | PR 4.8: YouTube | Plan WS3 | No: needs Google approvals and 4.2 | 5 |
-| R-P1-7 | PR 4.9 remainder: load test, OWASP ASVS L2 review, DR drill | Plan WS5 | Load test and ASVS review: yes (local). DR drill: needs hosting | 3 |
+| R-P1-7 | **In review #35** (load test, ASVS L2 self-review). PR 4.9 remainder: load test, OWASP ASVS L2 review, DR drill | Plan WS5 | Load test and ASVS review: yes (local). DR drill: needs hosting | 3 |
 | R-P1-8 | Email verification and invitation emails | Plan P4-0 (invite emails) | Code yes; delivery needs O3 | 1.5 |
 | R-P1-9 | Sign-up enumeration fix (S5/F1) | FOLLOW_UPS F1 | Needs O3 | 1 |
 
