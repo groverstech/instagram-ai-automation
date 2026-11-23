@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { format } from "date-fns";
 import { Megaphone } from "lucide-react";
 import { requireActiveBrand } from "@/server/auth/guard";
@@ -13,7 +13,7 @@ export default async function Page() {
   const db = await getDb();
   const campaigns = await db.select().from(schema.campaigns).where(eq(schema.campaigns.brandId, brand.id)).orderBy(desc(schema.campaigns.createdAt));
   const posts = campaigns.length
-    ? await db.select({ campaignId: schema.posts.campaignId, status: schema.posts.status }).from(schema.posts).where(inArray(schema.posts.campaignId, campaigns.map((c) => c.id)))
+    ? await db.select({ campaignId: schema.posts.campaignId, status: schema.posts.status }).from(schema.posts).where(and(inArray(schema.posts.campaignId, campaigns.map((c) => c.id)), eq(schema.posts.brandId, brand.id)))
     : [];
   const stats = (id: string) => {
     const ps = posts.filter((p) => p.campaignId === id);

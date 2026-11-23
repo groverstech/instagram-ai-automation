@@ -8,6 +8,7 @@ import { parseISO, startOfDay, addDays } from "date-fns";
 import { getDb, schema } from "@/server/db/client";
 import { requireBrand, type BrandAccess } from "@/server/auth/guard";
 import { safe } from "@/server/action";
+import { UserFacingError } from "@/server/jobs/engine";
 import { guardedAi } from "@/server/ai-guard";
 import { planCalendar, suggestIdeas, writeCopy } from "@/server/agents/strategy";
 import { generateCreatives, createVariation, generateCreativeImage, updateConcept, setCreativeStatus } from "@/server/agents/creative";
@@ -83,6 +84,12 @@ export async function createDraftPost(brandId: string, input: { platform: string
 // ---------- Creative ----------
 export async function generateCreativesAction(brandId: string, input: { brief: string; format: string; style: string; count: number; objective?: string; campaignId?: string }) {
   return aiAction(brandId, "ai_heavy", async ({ brand, scope }) => {
+    // A campaign id from the client must be one of this brand's campaigns.
+    if (input.campaignId) {
+      const db = await getDb();
+      const [c] = await db.select({ id: schema.campaigns.id }).from(schema.campaigns).where(and(eq(schema.campaigns.id, input.campaignId), eq(schema.campaigns.brandId, brand.id)));
+      if (!c) throw new UserFacingError("Campaign not found.");
+    }
     const ids = await generateCreatives(scope, brand, { ...input, campaignId: input.campaignId || null });
     revalidatePath("/creative-studio");
     return { ids };

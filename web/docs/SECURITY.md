@@ -38,6 +38,13 @@ brand scope, members' sign-ins only from joining, refusals and their audit recor
 | Step-up for sensitive actions (F3b) | For people with two-step verification on, sensitive actions need a second factor verified **in this session within the last 15 minutes** (the sign-in verification counts): inviting, removing and changing members' roles or brand access, starting checkout or opening the billing portal, connecting a social account (the OAuth start) and disconnecting one. Without it the server refuses with `StepUpRequired`; server actions surface it as a dialog that asks for a code and then retries the action, and the OAuth start goes through `/account/verify`, which only continues to same-site paths (`safeNext`). People without MFA aren't asked (where MFA is required for owners and admins, they always have it). Codes follow the same replay protection and rate limits as sign-in. "Sign out everywhere else" (Account → Security) ends every other session of the user and needs a fresh factor too. Security log: `mfa.step_up`, `auth.logout_all`, and failed step-up codes as `auth.mfa_failed` `{during: "step_up"}`. |
 | CSRF | Server actions use Next's origin check. Cookies are `SameSite=Lax`. OAuth flows use a signed `state` plus a nonce cookie. |
 
+### Row-level security (pilot, S8)
+
+Postgres policies on `brands`, `posts` and `creatives` restrict rows to one organisation when a transaction sets `app.org_id` (`withTenant`, `RLS_PILOT=on`). They're a second layer under the application's scoping.
+
+- Superusers and `BYPASSRLS` roles ignore policies, so the app must connect as an ordinary role. A warning is logged at start-up otherwise.
+- Results, cost and recommendation: [RLS_PILOT.md](RLS_PILOT.md).
+
 ## Client IPs and rate limits
 
 - **Client IP:** taken from the hop added by the proxies we control (`TRUSTED_PROXY_HOPS`) or an

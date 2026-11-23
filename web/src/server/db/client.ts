@@ -31,6 +31,9 @@ async function create(): Promise<DB> {
       const st = await migrationStatus(db, MIGRATIONS);
       if (!st.upToDate) console.warn(JSON.stringify({ ts: new Date().toISOString(), level: "warn", event: "db.migrations_pending", pending: st.pending }));
     }
+    // Row-level security (docs/RLS_PILOT.md) doesn't apply to superusers: say so where it matters.
+    const { isStrict } = await import("../config");
+    if (isStrict() || process.env.RLS_PILOT === "on") void import("./tenant").then((m) => m.checkRlsRole(db as unknown as DB));
     // Both drivers expose the same query-builder surface for everything this app uses.
     return db as unknown as DB;
   }

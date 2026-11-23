@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { requireActiveBrand } from "@/server/auth/guard";
 import { getDb, schema } from "@/server/db/client";
+import { withTenant } from "@/server/db/tenant";
 import { CampaignDetail } from "@/components/campaigns/detail";
 
 export default async function Page({ params }: { params: Promise<{ id: string }> }) {
@@ -10,7 +11,8 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
   const db = await getDb();
   const [c] = await db.select().from(schema.campaigns).where(and(eq(schema.campaigns.id, id), eq(schema.campaigns.brandId, brand.id)));
   if (!c) notFound();
-  const posts = await db.select().from(schema.posts).where(eq(schema.posts.campaignId, c.id)).orderBy(asc(schema.posts.scheduledAt));
+  // This brand's posts in the campaign; row-level security (RLS pilot, S8) is a second layer.
+  const posts = await withTenant(brand.workspaceId, (t) => t.select().from(schema.posts).where(and(eq(schema.posts.campaignId, c.id), eq(schema.posts.brandId, brand.id))).orderBy(asc(schema.posts.scheduledAt)));
   const metrics = posts.length
     ? await db.select().from(schema.postMetrics).where(and(inArray(schema.postMetrics.postId, posts.map((p) => p.id)), eq(schema.postMetrics.source, "platform")))
     : [];
