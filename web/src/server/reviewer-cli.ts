@@ -18,11 +18,16 @@ async function main() {
 
   Email:     ${r.email}
   Password:  ${r.password}
+  Two-step verification is on (required for owners in production). To sign in, use the password,
+  then "Use a recovery code" with one of these (each works once; ${r.recoveryCodes.length} in total):
+    ${r.recoveryCodes.join("  ")}
+  Setup key for an authenticator app instead: ${r.totpSecret.replace(/(.{4})/g, "$1 ").trim()}
   Brand:     ${REVIEW_BRAND}, with an approved post for Instagram and one for Facebook
 ${r.posts.map((p) => `  ${p.platform === "instagram" ? "Instagram" : "Facebook"} post: ${appUrl}/calendar?post=${p.id}`).join("\n")}
 
-The password is shown only now. Give it to the platform only in the review form's secure
-test-credentials field. Delete the organisation "App review" (Settings → Delete data) after the review.`);
+The password, recovery codes and setup key are shown only now. Give the password and two or three
+recovery codes to the platform only in the review form's secure test-credentials field, with the
+note: "Sign in, then choose 'Use a recovery code' and enter one code". Delete the organisation "App review" (Settings → Delete data) after the review.`);
     return 0;
   } catch (e) {
     if (e instanceof ReviewerSetupError) {

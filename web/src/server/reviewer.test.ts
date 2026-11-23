@@ -35,6 +35,26 @@ describe("platform reviewer account", () => {
     expect((await renderCreativePng(c, b)).subarray(1, 4).toString()).toBe("PNG");
   });
 
+  it("has two-step verification on, so mandatory MFA for owners doesn't stop a reviewer: password plus a recovery code signs in", async () => {
+    process.env.DEPLOY_ENV = "production"; // MFA_REQUIRED_FOR_ADMINS defaults to true here
+    try {
+      const r = await setupReviewer({ email: "mfa-reviewer@example.com" });
+      expect(r.recoveryCodes).toHaveLength(10);
+      expect(r.totpSecret).toMatch(/^[A-Z2-7]{32}$/);
+      const { mfaStatus, checkSecondFactor } = await import("./auth/mfa");
+      const st = await mfaStatus(r.userId);
+      expect(st).toMatchObject({ enabled: true, required: true, recoveryCodesLeft: 10 });
+      expect(await checkSecondFactor(r.userId, r.recoveryCodes[0], Date.now())).toBe("recovery");
+      expect(await checkSecondFactor(r.userId, r.recoveryCodes[0], Date.now())).toBeNull(); // single use
+      const db = await getDb();
+      const [u] = await db.select().from(schema.users).where(eq(schema.users.id, r.userId));
+      expect(u.mfaSecretEnc).not.toContain(r.totpSecret);
+      expect(JSON.stringify(u.mfaRecoveryHashes)).not.toContain(r.recoveryCodes[1]);
+    } finally {
+      delete process.env.DEPLOY_ENV;
+    }
+  });
+
   it("refuses to overwrite without --reset; --reset recreates it with a new password and removes the old organisation", async () => {
     await expect(setupReviewer({ email: "reviewer@example.com" })).rejects.toThrow(/already exists.*--reset/);
     const db = await getDb();

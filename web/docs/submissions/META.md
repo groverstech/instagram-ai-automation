@@ -65,7 +65,13 @@ It creates (or, with `--reset`, recreates) a user, an organisation and a brand n
 type-led creative. The posts are dated an hour after setup (approved, not scheduled: nothing publishes
 by itself), and the command prints a direct link to each, which works whatever month the review
 happens in. It makes no AI calls.
-The password is printed once. The reviewer then connects your **test** Page and Instagram account.
+**Two-step verification:**
+- The account is created with two-step verification **already on**, because it's mandatory for organisation owners in production.
+- The command prints the password, ten single-use **recovery codes** and an authenticator setup key, once.
+- Give Meta the password and **three** recovery codes in the test-credentials field, with this note: *"Sign in, then choose 'Use a recovery code' and enter one code. If BrandPilot asks 'Confirm it's you' again (it does after 15 minutes, before connecting an account), enter another code."*
+- The sign-in counts as a fresh verification for 15 minutes, so connecting the test accounts right after signing in needs no further code.
+
+The reviewer then connects your **test** Page and Instagram account.
 Delete the reviewer's organisation (Settings → Delete data) after the review.
 
 ## 5. Screencast script (record on the production domain with the test accounts)
