@@ -1,6 +1,6 @@
 # Private-beta readiness tracker
 
-**The single source of truth for what remains before BrandPilot's private beta.** Every PR that
+**The index for BrandPilot's private-beta readiness:** owner decisions and session checkpoints here; gates, roadmap and audit in the three documents in §3. Every PR that
 changes a gate updates this file in the same PR, with evidence. Status is changed only when the
 work is merged **and** its evidence exists; a plan, a PR in review or demo-mode output is not
 evidence.
@@ -47,97 +47,20 @@ production-grade deployment, with the security, data and operations gates below 
   - paid credit enforcement: PR 4.6 runs after a shadow billing period;
   - TikTok and X.
 
-## 3. Launch gates
+## 3. Launch gates, roadmap and audit
 
-### Security
-
-| # | Gate | Status | Evidence or next action | Blocker type |
-|---|---|---|---|---|
-| S1 | No secrets in the repository or client bundles | **Done** | `check:secrets` in CI; `.env*` ignored | — |
-| S2 | Secrets in the platform's secret store, rotated after testing | **Owner** | At deployment | Owner |
-| S3 | OAuth tokens encrypted at rest; key rotation documented | **In review** | #23: values carry a key id; `APP_SECRET_PREVIOUS` keeps old values readable during a rotation; `npm run secrets:rotate` re-encrypts and reports what still needs the old key; runbook in DEPLOYMENT §7. Verified end to end: nobody reconnects or loses two-step verification | Code |
-| S4 | Rate limits, quotas and spend caps enforced server-side | **In review** | Rate limits, plan run quota, fail-closed AI ledger and deployment-wide cap (PR 4.1); organisation and brand credit caps with alerts, shadow mode (#19); kill switch and tripwire (#20). Per-request enforcement of organisation and brand caps is PR 4.6 | Code |
-| S5 | Sign-up doesn't reveal registered emails (F1) | **Not started** | Needs the email provider (O3) | Owner, then code |
-| S6 | Strict Content Security Policy (F2) | **In review** | PR #16: per-request nonce, `script-src 'self' 'nonce-…' 'strict-dynamic'`, no `unsafe-inline`; every script carries the nonce, no violations, full regression passes | Code |
-| S7 | MFA for owners and admins (F3) | **In review** | #17 (F3a): TOTP with recovery codes, required for owners and admins in staging and production. #18 (F3b): a fresh second factor (15 minutes) for member, billing, social-connection and credit-cap changes; sign out everywhere else. Security notification emails wait for the email provider | Code |
-| S8 | Row-level security pilot and independent isolation check (F8) | **In review** | #25: policies on brands, posts and creatives behind `RLS_PILOT`; randomised cross-tenant tests as an ordinary role; cost measured (no measurable query overhead; 3 round trips per `withTenant`); findings and recommendation in `docs/RLS_PILOT.md`; a campaign-page filter gap found and fixed. Production needs an ordinary DB role (owner); the independent review remains (external) | Code, Owner, External |
-| S9 | Penetration test with findings fixed or accepted (F9) | **Not started** | After the beta build is feature-complete | Owner, External |
-| S10 | Egress firewall and metadata protection (F7) | **Not started** | With the hosting platform | Owner |
-
-### Data
-
-| # | Gate | Status | Evidence or next action | Blocker type |
-|---|---|---|---|---|
-| D1 | Postgres backups with PITR; restore drill passed | **Owner** | Procedure in DEPLOYMENT §9; needs managed Postgres | Owner |
-| D2 | Object storage with versioning and lifecycle (R2) | **Not started** | PR 4.2: **not authorised yet** | Owner |
-| D3 | Account and brand deletion end to end | **In review** | PR #13 (4.3b): Settings → Delete data for brands, organisations and accounts; tests and browser checks pass | Code |
-| D4 | Tenant data export | **In review** | #22: owners download a ZIP of the organisation's data and files (secrets stripped by column name; step-up; 3 an hour; audited). Pointing the privacy notice at it is an owner (legal text) change | Code, Owner |
-| D5 | Audit-log retention and export (F4) | **In review** | #21: Security log export (CSV, JSON; same access, scope and allow-list; step-up; audited) and retention (`AUDIT_RETENTION_DAYS`, default 400, purged daily). The retention period is an owner setting | Code, Owner |
-
-### Platforms
-
-| # | Gate | Status | Evidence or next action | Blocker type |
-|---|---|---|---|---|
-| P1 | Public privacy, terms and data-deletion pages; Meta data-deletion and deauthorise callbacks | **In review** | PR #12 (4.3a). Legal text comes from the owner's counsel (O5); until then the pages are marked draft and must not be submitted | Code, Owner |
-| P2 | Capabilities match what the publishers implement (plan defect D2) | **In review** | PR #12. Before it, Instagram and Facebook claim carousel and video support, but only single images are published | Code |
-| P3 | Instagram receives JPEG media (plan defect D1) | **In review** | PR #12 serves the publish media as JPEG. Public hosting at scale comes with R2 (PR 4.2) | Code |
-| P4 | Meta app approved for production permissions (or beta users added as app testers) | **External** | Pack, checklist and reviewer account ready (#14, `docs/submissions/META.md`). Submit once a public domain, the final legal text and your Meta app are in place. **It doesn't need R2:** single-image publishing works through the app's signed media links on a single instance | Owner, External |
-| P5 | Publish ledger, idempotency, reconciliation and token health; carousel and Reels | **Not started** | PR 4.4, which needs PR 4.2 and PR 4.3 | Code |
-| P6 | Live publish tests to test accounts on every enabled platform | **Not started** | After PR 4.4 and Meta access | Owner |
-| P7 | LinkedIn and YouTube marked "coming soon" until approved | **In review** | PR #12 labels them; a test checks the wording | Code |
-
-### AI
-
-| # | Gate | Status | Evidence or next action | Blocker type |
-|---|---|---|---|---|
-| A1 | Real-provider validation with archived `test:live` report (F10) | **Owner** | Needs keys in the validation environment and approval of the paid run (USD 10 budget) | Owner |
-| A2 | Estimated costs reconciled with provider exports within 5% | **Owner** | After A1; tooling exists (`npm run ai:billing -- reconcile`); provider data supports per-model and per-day comparison only | Owner |
-| A3 | Demo mode impossible in production | **Done** | Config check and tests (PR 4.0, 4.1) | — |
-| A4 | Organisation and brand AI limits, alerts, kill switch (F12) | **In review** | #19: organisation and brand monthly credit caps with alerts at 70, 90 and 100% (shadow: alerted, not enforced). #20: kill switch (`npm run ai:controls`, `AI_STOP`) and per-provider spending tripwire, checked before sending. Production `AI_TRIPWIRE_USD` value is an owner setting | Code, Owner |
-
-### Operations
-
-| # | Gate | Status | Evidence or next action | Blocker type |
-|---|---|---|---|---|
-| O1 | Hosting platform and deployment pipeline (F6) | **Owner** | Decision pending; container image is built and smoke-tested in CI | Owner |
-| O2 | Error tracking and tracing (plan defect D9) | **Partial** | `captureError` hook with references; vendor pending | Owner, then code |
-| O3 | Transactional email (plan defect D8) | **Partial** | Interface and `log` driver; provider pending; refuses in staging and production | Owner, then code |
-| O4 | Uptime checks, alert routing, dead-job alerting | **Partial** | #26: dead jobs reported through `captureError` (`jobs.dead`); `GET /api/health/jobs` (cron secret) returns 503 when work is overdue or stuck. Routing to an error tracker and uptime monitor needs O1 and O2 | Owner, then code |
-| O5 | Status page | **Not started** | Third-party service | Owner |
-| O7 | Dependency audit clean | **In review** | #24: npm override points Next.js 15.5 at the project's patched postcss 8.5.32; `npm audit --omit=dev` 0 vulnerabilities; compiled CSS byte-identical. The Next.js 16 upgrade stays a separate decision | Code |
-| O6 | Scaling beyond one instance (F5) | **Owner** | A single-instance beta needs the owner's approval; otherwise R2 and shared rate limits first | Owner |
-
-### Legal and product
-
-| # | Gate | Status | Evidence or next action | Blocker type |
-|---|---|---|---|---|
-| L1 | Privacy policy, terms and DPA published | **Owner** | Text from counsel; pages from PR 4.3 | Owner |
-| L2 | Platform terms reviewed | **Owner** | — | Owner |
-| R1 | Human approval before every publish | **Done** | `schedulePost` and `publishNow` refuse unapproved posts; only admins schedule (`src/app/actions/posts.ts`) | — |
-| R2 | Emergency pause of all publishing for a brand | **In review** | PR #15: pause (editors and above) cancels queued publishes and blocks every publishing path; resume (admins) re-queues future posts and returns missed ones to approved; tests and browser checks pass | Code |
-| R3 | Plans and limits configurable, credits in shadow mode (plan defect D5) | **In review** | #19: plans table (seeded from today's values), credits from the usage ledger, `npm run credits`. Enforcement is PR 4.6 after one shadow period | Code |
+Since 23 Nov 2026 these live in three documents, which replace the gate tables and work queue that used to be here:
+- **[PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md](PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md):** every launch gate with pass/fail status and evidence.
+- **[PRIVATE_BETA_ROADMAP.md](PRIVATE_BETA_ROADMAP.md):** remaining work by priority (P0, P1, P2), owner decision briefs, the live-validation plan and the critical path.
+- **[PRIVATE_BETA_LAUNCH_AUDIT.md](PRIVATE_BETA_LAUNCH_AUDIT.md):** verified status of `main` and PRs #11–#26, the dependency graph, merge order and retargeting, the integrated-stack verification, the product inventory, findings and the security risk register.
 
 ## 4. Work queue
 
-Ordered by what unblocks the most, highest priority first. Work that needs no owner input is
-started without waiting; each item is its own PR.
-
-| Order | Work | Gates | Needs from the owner | Status |
-|---|---|---|---|---|
-| 1 | **PR 4.3 Platform readiness**, in three stacked PRs: **4.3a** (#12) legal pages, Meta callbacks, honest capabilities, JPEG media; **4.3b** (#13) self-service deletion; **4.3c** (#14) Meta submission pack and reviewer account | P1, P2, P3, P7, D3 | Legal text before any submission; the `business_management` decision | All three in review |
-| 2 | Emergency pause | R2 | — | In review (#15) |
-| 3 | Strict CSP (F2) | S6 | — | In review (#16) |
-| 4 | MFA (F3) | S7 | — | In review (#17 F3a, #18 F3b) |
-| 5 | PR 4.5 Configurable plans and credits, shadow mode; organisation and brand AI limits and alerts | R3, A4 (part) | Commercial inputs can come later: everything is configuration | In review (#19) |
-| 6 | AI kill switch and tripwire (F12) | A4 | — | In review (#20) |
-| 7 | Audit-log retention and export (F4), tenant export | D4, D5 | — | In review (#21, #22) |
-| 8 | PR 4.9 parts: RLS pilot, `APP_SECRET` rotation procedure | S8, S3 | — | In review (#23, #25) |
-| — | PR 4.2 R2 storage and CDN | D2, P3, O6 | **Authorisation**, Cloudflare account | Blocked: owner |
-| — | PR 4.4 Instagram and Facebook publishing (ledger, idempotency, reconciliation, carousels, Reels) | P5, P6 | PR 4.2 for video and scale; Meta app and test accounts | Blocked: 4.2 and owner. Single-image publishing already works without it on one instance (#14 finding) |
-| — | Real-provider validation | A1, A2 | Keys in the validation environment; approval of the paid run | Blocked: owner |
-| — | Email, error tracking, hosting, alerting adapters | O1–O4, S5 | Vendor choices | Blocked: owner |
+See [PRIVATE_BETA_ROADMAP.md](PRIVATE_BETA_ROADMAP.md) §1–§2.
 
 ## 5. Decisions and inputs needed from the owner
+
+Decision briefs with options, cost and recommendations: [PRIVATE_BETA_ROADMAP.md](PRIVATE_BETA_ROADMAP.md) §4.
 
 1. **Confirm the private-beta definition** in §2.
 2. **Authorise PR 4.2 (R2)** and create the Cloudflare account. Instagram publishing (PR 4.4) depends on it.
@@ -171,3 +94,4 @@ Each session appends one line: date, what was merged or opened, gates changed, n
 | 23 Nov 2026 | #22 CI green (45110486063). Opened #23 (S3 `APP_SECRET` rotation; stacked on #22): 424/424 tests, end-to-end rotation check 6/6, regression 19/16/10/20. O7: npm override points Next.js at the project's patched postcss (audit clean, CSS byte-identical); PR next. Then: RLS pilot (S8). |
 | 23 Nov 2026 | #23 and #24 CI green (45112480510, 45113497809). Opened #24 (O7 postcss override) and #25 (S8 RLS pilot; stacked on #24): 430/430 tests, RLS browser check 6/6 as an ordinary role, regression 19/16/10/20. The authorised code queue is now in review; the remaining gates need owner decisions, infrastructure or external parties (see Owner decisions). |
 | 23 Nov 2026 | #25 CI green (45115332161). Opened #26 (O4 code part; stacked on #25): 433/433 tests, regression 19/16/10/20. Corrected statuses of S6, D3, P1, P2, P3, P7 and R2 to In review. All authorised code work is now in review; what remains needs owner decisions, infrastructure or external parties. |
+| 23 Nov 2026 | Full-mandate reconciliation. Verified all 16 open PRs (heads, bases, CI on head SHAs; no reviews yet) and the stack + #16 integration (434/434, regression 19/16/10/20, CSP feature checks clean). Added PRIVATE_BETA_LAUNCH_AUDIT.md, PRIVATE_BETA_ROADMAP.md and PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md; the gate tables moved to the checklist. New findings: reviewer vs MFA (P8), no account recovery (S11), export memory (D6), no lifecycle E2E (Q1). Next: R-P0-1 to R-P0-4. |
