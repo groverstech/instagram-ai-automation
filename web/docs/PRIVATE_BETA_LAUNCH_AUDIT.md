@@ -1,6 +1,6 @@
 # Private-beta launch audit
 
-Reconciled status of BrandPilot against the approved first-release scope, as of **23 Nov 2026**. Companion documents:
+Reconciled status of BrandPilot against the approved first-release scope, as of **23 Nov 2026** (updated 13:10 UTC with #27–#31). Companion documents:
 - [PRIVATE_BETA_ROADMAP.md](PRIVATE_BETA_ROADMAP.md): what remains, by priority, with the critical path;
 - [PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md](PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md): launch gates with pass/fail status and evidence;
 - [LAUNCH_READINESS.md](LAUNCH_READINESS.md): the index, the owner decisions and the session checkpoints.
@@ -53,6 +53,11 @@ All PRs are in the `groverstech/instagram-ai-automation` repository. Line counts
 | #24 | postcss override (`npm audit` clean) | #23 → `fix/postcss-override` | `7526702` | 45113497809 | 424 | — | O7 |
 | #25 | RLS pilot (3 tables) and campaign filter fix | #24 → `feature/rls-pilot` | `5f5e220` | 45115332161 | 430 | `0016_rls_pilot` | S8 |
 | #26 | Dead-job reporting and `/api/health/jobs` | #25 → `feature/job-alerts` | `55e0d8d` | 45116319604 | 433 | — | O4 |
+| #27 | Required MFA enforced on actions and API routes; step-up for deletion (session B) | #26 → `fix/required-mfa-enforcement` | `52e9415` | 45169193918 | 439 | — | S7 |
+| #29 | Invitation-only sign-up (session B) | #27 → `feature/invite-only-signup` | `495d693` | 45170143027 | 446 | `0017_beta_invites` | S13 |
+| #28 | Reviewer account with MFA pre-enrolled | #29 → `fix/reviewer-mfa` | `580f63c` | running at writing | 453 (top of stack) | — | P8 |
+| #30 | Account recovery | #28 → `feature/account-recovery` | `507c5d5` | running at writing | 453 | `0018_password_resets` | S11 |
+| #31 | Organisation export memory bound | #30 → `fix/export-memory` | `02c89b2` | running at writing | 453 | — | D6 |
 
 Every migration from `0011` to `0016` only adds tables, columns, a function or policies. None drops or rewrites data. `0014` seeds plan rows with today's values. `0016` enables row-level security with policies that change nothing unless `app.org_id` is set.
 
@@ -63,10 +68,11 @@ main (b8a8353)
  ├─ #11 tracker (docs only, independent)
  ├─ #16 strict CSP (independent)
  └─ #12 → #13 → #14 → #15 → #17 → #18 → #19 → #20 → #21 → #22 → #23 → #24 → #25 → #26
+      → #27 → #29 → #28 → #30 → #31
 ```
 
 - **Hard dependencies (migrations and code):**
-  - the migration sequence `0011` (#12) → `0012` (#15) → `0013` (#17) → `0014` (#19) → `0015` (#20) → `0016` (#25);
+  - the migration sequence `0011` (#12) → `0012` (#15) → `0013` (#17) → `0014` (#19) → `0015` (#20) → `0016` (#25) → `0017` (#29) → `0018` (#30);
   - #18, #19, #21, #22 and #26 use #17/#18's step-up;
   - #14 uses #13's purge;
   - #22 follows #21's `audit.ts` refactor.
@@ -75,7 +81,7 @@ main (b8a8353)
 **Recommended merge sequence:**
 1. #11 (docs).
 2. #16 (CSP). Small and independent.
-3. #12 → #26 in stack order.
+3. #12 → #31 in stack order. **#29 merges before #28**: #28 was retargeted onto #29 so the migration numbers stay in order.
 
 Merge #16 before or after the stack, but **not** in the middle of a retarget.
 
@@ -124,10 +130,10 @@ All of them run in **demo mode** (`AI_PROVIDER=mock`), so AI output is simulated
 
 | Feature | Status | Evidence | Gap |
 |---|---|---|---|
-| Sign-up, sign-in, sign-out, sessions | Merged | `auth-forms.test.ts`; security regression | — |
-| **Password reset / account recovery** | **Not built** | No reset flow; no way back for a user who loses their password, or both their authenticator and recovery codes | **P0** (roadmap R-P0-2) |
+| Sign-up, sign-in, sign-out, sessions | Merged; **invitation-only sign-up** in review (#29) | `auth-forms.test.ts`, `invite-only-signup.test.ts`; security regression | Sign-up had been open to anyone (finding F-A10) |
+| Password reset / account recovery | In review (#30) | `account-recovery.test.ts`; browser check 7/7 | Email delivery needs O3; the operator CLI covers it until then |
 | Email verification | Not built | Invitations join by email on sign-up | Needs email provider (O3); P1 |
-| Two-step verification, step-up, sign out everywhere | Verified (stack) | #17, #18; feature checks under CSP | Security emails need O3 |
+| Two-step verification, step-up, sign out everywhere | Verified (stack) **after a fix**: required MFA had been enforced only by the app page layout, so server actions and API routes were reachable without enrolment (finding F-A9); fixed in #27 | #17, #18, #27; feature checks under CSP (before #27) | Security emails need O3. Repeat the CSP feature checks on the new top of the stack |
 | Organisations, workspace types (creator, business, agency), multiple brands | Merged | `members.test.ts`, `review-hardening.test.ts`, regression | — |
 | Roles (owner, admin, editor, viewer) and brand-scoped client users | Merged | `members.test.ts`, `audit-access.test.ts` | — |
 | Tenant isolation | Merged (application scoping) + Verified (stack): RLS pilot on 3 tables | Application tests; `rls-pilot.test.ts` | **RLS covers brands, posts and creatives only.** All other tenant tables rely on application checks (§7) |
@@ -208,14 +214,18 @@ All of them run in **demo mode** (`AI_PROVIDER=mock`), so AI output is simulated
 
 | # | Finding | Severity | Action |
 |---|---|---|---|
-| F-A1 | **Reviewer account vs mandatory MFA.** #14's reviewer is an organisation owner, and #17 requires owners to enrol in two-step verification in production. A Meta reviewer would be stopped at enrolment. | High for the Meta review (P4) | Fix PR: reviewer setup pre-enrols MFA and prints recovery codes for the review form (R-P0-1) |
-| F-A2 | **No account recovery:** no password reset, and no operator path for lost two-step factors. | High | R-P0-2 |
-| F-A3 | **Organisation export holds up to 500 MB of files in memory** per request (3 per person per hour). On a small instance this risks out-of-memory. | Medium | R-P0-3 |
+| F-A1 | **Reviewer account vs mandatory MFA (fixed in #28).** #14's reviewer is an organisation owner, and #17 requires owners to enrol in two-step verification in production. A Meta reviewer would be stopped at enrolment. | High for the Meta review (P4) | Fix PR: reviewer setup pre-enrols MFA and prints recovery codes for the review form (R-P0-1) |
+| F-A2 | **No account recovery (fixed in #30):** no password reset, and no operator path for lost two-step factors. | High | R-P0-2 |
+| F-A3 | **Organisation export held up to 500 MB of files in memory (fixed in #31)** per request (3 per person per hour). On a small instance this risks out-of-memory. | Medium | R-P0-3 |
 | F-A4 | **No automated journey through publish and metrics.** | Medium (evidence gap) | R-P0-4: a sandbox platform for dev and CI only, plus the full lifecycle E2E |
 | F-A5 | **RLS protects 3 of the 23 tables that hold tenant or user data** (brands, posts, creatives) and is off by default. It must not be described as tenant isolation. | Informational | Documented in RLS_PILOT.md; risk register §7 |
 | F-A6 | **No reviews on any PR.** All evidence is from the author and from CI. | Process | Owner review (or an independent reviewer) before merging |
 | F-A7 | #16 had never run with the stack. | Closed | §4 |
-| F-A8 | Older-branch rate-limit flake. | Low | §3 |
+| F-A8 | Older-branch rate-limit flake. | Low | §3; also fixed for the deletion and password-reset tests in #30 |
+| F-A9 | **Required MFA was enforced only by the `(app)` page layout** (found by session B). Server actions and API routes don't render the layout, and `requireRecentSecondFactor` skipped users without MFA. In staging and production an un-enrolled owner or admin could, with a password alone, export data, change members, billing, social connections and caps. | **High** | Fixed in #27: the guards and step-up refuse with `MfaEnrolmentRequired` |
+| F-A10 | **Sign-up was open to anyone** (found by session B). | High for an invitation-only beta | Fixed in #29: `SIGNUP_MODE=invite_only` (default in staging and production), beta list, uniform refusal |
+| F-A11 | Config regression from #19: the `CREDITS_MODE` check was inserted between the `IMAGE_PROVIDER` `if` and its `else if`, so the `OPENAI_API_KEY` warning hung off the wrong check | Low | Fixed in #27 |
+| F-A12 | Parallel stacks from two sessions both used migration `0017` | Medium (merge-time breakage) | Resolved: #28 retargeted onto #29, account recovery renumbered to `0018`, merges only (no force-push) |
 
 ## 7. Security risk register (summary)
 
@@ -233,6 +243,11 @@ All of them run in **demo mode** (`AI_PROVIDER=mock`), so AI output is simulated
 | Audit integrity | Append-only by the application; noise limits; retention | Same database role can modify rows | Accept for beta, or a separate audit role later |
 | Dependencies | `npm audit` clean (#24) | Next.js 16 upgrade later | — |
 | Penetration test (F9) | — | Not done | Owner: before beta or before public launch |
+| RLS pilot on with a superuser role | Start-up warning only | The pilot silently does nothing | Refuse to start in strict mode (queued, session A) |
+| Meta `signed_request` without `issued_at` | Signature verified | No age limit, so a captured request can be replayed; it only repeats an idempotent deletion | Low; require `issued_at` after confirming Meta always sends it |
+| `/api/health/jobs` `dead24h` | Counts failed jobs by `run_at` | The failure time is approximated | Low; informational count only |
+| Required MFA bypass via actions and routes (F-A9) | Fixed in #27 | — | Merge #27 |
+| Open sign-up (F-A10) | Fixed in #29 | — | Merge #29; populate the beta list |
 
 **Security tests still required before beta:**
 - the independent isolation review;

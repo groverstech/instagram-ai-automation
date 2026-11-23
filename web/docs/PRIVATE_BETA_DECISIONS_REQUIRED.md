@@ -1,0 +1,71 @@
+# Decisions required from the owner
+
+Every decision below needs you: engineering won't make it. Each has options, consequences, cost and a recommendation. Status and evidence are in [PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md](PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md); sequencing is in [PRIVATE_BETA_ROADMAP.md](PRIVATE_BETA_ROADMAP.md).
+
+Costs are indicative (late 2026 list prices as remembered, **not verified**). Check current pricing before choosing.
+
+## 1. Merges (blocks everything)
+
+**D-1. Review and merge the open PRs.**
+- **What:** 21 PRs: #11 (docs), #16, and the stack #12 → #31. None has a review yet.
+- **Recommendation:**
+  - review in stack order;
+  - merge #11 and #16 first;
+  - then the stack, using the retargeting steps in [the audit §3](PRIVATE_BETA_LAUNCH_AUDIT.md#3-dependency-graph-and-merge-order).
+- **Risk if delayed:** the stack grows, and so does the merge effort.
+
+## 2. Scope
+
+**D-2. Confirm the private-beta definition** ([LAUNCH_READINESS.md §2](LAUNCH_READINESS.md)): Instagram and Facebook publishing; human approval before every publish; no autonomous publishing; credits in shadow mode.
+
+**D-3. Features in the mandate's inventory that the approved Phase 4 plan didn't adopt.** They come from the [Phase 4 proposal](PHASE4_PROPOSAL.md); the plan's PRs 4.0–4.9 don't include them.
+
+| Feature (proposal module) | Effort | Recommendation |
+|---|---|---|
+| Client sign-off approvals, comments, approval inbox (P4-7) | 4–6 days | Defer. Today: editor → admin approval, and brand-scoped client users can submit posts and see their brand |
+| Cross-platform analytics and attribution per pillar, campaign and creative (P4-3) | 5–7 days | Defer. Today: Instagram and Facebook metrics plus AI performance analysis |
+| Optimisation loop: weekly review agent with approvable change sets (P4-5) | 5–7 days | Defer. Today: AI analysis on the Analytics page, and strategy revisions |
+| Cross-brand agency reporting | 2–3 days | Defer. Today: organisation usage and credits by brand |
+| Smart scheduling, competitor monitoring, autonomous agents (P4-2, P4-4, P4-6) | Each 4+ days | Defer |
+
+**Your choice:** add any of these to the first release (they become P1 and are built), or confirm they're deferred.
+
+## 3. Infrastructure (blocks the beta)
+
+| ID | Decision | Options | Recommendation | Indicative cost | Blocks beta? |
+|---|---|---|---|---|---|
+| D-4 | Hosting (O1) | A: container platform (Fly.io, Render, Railway) with managed Postgres. B: AWS (ECS, RDS) | A: one web and one worker instance; Postgres with PITR | ~USD 50–150 a month | Yes |
+| D-5 | Production database role | An ordinary role (no superuser, no `BYPASSRLS`) for the app, and a privileged role only for `db:migrate` | Yes, from day one | None | Yes |
+| D-6 | Row-level security trial | `RLS_PILOT=on` on staging, then production | Yes, after D-5 | None | Recommended |
+| D-7 | Email provider (O3) | Postmark, Resend, Amazon SES | Postmark or Resend | ~USD 0–20 a month | Yes: password reset (#30), invitations, sign-up privacy (S5) |
+| D-8 | Error tracking and uptime (O2, O4) | Sentry plus Better Stack or UptimeRobot | Sentry; uptime checks on `/api/health/ready` and `/api/health/jobs` | ~USD 0–30 a month | Yes |
+| D-9 | Object storage: authorise PR 4.2 (R2) | Authorise now, or accept a single-instance beta on local disk with backups | Accept a single instance for the beta (D-10); authorise 4.2 before scaling or before carousels and Reels | R2 ~USD 0–15 a month at beta scale | No, if D-10 is accepted |
+| D-10 | Single-instance beta (F5) | Accept, or require 4.2 first | Accept, with a restore drill | — | — |
+| D-11 | Egress firewall (F7) | Platform network policy or a proxy | With the hosting choice | Platform-dependent | Yes |
+| D-12 | Backups and restore drill (D1) | Managed PITR plus a monthly drill | Yes | Included with managed Postgres | Yes |
+
+## 4. Configuration values
+
+| ID | Setting | Recommendation | Blocks beta? |
+|---|---|---|---|
+| D-13 | `AI_TRIPWIRE_USD` (per provider, per 15 minutes) | About 3–5× normal 15-minute spend; start at USD 5 for a small beta and tune | Yes (a value is needed) |
+| D-14 | `AI_MONTHLY_COST_LIMIT_USD` (per organisation, or per plan) | Set per plan; for example USD 20 for beta organisations | Yes |
+| D-15 | Provider-side budgets (Anthropic and OpenAI consoles) | Monthly budget at the expected total; **no auto-reload** | Yes |
+| D-16 | `AUDIT_RETENTION_DAYS` | 400 (default), or per your privacy notice | No |
+| D-17 | Credit value and plan allowances | Set before paid plans (PR 4.6), not before the beta | No |
+| D-18 | `SIGNUP_MODE` and the beta list (#29) | `invite_only` (the default in production); add invitees with `npm run beta:invite` | Yes (the list) |
+
+## 5. External parties
+
+| ID | Item | Recommendation | Blocks beta? |
+|---|---|---|---|
+| D-19 | Legal text: privacy, terms, data deletion, DPA (L1) | From counsel; the pages are ready (#12). Optionally mention the data export (#22) in "Your rights" | Yes |
+| D-20 | Meta developer app, business verification, test accounts; then submission (P4) | Start now: it's the longest pole. Pack and reviewer account ready (#14, #28) | Yes, for Instagram and Facebook publishing |
+| D-21 | Live AI validation (A1, A2) | Approve the plan in [roadmap §5](PRIVATE_BETA_ROADMAP.md): ≤ USD 7.01 in total, hard caps, Anthropic first | Yes |
+| D-22 | Independent tenant-isolation review (F8) | Before beta | Recommended |
+| D-23 | Penetration test (F9) | Before public launch | Your call |
+| D-24 | Platform terms review (L2) | With counsel | Yes |
+
+## 6. Launch
+
+**D-25. Approve the beta launch and the first invitations**, once every P0 gate in the checklist passes or is explicitly accepted as a risk.

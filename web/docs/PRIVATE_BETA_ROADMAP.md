@@ -16,9 +16,12 @@ Effort is in engineering days for one engineer, including tests and review.
 | ID | Work | Why | Acceptance criteria | Effort | Depends on |
 |---|---|---|---|---|---|
 | R-P0-0 | **Owner review of PRs #11–#26**, merge in order (audit §3) | Nothing is on `main` yet | All merged; `main` CI green; migrations `0011`–`0016` applied on staging | Owner time | — |
-| R-P0-1 | Reviewer account works with mandatory MFA (finding F-A1) | Meta review would stall at MFA enrolment | `reviewer:setup` enrols TOTP and prints recovery codes; a reviewer signs in with password + recovery code in production mode; test | 0.5 | #14, #17 |
-| R-P0-2 | **Account recovery** (F-A2) | Locked-out users have no path back; support-driven recovery is a takeover risk | Forgot-password page (no account enumeration; rate-limited); single-use, hashed, 30-minute reset tokens; reset ends all sessions; audited. Operator CLI issues a reset link and resets two-step verification after identity checks; audited. Email via the hook (delivery waits for O3) | 2 | #17 (sessions, MFA) |
-| R-P0-3 | Organisation export memory bound (F-A3) | Up to 500 MB per request held in memory | Lower file budget and one export at a time per instance; test | 0.5 | #22 |
+| R-P0-1 | **In review #28.** Reviewer account works with mandatory MFA (finding F-A1) | Meta review would stall at MFA enrolment | `reviewer:setup` enrols TOTP and prints recovery codes; a reviewer signs in with password + recovery code in production mode; test | 0.5 | #14, #17 |
+| R-P0-2 | **In review #30.** Account recovery (F-A2) | Locked-out users have no path back; support-driven recovery is a takeover risk | Forgot-password page (no account enumeration; rate-limited); single-use, hashed, 30-minute reset tokens; reset ends all sessions; audited. Operator CLI issues a reset link and resets two-step verification after identity checks; audited. Email via the hook (delivery waits for O3) | 2 | #17 (sessions, MFA) |
+| R-P0-3 | **In review #31.** Organisation export memory bound (F-A3) | Up to 500 MB per request held in memory | Lower file budget and one export at a time per instance; test | 0.5 | #22 |
+| R-P0-5 | **In review #27 (session B).** Required MFA enforced on server actions and API routes (F-A9) | Bypass of mandatory MFA | Guards and step-up refuse un-enrolled owners and admins where MFA is required; tests | done | — |
+| R-P0-6 | **In review #29 (session B).** Invitation-only sign-up (F-A10) | Open sign-up | `SIGNUP_MODE`, beta list, uniform refusal; tests | done | — |
+| R-P0-7 | Refuse to start in strict mode when `RLS_PILOT=on` and the role bypasses RLS | The pilot would silently do nothing | Start-up fails with a clear message; test | 0.5 | #25 |
 | R-P0-4 | **Lifecycle E2E with a sandbox platform** (F-A4) | No automated proof the journey works through publish and metrics | `SANDBOX` social provider, refused in staging and production, labelled "Simulated". Browser journey: account → organisation → brand → profile → strategy → calendar → content → visual → submit → approve → schedule → publish (job) → metrics → analytics. Runs in CI | 2–3 | R-P0-0 not needed (stack) |
 
 ### Owner (approval or vendor needed)
@@ -41,7 +44,7 @@ Effort is in engineering days for one engineer, including tests and review.
 
 | ID | Work | Approved in | Can start now? | Effort |
 |---|---|---|---|---|
-| R-P1-1 | **PR 4.4a: publish-attempt ledger, idempotency keys, read-back reconciliation before retry, token-health tracking and reconnect prompts** for the existing single-image publishers | Plan WS3 (4.4) | **Yes:** none of it needs R2 | 3–4 |
+| R-P1-1 | **Taken by session B** (stacks on #31, migration 0019). PR 4.4a: publish-attempt ledger, idempotency keys, read-back reconciliation before retry, token-health tracking and reconnect prompts** for the existing single-image publishers | Plan WS3 (4.4) | **Yes:** none of it needs R2 | 3–4 |
 | R-P1-2 | PR 4.4b: carousels, Reels, Stories, Facebook multi-photo and video | Plan WS3 (4.4) | No: needs PR 4.2 public media | 3 |
 | R-P1-3 | PR 4.2: R2 storage and CDN | Plan WS2 | **No: not authorised** | 4–5 |
 | R-P1-4 | PR 4.6: credit enforcement, grants on `invoice.paid`, top-up packs | Plan WS4 | Code yes, behind a flag. Activation needs one shadow billing period and your credit values | 4–5 |
@@ -74,18 +77,7 @@ These come from the Phase 4 proposal; the approved plan didn't adopt them:
 
 ## 4. Owner decision briefs
 
-| Decision | Options | Recommendation | Indicative cost | Blocks beta? |
-|---|---|---|---|---|
-| Hosting (O1) | A: container platform (Fly.io, Render, Railway) + managed Postgres. B: AWS (ECS, RDS) | A for the beta: one web and one worker instance, Postgres with PITR | ~USD 50–150 a month at beta scale (verify current pricing) | Yes |
-| Production DB role and RLS | Ordinary role now; `RLS_PILOT=on` on staging, then production | Both, before inviting | None | Role: yes. RLS activation: recommended, not strictly blocking |
-| Email (O3) | Postmark, Resend, SES | Postmark or Resend (transactional, simple domain setup) | ~USD 0–20 a month at beta volume | Yes (password reset) |
-| Error tracking and uptime (O2, O4) | Sentry plus an uptime service (Better Stack, UptimeRobot) | Sentry free/team tier; an uptime check on `/api/health/ready` and `/api/health/jobs` | ~USD 0–30 a month | Yes |
-| Spending settings | Tripwire per 15 minutes; monthly organisation limit; provider budgets | Tripwire ≈ 3–5× normal 15-minute spend; organisation limit per plan; provider budget at the monthly total | Protective | Yes (values) |
-| Single instance (F5) | Accept for beta, or authorise 4.2 first | Accept for beta if you're comfortable with a scheduled restore drill | — | No, if accepted |
-| Audit retention | 400 days (default) or your policy | 400 | — | No |
-| Credit values and allowances | Margin model (`05-credits-billing.md` §5.7) | Set before paid plans, not before the beta | — | No |
-| Penetration test timing | Before beta, or before public launch | Before public launch, with an independent isolation review before beta | External quote | Your call |
-| Client sign-off, cross-brand reporting | Add to scope, or keep for after the beta | After the beta | Engineering time | No |
+Moved to [PRIVATE_BETA_DECISIONS_REQUIRED.md](PRIVATE_BETA_DECISIONS_REQUIRED.md), which also lists the scope decision on features the approved plan didn't adopt (D-3).
 
 ## 5. Controlled live-validation plan (A1, A2), for your approval
 

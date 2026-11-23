@@ -26,11 +26,12 @@ Beta launch requires every P0 gate to pass: all gates except those marked P1 in 
 | S4 | Rate limits, quotas and spend caps enforced server-side | **In review** | Rate limits, plan run quota, fail-closed AI ledger and deployment-wide cap (PR 4.1); organisation and brand credit caps with alerts, shadow mode (#19); kill switch and tripwire (#20). Per-request enforcement of organisation and brand caps is PR 4.6 | Code |
 | S5 | Sign-up doesn't reveal registered emails (F1) | **Not started** | Needs the email provider (O3) | Owner, then code |
 | S6 | Strict Content Security Policy (F2) | **In review** | PR #16: per-request nonce, `script-src 'self' 'nonce-…' 'strict-dynamic'`, no `unsafe-inline`; every script carries the nonce, no violations, full regression passes | Code |
-| S7 | MFA for owners and admins (F3) | **In review** | #17 (F3a): TOTP with recovery codes, required for owners and admins in staging and production. #18 (F3b): a fresh second factor (15 minutes) for member, billing, social-connection and credit-cap changes; sign out everywhere else. Security notification emails wait for the email provider | Code |
+| S7 | MFA for owners and admins (F3) | **In review** | #17 (F3a): TOTP with recovery codes, required for owners and admins in staging and production. #18 (F3b): a fresh second factor (15 minutes) for member, billing, social-connection and credit-cap changes; sign out everywhere else. Security notification emails wait for the email provider. **Gap found and fixed:** required MFA wasn't enforced on server actions and API routes (audit F-A9); #27 enforces it in the access guards and step-up | Code |
 | S8 | Row-level security pilot and independent isolation check (F8) | **In review** | #25: policies on brands, posts and creatives behind `RLS_PILOT`; randomised cross-tenant tests as an ordinary role; cost measured (no measurable query overhead; 3 round trips per `withTenant`); findings and recommendation in `docs/RLS_PILOT.md`; a campaign-page filter gap found and fixed. Production needs an ordinary DB role (owner); the independent review remains (external) | Code, Owner, External |
 | S9 | Penetration test with findings fixed or accepted (F9) | **Not started** | After the beta build is feature-complete | Owner, External |
-| S11 | Account recovery: password reset and audited operator recovery for lost two-step factors (audit F-A2) | **Fail** | Not built. Roadmap R-P0-2 | Code |
-| S12 | Integrated stack (all PRs plus #16) passes tests, build, regression and CSP feature checks | **Pass (pre-merge)** | Audit §4: 434/434, regression 19/16/10/20, CSP feature checks clean (local branch `local/integration-check`). Repeat on `main` after merging | — |
+| S11 | Account recovery: password reset and audited operator recovery for lost two-step factors (audit F-A2) | **In review** | #30: forgot/reset flow (no enumeration, hashed single-use 30-minute tokens, sessions ended, MFA kept), `npm run users` operator recovery; 6 tests, browser check 7/7. Email delivery needs O3 | Code, Owner |
+| S13 | Sign-up limited to invited people (invitation-only beta) | **In review** | #29: `SIGNUP_MODE=invite_only` by default in staging and production; beta list (`npm run beta:invite`) or a pending organisation invitation; one refusal message for every uninvited email | Code, Owner (the list) |
+| S12 | Integrated stack (all PRs plus #16) passes tests, build, regression and CSP feature checks | **Pass (pre-merge), to repeat** | Audit §4: 434/434 at #26 + #16, regression 19/16/10/20, CSP feature checks clean (`local/integration-check`). #27–#31 have since been added: repeat on the new top, and on `main` after merging | — |
 | S10 | Egress firewall and metadata protection (F7) | **Not started** | With the hosting platform | Owner |
 
 ## Data
@@ -41,7 +42,7 @@ Beta launch requires every P0 gate to pass: all gates except those marked P1 in 
 | D2 | Object storage with versioning and lifecycle (R2) | **Not started** | PR 4.2: **not authorised yet** | Owner |
 | D3 | Account and brand deletion end to end | **In review** | PR #13 (4.3b): Settings → Delete data for brands, organisations and accounts; tests and browser checks pass | Code |
 | D4 | Tenant data export | **In review** | #22: owners download a ZIP of the organisation's data and files (secrets stripped by column name; step-up; 3 an hour; audited). Pointing the privacy notice at it is an owner (legal text) change | Code, Owner |
-| D6 | Organisation export can't exhaust server memory (audit F-A3) | **Fail** | Up to 500 MB held per request. Roadmap R-P0-3 | Code |
+| D6 | Organisation export can't exhaust server memory (audit F-A3) | **In review** | #31: one export at a time per process; 100 MB default file budget (`EXPORT_FILE_BUDGET_MB`) | Code |
 | D5 | Audit-log retention and export (F4) | **In review** | #21: Security log export (CSV, JSON; same access, scope and allow-list; step-up; audited) and retention (`AUDIT_RETENTION_DAYS`, default 400, purged daily). The retention period is an owner setting | Code, Owner |
 
 ## Platforms
@@ -52,7 +53,7 @@ Beta launch requires every P0 gate to pass: all gates except those marked P1 in 
 | P2 | Capabilities match what the publishers implement (plan defect D2) | **In review** | PR #12. Before it, Instagram and Facebook claim carousel and video support, but only single images are published | Code |
 | P3 | Instagram receives JPEG media (plan defect D1) | **In review** | PR #12 serves the publish media as JPEG. Public hosting at scale comes with R2 (PR 4.2) | Code |
 | P4 | Meta app approved for production permissions (or beta users added as app testers) | **External** | Pack, checklist and reviewer account ready (#14, `docs/submissions/META.md`). Submit once a public domain, the final legal text and your Meta app are in place. **It doesn't need R2:** single-image publishing works through the app's signed media links on a single instance | Owner, External |
-| P8 | Platform reviewer can sign in with mandatory MFA (audit F-A1) | **Fail** | Roadmap R-P0-1 | Code |
+| P8 | Platform reviewer can sign in with mandatory MFA (audit F-A1) | **In review** | #28: MFA pre-enrolled, recovery codes printed for the review form | Code |
 | P5 | Publish ledger, idempotency, reconciliation and token health; carousel and Reels | **Not started** | PR 4.4a (ledger, idempotency, reconciliation, token health) doesn't need R2 and can start now (roadmap R-P1-1). PR 4.4b (carousels, Reels, video) needs PR 4.2 | Code |
 | P6 | Live publish tests to test accounts on every enabled platform | **Not started** | After PR 4.4 and Meta access | Owner |
 | P7 | LinkedIn and YouTube marked "coming soon" until approved | **In review** | PR #12 labels them; a test checks the wording | Code |

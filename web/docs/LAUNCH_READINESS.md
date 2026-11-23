@@ -1,6 +1,6 @@
 # Private-beta readiness tracker
 
-**The index for BrandPilot's private-beta readiness:** owner decisions and session checkpoints here; gates, roadmap and audit in the three documents in §3. Every PR that
+**The index for BrandPilot's private-beta readiness.** The beta definition is here; everything else is in the five documents listed in §3. Every PR that
 changes a gate updates this file in the same PR, with evidence. Status is changed only when the
 work is merged **and** its evidence exists; a plan, a PR in review or demo-mode output is not
 evidence.
@@ -49,9 +49,11 @@ production-grade deployment, with the security, data and operations gates below 
 
 ## 3. Launch gates, roadmap and audit
 
-Since 23 Nov 2026 these live in three documents, which replace the gate tables and work queue that used to be here:
+Since 23 Nov 2026 these live in five documents, which replace the gate tables, work queue, decision list and checkpoints that used to be here:
 - **[PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md](PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md):** every launch gate with pass/fail status and evidence.
 - **[PRIVATE_BETA_ROADMAP.md](PRIVATE_BETA_ROADMAP.md):** remaining work by priority (P0, P1, P2), owner decision briefs, the live-validation plan and the critical path.
+- **[PRIVATE_BETA_DECISIONS_REQUIRED.md](PRIVATE_BETA_DECISIONS_REQUIRED.md):** every owner decision, with options, cost and a recommendation.
+- **[PRIVATE_BETA_PROGRESS.md](PRIVATE_BETA_PROGRESS.md):** open PRs, SHAs, CI, active work, known problems, how to resume, checkpoints.
 - **[PRIVATE_BETA_LAUNCH_AUDIT.md](PRIVATE_BETA_LAUNCH_AUDIT.md):** verified status of `main` and PRs #11–#26, the dependency graph, merge order and retargeting, the integrated-stack verification, the product inventory, findings and the security risk register.
 
 ## 4. Work queue
@@ -60,38 +62,8 @@ See [PRIVATE_BETA_ROADMAP.md](PRIVATE_BETA_ROADMAP.md) §1–§2.
 
 ## 5. Decisions and inputs needed from the owner
 
-Decision briefs with options, cost and recommendations: [PRIVATE_BETA_ROADMAP.md](PRIVATE_BETA_ROADMAP.md) §4.
-
-1. **Confirm the private-beta definition** in §2.
-2. **Authorise PR 4.2 (R2)** and create the Cloudflare account. Instagram publishing (PR 4.4) depends on it.
-3. **Choose vendors:** hosting, managed Postgres, email, error tracking, status page.
-4. **Real-provider validation:** keys in the validation environment and approval of the paid run.
-   Anthropic: the key must reach the session as an environment variable
-   (`BRANDPILOT_ANTHROPIC_API_KEY` or `ANTHROPIC_API_KEY`). The platform doesn't accept user
-   network secrets for Anthropic's hosts.
-5. **Legal text** for the privacy policy, terms, data-deletion instructions and DPA.
-6. **Meta developer app**, business verification, and test Instagram Business and Facebook Page
-   accounts. Submission happens after PR 4.3 is merged and the final legal text is live.
-7. Whether a **single-instance beta** is acceptable (F5).
-8. Whether the **penetration test** must happen before the beta or before the public launch.
+Moved to [PRIVATE_BETA_DECISIONS_REQUIRED.md](PRIVATE_BETA_DECISIONS_REQUIRED.md), with options, costs and recommendations.
 
 ## 6. Checkpoints
 
-Each session appends one line: date, what was merged or opened, gates changed, next item.
-
-| Date | Checkpoint |
-|---|---|
-| 22 Nov 2026 | Baseline verified (§1). Tracker created; plan documents brought onto `main` with it. Next: PR 4.3 platform readiness. |
-| 22 Nov 2026 | Opened #12 (4.3a: legal pages, Meta callbacks, capabilities, JPEG; CI green) and #13 (4.3b: self-service deletion, stacked on #12). Evidence: 373/373 tests on Postgres 16; browser regression 19/16/10/20 passing. Next: 4.3c (reviewer demo workspace, submission packs), then emergency pause (R2). |
-| 22 Nov 2026 | Opened #14 (4.3c: Meta submission pack, `reviewer:setup`). Finding: the Meta review and single-image beta publishing don't depend on R2 for a single-instance beta. Next: emergency pause (R2), then strict CSP (F2). |
-| 22 Nov 2026 | Opened #15 (emergency pause, R2; stacked on #14 for migration numbering). 378/378 tests; regression 19/16/10/20. Next: strict CSP (F2, S6). |
-| 22 Nov 2026 | Opened #16 (strict CSP, F2; from `main`). 349/349 tests; regression 19/16/10/20 under the policy. Next: MFA (F3, S7). |
-| 22 Nov 2026 | Opened #17 (MFA F3a; stacked on #15). 386/386 tests; regression 19/16/10/20; browser checks in optional and required modes. Recorded O7 (Next.js postcss advisory). Next: F3b, then PR 4.5 (credits shadow mode). |
-| 22 Nov 2026 | Opened #18 (MFA F3b; stacked on #17): 391/391 tests, CI green (45065217077), browser check 9/9, regression 19/16/10/20. Opened #19 (PR 4.5 credits shadow mode; stacked on #18): 400/400 tests, browser check 6/6, regression 19/16/10/20. Next: F12 (AI kill switch and tripwire). |
-| 23 Nov 2026 | #19 CI green (45067038811). Opened #20 (F12 kill switch and tripwire; stacked on #19): 407/407 tests, regression 19/16/10/20. Next: F4 (audit-log retention and export) and tenant export. |
-| 23 Nov 2026 | #20 CI was red on a pre-existing flaky test (the login limiter's fixed 15-minute window straddled during the run); fixed by pinning the clock (c22bb34), CI green (45108409393). Opened #21 (F4; stacked on #20): 413/413 tests, browser check 7/7, regression 19/16/10/20. Next: tenant data export (D4). |
-| 23 Nov 2026 | #21 CI green (45109461233). Opened #22 (D4 organisation data export; stacked on #21): 418/418 tests, browser check 4/4, regression 19/16/10/20. Next: `APP_SECRET` rotation without reconnects (S3). |
-| 23 Nov 2026 | #22 CI green (45110486063). Opened #23 (S3 `APP_SECRET` rotation; stacked on #22): 424/424 tests, end-to-end rotation check 6/6, regression 19/16/10/20. O7: npm override points Next.js at the project's patched postcss (audit clean, CSS byte-identical); PR next. Then: RLS pilot (S8). |
-| 23 Nov 2026 | #23 and #24 CI green (45112480510, 45113497809). Opened #24 (O7 postcss override) and #25 (S8 RLS pilot; stacked on #24): 430/430 tests, RLS browser check 6/6 as an ordinary role, regression 19/16/10/20. The authorised code queue is now in review; the remaining gates need owner decisions, infrastructure or external parties (see Owner decisions). |
-| 23 Nov 2026 | #25 CI green (45115332161). Opened #26 (O4 code part; stacked on #25): 433/433 tests, regression 19/16/10/20. Corrected statuses of S6, D3, P1, P2, P3, P7 and R2 to In review. All authorised code work is now in review; what remains needs owner decisions, infrastructure or external parties. |
-| 23 Nov 2026 | Full-mandate reconciliation. Verified all 16 open PRs (heads, bases, CI on head SHAs; no reviews yet) and the stack + #16 integration (434/434, regression 19/16/10/20, CSP feature checks clean). Added PRIVATE_BETA_LAUNCH_AUDIT.md, PRIVATE_BETA_ROADMAP.md and PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md; the gate tables moved to the checklist. New findings: reviewer vs MFA (P8), no account recovery (S11), export memory (D6), no lifecycle E2E (Q1). Next: R-P0-1 to R-P0-4. |
+Moved to [PRIVATE_BETA_PROGRESS.md §5](PRIVATE_BETA_PROGRESS.md#5-checkpoints).
