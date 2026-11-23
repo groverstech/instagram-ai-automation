@@ -8,16 +8,21 @@ cd "$(dirname "$0")/.."
 ADMIN_URL="${E2E_ADMIN_URL:-${TEST_DATABASE_URL:?set E2E_ADMIN_URL or TEST_DATABASE_URL}}"
 PORT="${PORT:-3100}"
 DB="bp_e2e_$(date +%s)"
+# A server left on the port would answer instead of this run's (against a dropped database).
+if curl -s -o /dev/null --max-time 2 "http://localhost:$PORT/"; then echo "Port $PORT is already in use; stop that server first." >&2; exit 1; fi
 psql "$ADMIN_URL" -qc "create database $DB"
 export E2E_DATABASE_URL="${ADMIN_URL%/*}/$DB"
 export CRON_SECRET="e2e-$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
 STORE="$(mktemp -d)"
+export E2E_OUTBOX="$STORE/outbox"
 DATABASE_URL="$E2E_DATABASE_URL" MIGRATE_ON_START=true SOCIAL_SANDBOX=true RUN_JOBS_IN_PROCESS=false \
+  EMAIL_PROVIDER=file EMAIL_OUTBOX_DIR="$E2E_OUTBOX" EMAIL_VERIFICATION=required \
   STORAGE_DIR="$STORE" AI_PROVIDER=mock AI_ALLOW_MOCK_IN_PRODUCTION=true IMAGE_PROVIDER=none \
   APP_SECRET="$(head -c 48 /dev/urandom | base64)" APP_URL="http://localhost:$PORT" PORT="$PORT" \
-  npx next start -p "$PORT" > "$STORE/server.log" 2>&1 &
+  setsid npx next start -p "$PORT" > "$STORE/server.log" 2>&1 &
 SERVER=$!
-cleanup() { kill "$SERVER" 2>/dev/null || true; psql "$ADMIN_URL" -qc "drop database if exists $DB with (force)" >/dev/null 2>&1 || true; }
+# The server runs in its own process group: stop the whole group (npx and the Next.js child).
+cleanup() { kill -- "-$SERVER" 2>/dev/null || kill "$SERVER" 2>/dev/null || true; psql "$ADMIN_URL" -qc "drop database if exists $DB with (force)" >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 for _ in $(seq 60); do curl -sf -o /dev/null "http://localhost:$PORT/login" && break; sleep 1; done
 curl -s -o /dev/null "http://localhost:$PORT/api/health/ready"
