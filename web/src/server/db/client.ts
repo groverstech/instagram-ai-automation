@@ -33,7 +33,15 @@ async function create(): Promise<DB> {
     }
     // Row-level security (docs/RLS_PILOT.md) doesn't apply to superusers: say so where it matters.
     const { isStrict } = await import("../config");
-    if (isStrict() || process.env.RLS_PILOT === "on") void import("./tenant").then((m) => m.checkRlsRole(db as unknown as DB));
+    const tenant = await import("./tenant");
+    if (tenant.rlsPilotOn() && isStrict()) {
+      // Staging and production with the pilot on: a role that bypasses RLS would make every policy
+      // a no-op while the setting says isolation is on. Refuse to serve (readiness fails) rather
+      // than run with a false sense of protection.
+      await tenant.assertRlsEffective(db as unknown as DB);
+    } else if (isStrict() || tenant.rlsPilotOn()) {
+      void tenant.checkRlsRole(db as unknown as DB);
+    }
     // Both drivers expose the same query-builder surface for everything this app uses.
     return db as unknown as DB;
   }
