@@ -55,8 +55,8 @@ production-grade deployment, with the security, data and operations gates below 
 |---|---|---|---|---|
 | S1 | No secrets in the repository or client bundles | **Done** | `check:secrets` in CI; `.env*` ignored | — |
 | S2 | Secrets in the platform's secret store, rotated after testing | **Owner** | At deployment | Owner |
-| S3 | OAuth tokens encrypted at rest; key rotation documented | **Partial** | AES-256-GCM in place. Rotating `APP_SECRET` today invalidates tokens (DEPLOYMENT §6), and no procedure without reconnects exists. Next: document the procedure (or add key versioning) in PR 4.9 | Code |
-| S4 | Rate limits, quotas and spend caps enforced server-side | **Partial** | Rate limits, plan run quota, fail-closed AI ledger and deployment-wide cap (PR 4.1). Missing: organisation and brand limits, kill switch and tripwire (F12) | Code |
+| S3 | OAuth tokens encrypted at rest; key rotation documented | **In review** | #23: values carry a key id; `APP_SECRET_PREVIOUS` keeps old values readable during a rotation; `npm run secrets:rotate` re-encrypts and reports what still needs the old key; runbook in DEPLOYMENT §7. Verified end to end: nobody reconnects or loses two-step verification | Code |
+| S4 | Rate limits, quotas and spend caps enforced server-side | **In review** | Rate limits, plan run quota, fail-closed AI ledger and deployment-wide cap (PR 4.1); organisation and brand credit caps with alerts, shadow mode (#19); kill switch and tripwire (#20). Per-request enforcement of organisation and brand caps is PR 4.6 | Code |
 | S5 | Sign-up doesn't reveal registered emails (F1) | **Not started** | Needs the email provider (O3) | Owner, then code |
 | S6 | Strict Content Security Policy (F2) | **In progress** | PR #16: per-request nonce, `script-src 'self' 'nonce-…' 'strict-dynamic'`, no `unsafe-inline`; every script carries the nonce, no violations, full regression passes | Code |
 | S7 | MFA for owners and admins (F3) | **In review** | #17 (F3a): TOTP with recovery codes, required for owners and admins in staging and production. #18 (F3b): a fresh second factor (15 minutes) for member, billing, social-connection and credit-cap changes; sign out everywhere else. Security notification emails wait for the email provider | Code |
@@ -131,7 +131,7 @@ started without waiting; each item is its own PR.
 | 5 | PR 4.5 Configurable plans and credits, shadow mode; organisation and brand AI limits and alerts | R3, A4 (part) | Commercial inputs can come later: everything is configuration | In review (#19) |
 | 6 | AI kill switch and tripwire (F12) | A4 | — | In review (#20) |
 | 7 | Audit-log retention and export (F4), tenant export | D4, D5 | — | In review (#21, #22) |
-| 8 | PR 4.9 parts: RLS pilot, `APP_SECRET` rotation procedure | S8, S3 | — | Next: `APP_SECRET` rotation |
+| 8 | PR 4.9 parts: RLS pilot, `APP_SECRET` rotation procedure | S8, S3 | — | Rotation in review (#23); RLS pilot next |
 | — | PR 4.2 R2 storage and CDN | D2, P3, O6 | **Authorisation**, Cloudflare account | Blocked: owner |
 | — | PR 4.4 Instagram and Facebook publishing (ledger, idempotency, reconciliation, carousels, Reels) | P5, P6 | PR 4.2 for video and scale; Meta app and test accounts | Blocked: 4.2 and owner. Single-image publishing already works without it on one instance (#14 finding) |
 | — | Real-provider validation | A1, A2 | Keys in the validation environment; approval of the paid run | Blocked: owner |
@@ -168,3 +168,4 @@ Each session appends one line: date, what was merged or opened, gates changed, n
 | 23 Nov 2026 | #19 CI green (45067038811). Opened #20 (F12 kill switch and tripwire; stacked on #19): 407/407 tests, regression 19/16/10/20. Next: F4 (audit-log retention and export) and tenant export. |
 | 23 Nov 2026 | #20 CI was red on a pre-existing flaky test (the login limiter's fixed 15-minute window straddled during the run); fixed by pinning the clock (c22bb34), CI green (45108409393). Opened #21 (F4; stacked on #20): 413/413 tests, browser check 7/7, regression 19/16/10/20. Next: tenant data export (D4). |
 | 23 Nov 2026 | #21 CI green (45109461233). Opened #22 (D4 organisation data export; stacked on #21): 418/418 tests, browser check 4/4, regression 19/16/10/20. Next: `APP_SECRET` rotation without reconnects (S3). |
+| 23 Nov 2026 | #22 CI green (45110486063). Opened #23 (S3 `APP_SECRET` rotation; stacked on #22): 424/424 tests, end-to-end rotation check 6/6, regression 19/16/10/20. O7: npm override points Next.js at the project's patched postcss (audit clean, CSS byte-identical); PR next. Then: RLS pilot (S8). |
