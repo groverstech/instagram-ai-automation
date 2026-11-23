@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
 import { decrypt, encrypt, sign } from "../crypto";
 import { provider } from "./registry";
@@ -10,6 +10,7 @@ import { log } from "../log";
 import { renderCreativePng } from "../creative/render";
 import { remember } from "../memory";
 import { pausedMessage } from "../publishing-paused";
+import { publishGate, suspendAutonomy } from "../autonomy/service";
 
 export function appUrl() {
   return (process.env.APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
@@ -106,6 +107,7 @@ export async function publishPost(postId: string) {
   // Token health: an expired token fails now, not at the platform (PR 4.4a).
   if (acct.expiresAt && acct.expiresAt.getTime() <= Date.now()) {
     await markNeedsReconnect(acct.id, "The access token expired.");
+    await suspendAutonomy(post.brandId, `The ${p.label} access token expired.`).catch(() => {});
     return fail(reconnectMessage(p.label));
   }
   // An earlier attempt may have gone out (interrupted or no answer): it must be checked first, so
@@ -122,13 +124,29 @@ export async function publishPost(postId: string) {
   const [creative] = await db.select().from(schema.creatives).where(eq(schema.creatives.id, post.creativeId));
   const [brand] = await db.select().from(schema.brands).where(eq(schema.brands.id, post.brandId));
   // Claim the post atomically: only one caller (scheduled job or "publish now") can move it to
-  // "publishing", so concurrent attempts can't both publish.
-  const [claimed] = await db
-    .update(schema.posts)
-    .set({ status: "publishing", publishError: null })
-    .where(and(eq(schema.posts.id, postId), inArray(schema.posts.status, ["approved", "scheduled", "failed"])))
-    .returning({ id: schema.posts.id });
-  if (!claimed) return { ok: false as const, error: "This post is already being published." };
+  // "publishing", so concurrent attempts can't both publish. In the same transaction, with the
+  // account row locked: the emergency pause and the autonomy policy are checked again immediately
+  // before anything is sent (docs/AUTONOMY.md), so a pause or a rule change since scheduling wins.
+  const gate = await db.transaction(async (tx) => {
+    await tx.execute(sql`select id from social_accounts where id = ${acct.id} for update`);
+    const [fresh] = await tx.select().from(schema.posts).where(eq(schema.posts.id, postId));
+    if (!fresh) return { ok: false as const, error: "Post not found" };
+    const d = await publishGate(tx as unknown as typeof db, fresh, acct);
+    if (d.result === "deny") return { ok: false as const, error: d.reasons[0] === "Publishing is paused for this brand" && owner ? pausedMessage(owner) : d.reasons.join("; "), paused: d.reasons[0] === "Publishing is paused for this brand" };
+    if (d.result === "require_approval") {
+      // A post the policy approved no longer qualifies: it goes back to a person, unsent.
+      await tx.update(schema.posts).set({ status: "pending_approval", approvedAt: null, autoApprovedVersion: null, publishError: `Needs a person's approval: ${d.reasons.join("; ")}` }).where(eq(schema.posts.id, postId));
+      return { ok: false as const, error: `Needs a person's approval: ${d.reasons.join("; ")}`, toPerson: true as const };
+    }
+    const [claimed] = await tx
+      .update(schema.posts)
+      .set({ status: "publishing", publishError: null })
+      .where(and(eq(schema.posts.id, postId), inArray(schema.posts.status, ["approved", "scheduled", "failed"])))
+      .returning({ id: schema.posts.id });
+    if (!claimed) return { ok: false as const, error: "This post is already being published." };
+    return null;
+  });
+  if (gate) return gate;
 
   const caption = captionOf(post);
   // The attempt is recorded before anything is sent. If it can't be, nothing is sent.
@@ -182,6 +200,9 @@ export async function publishPost(postId: string) {
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
     if (isTokenError(e)) await markNeedsReconnect(acct.id, detail);
+    // Automatic safeguard (docs/AUTONOMY.md): a failed autonomous publish, or a rejected token,
+    // drops the brand from Autonomous to Assisted until an owner has looked.
+    if (post.autoApprovedVersion != null || isTokenError(e)) await suspendAutonomy(post.brandId, `${isTokenError(e) ? "Token rejected" : "Autonomous publish failed"} on ${p.label}: ${detail.slice(0, 200)}`).catch(() => {});
     // Definitely not published: refused before the final request, refused by the platform (4xx
     // other than timeout and rate limit), or not supported. Anything else may have gone out.
     const refused = e instanceof PlatformError && e.status !== undefined && e.status >= 400 && e.status < 500 && e.status !== 408 && e.status !== 429;

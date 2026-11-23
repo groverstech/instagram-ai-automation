@@ -11,6 +11,7 @@ import { Badge, Button, Card, CardBody, CardHeader, Field, Input, Modal, Notice,
 import { useRun } from "@/components/hooks";
 import type { Plan } from "@/server/credits";
 import { CreditsCard, type CreditView } from "./credits-card";
+import { AutonomyCard, type AutonomyView } from "./autonomy-card";
 import { ROLE_DESCRIPTIONS, roleAtLeast, type Role } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
@@ -53,6 +54,7 @@ export function SettingsView(props: {
   accountPlan: AccountDeletionPlan;
   /** Two-step verification is on for the viewer. */
   mfaEnabled: boolean;
+  autonomy: { brandId: string; brandName: string; view: AutonomyView } | null;
   integrations: { ai: { provider: string; ready: boolean; model: string }; image: { ready: boolean; provider: string }; embeddings: string; database: string } | null;
 }) {
   const isAdmin = roleAtLeast(props.role, "admin") && !props.scoped;
@@ -181,6 +183,8 @@ export function SettingsView(props: {
               <p className="mt-3 text-[12px] text-faint">Each brand keeps separate memory, assets, strategies, campaigns and social connections. Switching changes the brand every page works on.</p>
             </CardBody>
           </Card>
+
+          {props.autonomy ? <AutonomyCard brandId={props.autonomy.brandId} brandName={props.autonomy.brandName} view={props.autonomy.view} canEdit={props.role === "owner"} /> : null}
 
           {props.aiOverview ? <AiUsageCard data={props.aiOverview} /> : null}
 

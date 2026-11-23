@@ -63,6 +63,8 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ m
         externalUrl: p.externalUrl,
         publishError: p.publishError,
         check: checks[p.id] ?? null,
+        origin: p.origin,
+        autoApprovedVersion: p.autoApprovedVersion,
         rationale: p.rationale,
         brief: String((p.copy as { brief?: string }).brief ?? ""),
         hooks: ((p.copy as { hooks?: string[] }).hooks ?? []) as string[],

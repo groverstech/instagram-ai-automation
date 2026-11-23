@@ -10,6 +10,7 @@ import { aiOverviewFor } from "@/server/ai/overview";
 import { roleAtLeast } from "@/lib/roles";
 import { accountDeletionPlan } from "@/server/deletion";
 import { creditStatusFor } from "@/server/credit-caps";
+import { autonomyView } from "@/server/autonomy/service";
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ billing?: string }> }) {
   const { billing } = await searchParams;
@@ -46,6 +47,8 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ b
       // AI providers and usage: organisation-wide (all brands' spend), so never for brand-scoped
       // members; aiOverviewFor re-checks on the server.
       aiOverview={!view.scoped && roleAtLeast(role, "admin") ? await aiOverviewFor(session, ws.id) : null}
+      // Autonomy for the active brand: owners and admins see it; only owners change it.
+      autonomy={roleAtLeast(role, "admin") ? { brandId: brand.id, brandName: brand.name, view: await autonomyView(brand.id) } : null}
       members={view.members}
       accountPlan={await accountDeletionPlan(session.user.id)}
       mfaEnabled={Boolean(session.mfaEnabled)}

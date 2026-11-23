@@ -140,6 +140,11 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
     if (prev.length < 32) err("APP_SECRET_PREVIOUS", "Each previous secret must be the full old APP_SECRET (32+ characters). A shorter one is ignored, so values encrypted with it can't be read.");
     else if (prev === env.APP_SECRET) warn("APP_SECRET_PREVIOUS", "Same as APP_SECRET: nothing to rotate from. Remove it.");
   }
+  {
+    const a = (env.AUTONOMOUS_PUBLISHING ?? "").trim().toLowerCase();
+    if (a && a !== "on" && a !== "off") err("AUTONOMOUS_PUBLISHING", "Use on or off (default off).");
+    else if (a === "on" && strict) warn("AUTONOMOUS_PUBLISHING", "Autonomous publishing is available to owners here. For the private beta it needs the owner's explicit authorisation (decision D-28).");
+  }
   if (strict && (env.SOCIAL_SANDBOX ?? "").trim().toLowerCase() === "true") err("SOCIAL_SANDBOX", "The social sandbox simulates every platform and is for development, demos and CI only. Remove it here: it's ignored in staging and production.");
   const retention = (env.AUDIT_RETENTION_DAYS ?? "").trim();
   if (retention && !(Number.isInteger(Number(retention)) && Number(retention) >= 90)) err("AUDIT_RETENTION_DAYS", "Use a whole number of days, at least 90 (default 400). Until it's fixed, 400 applies.");

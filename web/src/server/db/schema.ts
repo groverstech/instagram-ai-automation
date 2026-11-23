@@ -122,6 +122,16 @@ export const brands = pgTable(
     publishingPausedAt: timestamp("publishing_paused_at", { withTimezone: true }),
     publishingPausedBy: text("publishing_paused_by"),
     publishingPauseReason: text("publishing_pause_reason"),
+    /**
+     * Autonomy (docs/plan/06-autonomous-publishing-security.md; src/server/autonomy): advisor,
+     * assisted (default) or autonomous. Rules are versioned; every decision records the version.
+     * Autonomous is suspended automatically (falls back to assisted) on token errors or failures.
+     */
+    autonomyLevel: text("autonomy_level").notNull().default("assisted"),
+    autonomyRules: jsonb("autonomy_rules").$type<Record<string, unknown>>().notNull().default({}),
+    autonomyRulesVersion: integer("autonomy_rules_version").notNull().default(1),
+    autonomySuspendedAt: timestamp("autonomy_suspended_at", { withTimezone: true }),
+    autonomySuspendedReason: text("autonomy_suspended_reason"),
     createdAt: createdAt(),
   },
   (t) => [index("brands_ws_idx").on(t.workspaceId)],
@@ -390,6 +400,10 @@ export const posts = pgTable(
     publishError: text("publish_error"),
     approvedBy: text("approved_by"),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
+    /** "ai": created by an AI planner (eligible for autonomous approval); "human" otherwise. */
+    origin: text("origin").notNull().default("human"),
+    /** Set when the autonomy policy approved the post instead of a person: the rules version used. */
+    autoApprovedVersion: integer("auto_approved_version"),
     publishedAt: timestamp("published_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
@@ -415,6 +429,8 @@ export const socialAccounts = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     scopes: text("scopes"),
     status: text("status").$type<"active" | "expired" | "revoked" | "error">().notNull().default("active"),
+    /** Autonomy held below the brand's level for this account (null: follow the brand; never higher). */
+    autonomyLevel: text("autonomy_level"),
     meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
     connectedBy: text("connected_by"),
     /**
@@ -922,4 +938,36 @@ export const publishAttempts = pgTable(
     finishedAt: timestamp("finished_at", { withTimezone: true }),
   },
   (t) => [index("publish_attempts_post").on(t.postId, t.attempt)],
+);
+
+/**
+ * Autonomy decisions and actions (docs/plan/06-autonomous-publishing-security.md §6.7). Append-only
+ * by the application: every policy decision the AI acted on, and every level or rule change, with
+ * the reasons and the rules version. Owners and admins can see it.
+ */
+export const agentActions = pgTable(
+  "agent_actions",
+  {
+    id: id(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    brandId: text("brand_id")
+      .notNull()
+      .references(() => brands.id, { onDelete: "cascade" }),
+    postId: text("post_id").references(() => posts.id, { onDelete: "set null" }),
+    socialAccountId: text("social_account_id").references(() => socialAccounts.id, { onDelete: "set null" }),
+    /** "user" (a person), "agent" (the autonomy service) or "system" (automatic safeguards). */
+    actorType: text("actor_type").$type<"user" | "agent" | "system">().notNull(),
+    actorUserId: text("actor_user_id"),
+    action: text("action").notNull(),
+    decision: text("decision").$type<"allow" | "require_approval" | "deny" | "changed">().notNull(),
+    level: text("level").notNull(),
+    reasons: jsonb("reasons").$type<string[]>().notNull().default([]),
+    policyVersion: integer("policy_version").notNull(),
+    contentHash: text("content_hash"),
+    details: jsonb("details").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [index("agent_actions_brand").on(t.brandId, t.createdAt)],
 );
