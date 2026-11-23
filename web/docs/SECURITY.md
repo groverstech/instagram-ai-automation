@@ -74,6 +74,11 @@ brand scope, members' sign-ins only from joining, refusals and their audit recor
   - the configuration validator reports variable names only.
 - **OAuth tokens:** AES-256-GCM encrypted at rest with `APP_SECRET`, and decrypted only when
   calling the platform.
+- **Key rotation (S3):**
+  - Encrypted values are stored as `v1.<key id>.<…>`.
+  - `APP_SECRET_PREVIOUS` lets reads, signature checks and recovery-code checks accept the old secret during a rotation; writes always use the new one.
+  - `npm run secrets:rotate` re-encrypts stored tokens and two-step secrets, then reports what still depends on an old key.
+  - Runbook: DEPLOYMENT.md §7.
 - **Logs:** secret-looking fields are redacted and key-shaped values masked.
 - **Audit log:** IPs are stored as keyed hashes and email addresses of failed sign-ins only as keyed
   hashes.

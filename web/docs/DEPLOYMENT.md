@@ -189,7 +189,8 @@ limiter, and are never cached. Responses carry `version` from `APP_VERSION` or `
 |---|---|
 | `DEPLOY_ENV` | `staging` or `production` (§1). The image defaults to `production`. |
 | `APP_URL` | Public https URL, e.g. `https://app.example.com`. OAuth redirects, Stripe return URLs, signed media links. |
-| `APP_SECRET` | 32+ random characters (`openssl rand -base64 48`). Encrypts OAuth tokens at rest, signs links, keys the audit-log IP hashes. Rotating it invalidates stored tokens (users reconnect accounts). |
+| `APP_SECRET` | 32+ random characters (`openssl rand -base64 48`). Encrypts OAuth tokens and two-step secrets at rest, signs links, keys recovery-code and audit-log hashes. Rotate it with `APP_SECRET_PREVIOUS` (§7, "Rotating APP_SECRET"): nobody has to reconnect. |
+| `APP_SECRET_PREVIOUS` | During a rotation only: the old `APP_SECRET` (comma-separated if several). Reads accept it; writes use the new secret. Each must be the full old secret (32+ characters) |
 | `DATABASE_URL` | Postgres connection string (`postgres://…`). |
 | `BRANDPILOT_ANTHROPIC_API_KEY` | Claude API key, for every AI feature. `ANTHROPIC_API_KEY` still works as a fallback when this is unset. |
 
@@ -267,6 +268,25 @@ never runs in CI. It refuses demo mode and reports a provider without a key as `
 - **OAuth tokens:** AES-256-GCM encrypted at rest with `APP_SECRET`.
 - **Separate secrets per environment** (staging never shares production keys). Rotate after
   personnel changes and after any test campaign that shared keys.
+
+### Rotating APP_SECRET
+
+Nobody is signed out of their social accounts or two-step verification (`src/server/crypto.ts`, `src/server/secrets-rotate.ts`). Encrypted values carry the id of the key that wrote them, and only key ids and counts are printed.
+
+1. Generate a new secret (`openssl rand -base64 48`). Set it as `APP_SECRET`, set the old one as `APP_SECRET_PREVIOUS`, and deploy.
+   - Reads accept both secrets; writes use the new one.
+   - OAuth state and media links signed with the old secret stay valid until they expire.
+2. Run `npm run secrets:rotate -- reencrypt --by "<you>"`.
+   - Add `--dry-run` first if you like.
+   - It re-encrypts social-account tokens and two-step secrets under the new key, row by row, with compare-and-set.
+   - It's audited as `config.secrets_reencrypt`.
+   - Any value no configured key can read is listed and the exit code is 1.
+3. Run `npm run secrets:rotate -- status`. It shows what still depends on the old key.
+   - **Encrypted values** should all be under the current key now.
+   - **Recovery codes** can't be re-hashed without the codes themselves. A person's codes stay under the old key until they make new ones, and keep working while the old key is in `APP_SECRET_PREVIOUS`.
+4. Remove `APP_SECRET_PREVIOUS` when you're ready. Recovery codes still under the old key then stop working; those people can still sign in with their authenticator app and make new codes. Removing it also ends signed links from before the rotation.
+
+Audit-log IP and email hashes made before the rotation no longer match new ones. That only affects the per-source noise limit, which restarts.
 
 ## 8. Network security (required)
 

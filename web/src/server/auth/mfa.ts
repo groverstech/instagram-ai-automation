@@ -5,7 +5,7 @@ import { audit } from "../audit";
 import { decrypt, encrypt } from "../crypto";
 import { isStrict } from "../config";
 import { enforce } from "../ratelimit";
-import { hashRecoveryCode, newRecoveryCodes, newTotpSecret, otpauthUri, verifyTotp } from "./totp";
+import { newRecoveryCodes, newTotpSecret, otpauthUri, recoveryCodeCandidates, verifyTotp } from "./totp";
 
 /**
  * Two-step verification (FOLLOW_UPS F3): authenticator-app codes (TOTP) with one-time recovery codes.
@@ -95,8 +95,9 @@ export async function checkSecondFactor(userId: string, code: string, now: numbe
     const [ok] = await db.update(schema.users).set({ mfaLastStep: step }).where(and(eq(schema.users.id, userId), unchanged)).returning({ id: schema.users.id });
     return ok ? "totp" : null;
   }
-  const h = hashRecoveryCode(code);
-  if (code.replace(/[^a-z0-9]/gi, "").length === 8 && u.mfaRecoveryHashes.includes(h)) {
+  // Any configured key (a rotation keeps codes issued under the previous secret working).
+  const h = code.replace(/[^a-z0-9]/gi, "").length === 8 ? recoveryCodeCandidates(code).find((c) => u.mfaRecoveryHashes.includes(c)) : undefined;
+  if (h) {
     // Consumed only if still present: a recovery code can't be used twice, even concurrently.
     const [ok] = await db
       .update(schema.users)
