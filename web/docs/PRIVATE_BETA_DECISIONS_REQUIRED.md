@@ -28,6 +28,10 @@ Costs are indicative (late 2026 list prices as remembered, **not verified**). Ch
 | Cross-brand agency reporting | 2–3 days | Defer. Today: organisation usage and credits by brand |
 | Smart scheduling, competitor monitoring, autonomous agents (P4-2, P4-4, P4-6) | Each 4+ days | Defer |
 
+| **Autonomy levels: Advisor, Assisted, Autonomous** (approved product decision 3, 8 Nov) | 6–10 days, including per-brand policy, guardrails and audit | The approved Phase 4 plan builds no autonomy levels; only the emergency pause exists (#15), and every post needs human approval. Recommendation: beta at "human approves everything" (effectively Advisor/Assisted), Autonomous after the beta |
+
+**Also confirm the plan's status:** `plan/README.md` still calls `PHASE4_PLAN.md` "the detailed plan awaiting approval". Please confirm it is the approved first-release scope, or say what's different.
+
 **Your choice:** add any of these to the first release (they become P1 and are built), or confirm they're deferred.
 
 ## 3. Infrastructure (blocks the beta)

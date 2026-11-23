@@ -17,11 +17,11 @@ Two Claude Code sessions work on the mandate: **A** (`session_017ArpCNvaij8Z6GvK
 | [#30](https://github.com/groverstech/instagram-ai-automation/pull/30) | Account recovery (S11; migration 0018) | `feature/account-recovery` → #28 | `507c5d5` | 45180294021 green | A |
 | [#31](https://github.com/groverstech/instagram-ai-automation/pull/31) | Organisation export memory bound (D6) | `fix/export-memory` → #30 | `02c89b2` | 45180297592 green | A |
 | [#32](https://github.com/groverstech/instagram-ai-automation/pull/32) | RLS: refuse to start in strict mode when the role bypasses RLS (R-P0-7) | `fix/rls-strict-refusal` → #31 | `be65893` | 45181093942 green | A |
-| [#33](https://github.com/groverstech/instagram-ai-automation/pull/33) | PR 4.4a: publish-attempt ledger, reconciliation, token health (migration 0019) | `feature/p4-publish-ledger` → #31 | `1caf11b` | 45182458277 green | B |
+| [#33](https://github.com/groverstech/instagram-ai-automation/pull/33) | PR 4.4a: publish-attempt ledger, reconciliation, token health (migration 0019); sandbox gains finalSend and findRecentPost | `feature/p4-publish-ledger` → #34 (retargeted) | `dd068a3` | running at writing (`1caf11b` was green: 45182458277) | B |
 | [#34](https://github.com/groverstech/instagram-ai-automation/pull/34) | Social sandbox and the full lifecycle journey in CI (Q1, R-P0-4) | `feature/sandbox-lifecycle` → #32 | `2ffc201` | 45183763244 green (includes the lifecycle step) | A |
-| [#35](https://github.com/groverstech/instagram-ai-automation/pull/35) | Load test and ASVS L2 self-review (R-P1-7) | `docs/load-asvs-review` → #34 | `3d07fcb` | running at writing | A |
+| [#35](https://github.com/groverstech/instagram-ai-automation/pull/35) | Load test and ASVS L2 self-review (R-P1-7) | `docs/load-asvs-review` → #33 (retargeted; #33 merged in) | `e97d37b` | running at writing | A |
 
-**Stack order:** main → #12 → #13 → #14 → #15 → #17 → #18 → #19 → #20 → #21 → #22 → #23 → #24 → #25 → #26 → #27 → #29 → #28 → #30 → #31, then two lines from #31: **#32 → #34** (A) and **#33** (B). Session A proposed that #33 merges `feature/sandbox-lifecycle` and retargets onto #34, so the line is linear again and the lifecycle journey covers the ledger. #11 and #16 are independent.
+**Stack order:** main → #12 → #13 → #14 → #15 → #17 → #18 → #19 → #20 → #21 → #22 → #23 → #24 → #25 → #26 → #27 → #29 → #28 → #30 → #31, → #32 → #34 → #33 → #35. **Linear again**: #33 merged `feature/sandbox-lifecycle` and was retargeted onto #34; #35 merged #33 and was retargeted onto it. The lifecycle journey now goes through the publish ledger. #11 and #16 are independent.
 
 **Migrations:** 0011 (#12), 0012 (#15), 0013 (#17), 0014 (#19), 0015 (#20), 0016 (#25), 0017 (#29), 0018 (#30), 0019 (#33). **Next free: 0020**; agree it between sessions before use.
 
@@ -35,6 +35,9 @@ Two Claude Code sessions work on the mandate: **A** (`session_017ArpCNvaij8Z6GvK
 | R-P1-7: PR 4.9 remainder (load test, ASVS L2 review) | A | In review #35. The DR drill needs hosting |
 
 ## 3. Known problems
+
+- **Gaps from #33 (session B):**
+  - `publish_attempts` isn't in the RLS pilot or the organisation export (#22). Add both when RLS is extended and in the next export change.
 
 - **Local test Postgres** (this session's environment) stops when the worker restarts, or is killed without a clean shutdown. Restart with `pg_ctlcluster 16 main start`. GitHub CI is unaffected.
 - **Fixed-window rate-limit tests** can straddle a 15-minute boundary under load. The clock is now pinned in `auth-forms` (#20), `deletion` and `account-recovery` (#30); the fix on older branches lands as the stack merges.
@@ -72,3 +75,4 @@ The browser regression scripts live in the session scratchpad. They aren't in th
 | 23 Nov 2026 | Session B opened #27 (required MFA enforced on actions and routes) and #29 (invitation-only sign-up, 0017). Session A opened #28 (reviewer MFA), #30 (account recovery, 0018 after renumbering) and #31 (export memory), restacked by merging after #29 (no force-push). Top of stack 453/453 on PG16. Added PRIVATE_BETA_DECISIONS_REQUIRED.md and PRIVATE_BETA_PROGRESS.md; decisions and checkpoints moved out of LAUNCH_READINESS.md. Next (A): RLS strict-mode refusal, sandbox lifecycle E2E. Next (B): PR 4.4a on `fix/export-memory`, migration 0019. |
 | 23 Nov 2026 | Opened #32 (RLS strict-mode refusal) and #34 (social sandbox, plus the lifecycle journey: 10/10 locally, now a CI step). Session B opened #33 (PR 4.4a, 0019). CI green on #28, #30, #31, #32 and #33. Next (A): R-P1-7 load test and ASVS review; credit enforcement stays owner-gated (D-17). |
 | 23 Nov 2026 | #34 CI green including the new lifecycle step (45183763244); regression 19/16/10/20 on the #34 build. Opened #35: load test (no errors at 10 and 25 concurrent clients; calendar ~20 pages/s, CPU-bound) and ASVS L2 self-review (gaps become decisions D-26 and D-27). |
+| 23 Nov 2026 | Stack relinearised: #31 → #32 → #34 → #33 → #35 (merges only). Top of stack 472/472 on PG16. Session B has stopped new work and handed the next items back. Decisions: added autonomy levels and the plan-status confirmation to D-3. |
