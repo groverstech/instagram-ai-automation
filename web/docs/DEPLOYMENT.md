@@ -384,6 +384,9 @@ For large deployments, also put a CDN or WAF rate limit in front.
   - `config.refused`;
   - `db.migrate.failed`;
   - `jobs.publish_interrupted`;
+  - `jobs.dead`: a job out of retries, or interrupted with an unknown outcome. It's also reported through `captureError` (`where: "jobs.dead"`), so an error tracker pages on it;
+  - **`GET /api/health/jobs`** with `Authorization: Bearer $CRON_SECRET` failing: 503 when queued work is more than 15 minutes overdue or a job has made no progress for 15 minutes, i.e. the worker or the cron caller has stopped. It returns counts only (`overdue`, `stuck`, `dead24h`). Poll it every few minutes from the uptime monitor;
+  - `audit.retention_failed` and `ai.tripwire`;
   - `worker.stopped` with `drained: false`;
   - `ratelimit.*` spikes;
   - Anthropic and OpenAI spend.

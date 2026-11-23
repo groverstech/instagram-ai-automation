@@ -2,6 +2,7 @@ import "server-only";
 import { and, asc, eq, inArray, lt, lte, or, sql } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
 import { log } from "../log";
+import { captureError } from "../monitoring";
 
 export type JobType = "publish_post" | "sync_metrics";
 
@@ -78,6 +79,7 @@ export async function runDueJobs(handlers: Record<string, Handler>, limit = 10, 
     const interrupted = before === "running" ? onInterrupted[job.type] : undefined;
     if (interrupted && (await interrupted(job.payload).catch(() => true))) {
       await settle({ status: "failed", lastError: "Interrupted; not retried automatically (outcome unknown)." });
+      reportDeadJob(job, "interrupted");
       results.push({ id, ok: false, error: "interrupted" });
       continue;
     }
@@ -103,7 +105,18 @@ export async function runDueJobs(handlers: Record<string, Handler>, limit = 10, 
       continue;
     }
     if (error !== null) log.warn("jobs.job_failed", { id, type: job.type, attempt: job.attempts, willRetry: retry, error });
+    if (error !== null && !retry) reportDeadJob(job, error);
     results.push(error === null ? { id, ok: true } : { id, ok: false, error });
   }
   return results;
+}
+
+/**
+ * A job that won't run again (out of retries, or interrupted with an unknown outcome) needs a
+ * person: a post that didn't publish, metrics that stopped syncing. Reported to the error monitor
+ * (page on `jobs.dead`) as well as logged. The payload holds ids only.
+ */
+function reportDeadJob(job: { id: string; type: string; attempts: number; payload: Record<string, unknown> }, reason: string) {
+  log.error("jobs.dead", { id: job.id, type: job.type, attempts: job.attempts, reason: reason.slice(0, 300), payload: job.payload });
+  captureError(new Error(`Job ${job.type} failed permanently after ${job.attempts} attempt(s)`), { where: "jobs.dead", jobId: job.id, type: job.type });
 }
