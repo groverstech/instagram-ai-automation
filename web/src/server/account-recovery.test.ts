@@ -4,7 +4,7 @@
  * recovery for lost passwords and lost second factors.
  */
 import { and, eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 process.env.PGLITE_DIR = "memory://";
 process.env.APP_URL = "https://app.example.test";
@@ -51,7 +51,13 @@ describe("forgot password", () => {
   it("is rate-limited per email", async () => {
     const u = await user();
     let last: Awaited<ReturnType<typeof rec.requestPasswordReset>> = { ok: true };
-    for (let i = 0; i < 11; i++) last = await rec.requestPasswordReset(u.email, `198.51.100.${i}`);
+    // Fixed 15-minute windows: pin the clock mid-window so the attempts can't straddle a boundary.
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-01-01T00:07:00Z") });
+    try {
+      for (let i = 0; i < 11; i++) last = await rec.requestPasswordReset(u.email, `198.51.100.${i}`);
+    } finally {
+      vi.useRealTimers();
+    }
     expect(last).toMatchObject({ ok: false, error: expect.stringMatching(/Too many/) });
   });
 });

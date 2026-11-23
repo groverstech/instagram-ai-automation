@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { eq } from "drizzle-orm";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 process.env.AI_PROVIDER = "mock";
 process.env.PGLITE_DIR = "memory://";
@@ -134,8 +134,15 @@ describe("deleting an organisation", () => {
   it("password guesses are rate-limited", async () => {
     const owner = await user("guesser");
     const w = await org("Guess", [[owner.id, "owner"]]);
-    for (let i = 0; i < 10; i++) await expect(deleteWorkspaceFor(sess(owner.id), w.id, `wrong-${i}`)).rejects.toThrow(/password isn't right/);
-    await expect(deleteWorkspaceFor(sess(owner.id), w.id, PW)).rejects.toThrow(/Too many/i);
+    // The limiter counts in fixed 15-minute windows: pin the clock mid-window so the 11 attempts
+    // can't straddle a boundary (the same flake #20 fixed in auth-forms.test.ts).
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-01-01T00:07:00Z") });
+    try {
+      for (let i = 0; i < 10; i++) await expect(deleteWorkspaceFor(sess(owner.id), w.id, `wrong-${i}`)).rejects.toThrow(/password isn't right/);
+      await expect(deleteWorkspaceFor(sess(owner.id), w.id, PW)).rejects.toThrow(/Too many/i);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
