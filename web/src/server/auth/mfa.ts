@@ -1,4 +1,5 @@
 import "server-only";
+import { notifyAccountChange } from "./notify";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
 import { audit } from "../audit";
@@ -91,6 +92,7 @@ export async function confirmEnrolment(userId: string, sessionId: string, code: 
   // The session that enrolled has just proved the second factor.
   await db.update(schema.sessions).set({ mfaVerifiedAt: new Date(now) }).where(eq(schema.sessions.id, sessionId));
   await audit({ action: "mfa.enable", actorUserId: userId, targetType: "user", targetId: userId });
+  await notifyAccountChange(userId, "mfa_enabled");
   return { recoveryCodes: codes };
 }
 
@@ -131,6 +133,7 @@ export async function completeMfaChallenge(sessionId: string, userId: string, co
   const db = await getDb();
   await db.update(schema.sessions).set({ mfaVerifiedAt: new Date(now) }).where(and(eq(schema.sessions.id, sessionId), eq(schema.sessions.userId, userId)));
   await audit({ action: "auth.login", actorUserId: userId, targetType: "user", targetId: userId, ip, details: { mfa: how } });
+  if (how === "recovery") await notifyAccountChange(userId, "recovery_used");
   if (how === "recovery") await audit({ action: "mfa.recovery_used", actorUserId: userId, targetType: "user", targetId: userId, details: { left: (await userRow(userId)).mfaRecoveryHashes.length } });
   return how;
 }
@@ -146,6 +149,7 @@ export async function disableMfa(userId: string, code: string, now = Date.now())
   const db = await getDb();
   await db.update(schema.users).set({ mfaSecretEnc: null, mfaPendingSecretEnc: null, mfaEnabledAt: null, mfaLastStep: null, mfaRecoveryHashes: [] }).where(eq(schema.users.id, userId));
   await audit({ action: "mfa.disable", actorUserId: userId, targetType: "user", targetId: userId });
+  await notifyAccountChange(userId, "mfa_disabled");
 }
 
 /** New recovery codes (the old ones stop working), confirmed with a current code. */
@@ -156,5 +160,6 @@ export async function regenerateRecoveryCodes(userId: string, code: string, now 
   const db = await getDb();
   await db.update(schema.users).set({ mfaRecoveryHashes: hashes }).where(eq(schema.users.id, userId));
   await audit({ action: "mfa.recovery_regenerated", actorUserId: userId, targetType: "user", targetId: userId });
+  await notifyAccountChange(userId, "recovery_regenerated");
   return { recoveryCodes: codes };
 }

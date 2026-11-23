@@ -5,7 +5,7 @@ import { verifyMfaLogin, type MfaFormState } from "@/app/actions/mfa";
 import { Button, Field, Input, Notice } from "@/components/ui";
 
 /** Second step of sign-in: authenticator code, or a recovery code. */
-export function MfaChallengeForm({ email }: { email: string }) {
+export function MfaChallengeForm({ email, next }: { email: string; next?: string }) {
   const [state, action, pending] = useActionState(verifyMfaLogin, {} as MfaFormState);
   const [recovery, setRecovery] = useState(false);
   return (
@@ -17,6 +17,7 @@ export function MfaChallengeForm({ email }: { email: string }) {
         </p>
       </div>
       {state.error ? <Notice tone="danger">{state.error}</Notice> : null}
+      {next ? <input type="hidden" name="next" value={next} /> : null}
       <Field label={recovery ? "Recovery code" : "Code"}>
         {recovery ? (
           <Input key="recovery" name="code" autoComplete="off" placeholder="xxxx-xxxx" maxLength={12} required autoFocus />

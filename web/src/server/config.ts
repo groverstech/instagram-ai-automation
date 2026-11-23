@@ -231,8 +231,18 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   for (const k of ["DATABASE_POOL_MAX", "WORKER_INTERVAL_MS", "WORKER_DRAIN_MS"] as const) {
     if (set(env[k]) && !/^[1-9]\d*$/.test(env[k]!.trim())) err(k, "Must be a positive whole number.");
   }
-  if (set(env.EMAIL_PROVIDER) && norm(env.EMAIL_PROVIDER) !== "log") err("EMAIL_PROVIDER", "Unknown provider. Only `log` exists until an email provider is chosen.");
-  else if (strict) warn("EMAIL_PROVIDER", "No email provider: emails can't be sent in this environment (sending fails loudly).");
+  {
+    const p = norm(env.EMAIL_PROVIDER) || "log";
+    if (!["log", "file", "memory", "postmark", "resend"].includes(p)) err("EMAIL_PROVIDER", "Use postmark or resend (log, file or memory in development and tests).");
+    else if (p === "postmark" || p === "resend") {
+      if (!set(env.EMAIL_API_KEY)) err("EMAIL_API_KEY", `Required with EMAIL_PROVIDER=${p}.`);
+      if (!set(env.EMAIL_FROM)) err("EMAIL_FROM", `Required with EMAIL_PROVIDER=${p}, e.g. "BrandPilot <no-reply@yourdomain>".`);
+    } else if (strict && p !== "log") err("EMAIL_PROVIDER", `${p} is for development and tests only.`);
+    else if (strict) warn("EMAIL_PROVIDER", "No email provider: emails can't be sent in this environment (sending fails loudly). Email verification, invitations and password reset need one (decision D-7).");
+    const v = norm(env.EMAIL_VERIFICATION);
+    if (v && v !== "required" && v !== "optional") err("EMAIL_VERIFICATION", "Use required or optional (default: required in staging and production).");
+    else if (v === "optional" && strict) err("EMAIL_VERIFICATION", "Email verification can't be optional in staging or production.");
+  }
 
   // Paired settings: an ID without its secret (or vice versa) is a misconfiguration.
   for (const [id, secret] of [

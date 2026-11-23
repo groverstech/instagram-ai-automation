@@ -43,6 +43,8 @@ export type SessionUser = {
   user: { id: string; email: string; name: string };
   /** Two-step verification is on for this user. */
   mfaEnabled?: boolean;
+  /** The user confirmed their email address (auth/verify-email.ts). */
+  emailVerified?: boolean;
 };
 
 async function sessionRow() {
@@ -58,6 +60,7 @@ async function sessionRow() {
       email: schema.users.email,
       name: schema.users.name,
       mfaEnabledAt: schema.users.mfaEnabledAt,
+      emailVerifiedAt: schema.users.emailVerifiedAt,
     })
     .from(schema.sessions)
     .innerJoin(schema.users, eq(schema.users.id, schema.sessions.userId))
@@ -86,6 +89,7 @@ export async function getSession(): Promise<SessionUser | null> {
     activeBrandId: r.activeBrandId,
     user: { id: r.id, email: r.email, name: r.name },
     mfaEnabled: Boolean(r.mfaEnabledAt),
+    emailVerified: Boolean(r.emailVerifiedAt),
   };
 }
 

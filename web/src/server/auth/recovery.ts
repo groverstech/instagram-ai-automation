@@ -1,4 +1,5 @@
 import "server-only";
+import { notifyAccountChange } from "./notify";
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "../db/client";
@@ -115,6 +116,7 @@ export async function resetPassword(token: string, password: string, ip: string 
   if (!claimed) throw new RecoveryError("This reset link has expired or was already used. Ask for a new one.");
   await db.update(schema.users).set({ passwordHash: await hashPassword(password) }).where(eq(schema.users.id, claimed.userId));
   const ended = await db.delete(schema.sessions).where(eq(schema.sessions.userId, claimed.userId)).returning({ id: schema.sessions.id });
+  await notifyAccountChange(claimed.userId, "password_reset");
   await audit({ action: "auth.password_reset", actorUserId: claimed.userId, targetType: "user", targetId: claimed.userId, ip, details: { via: claimed.issuedBy.startsWith("operator") ? "operator_link" : "email_link", ended: ended.length } });
   return { userId: claimed.userId };
 }
