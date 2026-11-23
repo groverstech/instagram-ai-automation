@@ -5,6 +5,7 @@ import { StepUpDialog } from "@/components/account/step-up-dialog";
 import { requireActiveBrand, listAccessibleBrands } from "@/server/auth/guard";
 import { getDb, schema } from "@/server/db/client";
 import { aiStatus } from "@/server/ai/llm";
+import { sandboxOn } from "@/server/social/sandbox";
 import { imageModelLabel, imageStatus } from "@/server/ai/image";
 import { assistantHistory } from "@/server/agents/assistant";
 import { Sidebar } from "@/components/shell/sidebar";
@@ -34,6 +35,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         pendingApprovals={pending}
       />
       <div className="min-w-0 flex-1 pt-[calc(3.5rem+env(safe-area-inset-top))] md:pt-0">
+        {sandboxOn() ? (
+          <div role="status" aria-label="Social sandbox" className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-warn/20 bg-warn-soft px-6 py-2 text-[12px] text-warn md:px-10">
+            <span className="rounded-full bg-warn px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white">Social sandbox</span>
+            <span>Social accounts, publishing and metrics are simulated: nothing reaches Instagram, Facebook or any other platform (SOCIAL_SANDBOX=true).</span>
+          </div>
+        ) : null}
         {!ai.ready ? (
           <div className="border-b border-warn/20 bg-warn-soft px-6 py-2 text-[12px] text-warn md:px-10">
             AI is not configured. Add <code className="font-mono">BRANDPILOT_ANTHROPIC_API_KEY</code> (or <code className="font-mono">ANTHROPIC_API_KEY</code>) to the server environment to enable the agents.
