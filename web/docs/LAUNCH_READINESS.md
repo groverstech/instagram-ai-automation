@@ -71,7 +71,7 @@ production-grade deployment, with the security, data and operations gates below 
 | D1 | Postgres backups with PITR; restore drill passed | **Owner** | Procedure in DEPLOYMENT §9; needs managed Postgres | Owner |
 | D2 | Object storage with versioning and lifecycle (R2) | **Not started** | PR 4.2: **not authorised yet** | Owner |
 | D3 | Account and brand deletion end to end | **In progress** | PR #13 (4.3b): Settings → Delete data for brands, organisations and accounts; tests and browser checks pass | Code |
-| D4 | Tenant data export | **Not started** | With the F4 export work (§4) | Code |
+| D4 | Tenant data export | **In review** | #22: owners download a ZIP of the organisation's data and files (secrets stripped by column name; step-up; 3 an hour; audited). Pointing the privacy notice at it is an owner (legal text) change | Code, Owner |
 | D5 | Audit-log retention and export (F4) | **In review** | #21: Security log export (CSV, JSON; same access, scope and allow-list; step-up; audited) and retention (`AUDIT_RETENTION_DAYS`, default 400, purged daily). The retention period is an owner setting | Code, Owner |
 
 ### Platforms
@@ -130,8 +130,8 @@ started without waiting; each item is its own PR.
 | 4 | MFA (F3) | S7 | — | In review (#17 F3a, #18 F3b) |
 | 5 | PR 4.5 Configurable plans and credits, shadow mode; organisation and brand AI limits and alerts | R3, A4 (part) | Commercial inputs can come later: everything is configuration | In review (#19) |
 | 6 | AI kill switch and tripwire (F12) | A4 | — | In review (#20) |
-| 7 | Audit-log retention and export (F4), tenant export | D4, D5 | — | F4 in review (#21); tenant export next |
-| 8 | PR 4.9 parts: RLS pilot, `APP_SECRET` rotation procedure | S8, S3 | — | Queued |
+| 7 | Audit-log retention and export (F4), tenant export | D4, D5 | — | In review (#21, #22) |
+| 8 | PR 4.9 parts: RLS pilot, `APP_SECRET` rotation procedure | S8, S3 | — | Next: `APP_SECRET` rotation |
 | — | PR 4.2 R2 storage and CDN | D2, P3, O6 | **Authorisation**, Cloudflare account | Blocked: owner |
 | — | PR 4.4 Instagram and Facebook publishing (ledger, idempotency, reconciliation, carousels, Reels) | P5, P6 | PR 4.2 for video and scale; Meta app and test accounts | Blocked: 4.2 and owner. Single-image publishing already works without it on one instance (#14 finding) |
 | — | Real-provider validation | A1, A2 | Keys in the validation environment; approval of the paid run | Blocked: owner |
@@ -167,3 +167,4 @@ Each session appends one line: date, what was merged or opened, gates changed, n
 | 22 Nov 2026 | Opened #18 (MFA F3b; stacked on #17): 391/391 tests, CI green (45065217077), browser check 9/9, regression 19/16/10/20. Opened #19 (PR 4.5 credits shadow mode; stacked on #18): 400/400 tests, browser check 6/6, regression 19/16/10/20. Next: F12 (AI kill switch and tripwire). |
 | 23 Nov 2026 | #19 CI green (45067038811). Opened #20 (F12 kill switch and tripwire; stacked on #19): 407/407 tests, regression 19/16/10/20. Next: F4 (audit-log retention and export) and tenant export. |
 | 23 Nov 2026 | #20 CI was red on a pre-existing flaky test (the login limiter's fixed 15-minute window straddled during the run); fixed by pinning the clock (c22bb34), CI green (45108409393). Opened #21 (F4; stacked on #20): 413/413 tests, browser check 7/7, regression 19/16/10/20. Next: tenant data export (D4). |
+| 23 Nov 2026 | #21 CI green (45109461233). Opened #22 (D4 organisation data export; stacked on #21): 418/418 tests, browser check 4/4, regression 19/16/10/20. Next: `APP_SECRET` rotation without reconnects (S3). |
