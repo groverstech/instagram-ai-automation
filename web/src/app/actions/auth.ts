@@ -51,6 +51,10 @@ export async function signUp(_: unknown, fd: FormData): Promise<AuthFormState> {
   const ip = await clientIp();
   const blocked = await limited("signup", `ip:${ip}`);
   if (blocked) return { error: blocked, values };
+  // Private beta: invited emails only. Checked before the account lookup, with one message for
+  // every uninvited email, so this can't be used to find out whether an address has an account.
+  const { mayCreateAccount, markInviteUsed, NOT_INVITED } = await import("@/server/beta-invites");
+  if (!(await mayCreateAccount(email))) return { error: NOT_INVITED, values };
   const db = await getDb();
   const [exists] = await db.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.email, email));
   if (exists) return { error: "An account with this email already exists.", values };
@@ -68,6 +72,7 @@ export async function signUp(_: unknown, fd: FormData): Promise<AuthFormState> {
     await db.insert(schema.workspaceMembers).values({ workspaceId: ws.id, userId: user.id, role: "owner" });
     workspaceId = ws.id;
   }
+  await markInviteUsed(email);
   await audit({ action: "auth.signup", workspaceId, actorUserId: user.id, targetType: "user", targetId: user.id, ip, details: { acceptedInvites: invites.length } });
   await createSession(user.id);
   redirect(invites.length ? "/dashboard" : "/onboarding");

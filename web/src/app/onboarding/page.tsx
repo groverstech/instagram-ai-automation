@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { and, eq, inArray } from "drizzle-orm";
 import { requireUser } from "@/server/auth/guard";
+import { mfaRequiredFor } from "@/server/auth/mfa";
 import { getDb, schema } from "@/server/db/client";
 import { OnboardingWizard } from "@/components/onboarding/wizard";
 
@@ -8,6 +10,9 @@ export const maxDuration = 300;
 
 export default async function Page() {
   const s = await requireUser();
+  // Owners and admins set up required two-step verification before anything else, here as in the app
+  // layout: the guards refuse their actions (createBrand included) until they do.
+  if (!s.mfaEnabled && (await mfaRequiredFor(s.user.id))) redirect("/account/security?required=1");
   const db = await getDb();
   // Organisations where this user may add a brand (admin or owner).
   const rows = await db

@@ -3,6 +3,7 @@ import { and, eq, inArray, ne } from "drizzle-orm";
 import { getDb, schema } from "./db/client";
 import { audit } from "./audit";
 import { requireBrandForUser, requireWorkspaceRoleForUser } from "./auth/guard";
+import { requireRecentSecondFactor } from "./auth/step-up";
 import { verifyPassword } from "./auth/password";
 import type { SessionUser } from "./auth/session";
 import { enforce } from "./ratelimit";
@@ -70,6 +71,8 @@ async function workspaceBlocker(workspaceId: string): Promise<string | null> {
 export async function deleteBrandFor(session: SessionUser, brandId: string, confirmName: string) {
   const { brand } = await requireBrandForUser(session, brandId, "viewer");
   await requireWorkspaceRoleForUser(session, brand.workspaceId, "admin");
+  // Irreversible: a recent second factor, like member, billing and social-account changes (F3b).
+  await requireRecentSecondFactor(session);
   if ((confirmName ?? "").trim() !== brand.name.trim()) throw new DeletionError("Type the brand's name exactly to confirm.");
   const why = await brandBlocker(brand.id, brand.name);
   if (why) throw new DeletionError(why);
@@ -81,6 +84,7 @@ export async function deleteBrandFor(session: SessionUser, brandId: string, conf
 /** Delete an organisation with all its brands. Owners only; confirmed with their password. */
 export async function deleteWorkspaceFor(session: SessionUser, workspaceId: string, password: string) {
   await requireWorkspaceRoleForUser(session, workspaceId, "owner");
+  await requireRecentSecondFactor(session);
   await confirmPassword(session.user.id, password);
   const why = await workspaceBlocker(workspaceId);
   if (why) throw new DeletionError(why);
@@ -122,6 +126,7 @@ export async function accountDeletionPlan(userId: string): Promise<AccountDeleti
 
 /** Delete your own account, confirmed with your password. Organisations only you belong to are deleted with it. */
 export async function deleteAccountFor(session: SessionUser, password: string) {
+  await requireRecentSecondFactor(session);
   await confirmPassword(session.user.id, password);
   const plan = await accountDeletionPlan(session.user.id);
   if (plan.blocked.length) {

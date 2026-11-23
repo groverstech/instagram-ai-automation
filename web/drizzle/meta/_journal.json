@@ -124,8 +124,15 @@
     {
       "idx": 17,
       "version": "7",
-      "when": 1795435084567,
-      "tag": "0017_password_resets",
+      "when": 1795434865282,
+      "tag": "0017_beta_invites",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1795438735858,
+      "tag": "0018_password_resets",
       "breakpoints": true
     }
   ]
