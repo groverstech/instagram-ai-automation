@@ -22,7 +22,8 @@
     "beta:invite": "node --conditions=react-server --import tsx src/server/beta-invites-cli.ts",
     "ai:controls": "node --conditions=react-server --import tsx src/server/ai/controls-cli.ts",
     "secrets:rotate": "node --conditions=react-server --import tsx src/server/secrets-rotate-cli.ts",
-    "users": "node --conditions=react-server --import tsx src/server/users-cli.ts"
+    "users": "node --conditions=react-server --import tsx src/server/users-cli.ts",
+    "e2e:lifecycle": "bash e2e/lifecycle.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",

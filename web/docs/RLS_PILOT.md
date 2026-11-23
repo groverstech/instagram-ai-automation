@@ -9,7 +9,7 @@ Postgres row-level security is a second layer under the application's own tenant
 | Policies on `brands`, `posts` and `creatives` (`ENABLE` + `FORCE`, so the table owner is covered too) | `drizzle/0016_rls_pilot.sql` |
 | `withTenant(workspaceId, fn)`: runs `fn` in a transaction with `app.org_id` set, when `RLS_PILOT=on` | `src/server/db/tenant.ts` |
 | Used by the Content Calendar (posts and creatives) and the campaign page (posts, filtered by campaign only) | `app/(app)/calendar`, `app/(app)/campaigns/[id]` |
-| A start-up warning when the app's database role is a superuser or has `BYPASSRLS`, which ignore every policy. Logged as `db.role_bypasses_rls` in staging and production, or when the pilot is on | `checkRlsRole` |
+| Start-up check of the app's database role: superusers and `BYPASSRLS` roles ignore every policy. **In staging and production with `RLS_PILOT=on`, the app refuses to start with such a role** (`RlsNotEffectiveError`; readiness fails), and fails closed if the check can't run. Otherwise it logs `db.role_bypasses_rls` as a warning | `assertRlsEffective`, `checkRlsRole` |
 
 **Policy rule:**
 - A row is visible and writable only if `app.org_id` is unset, or it belongs to that organisation:

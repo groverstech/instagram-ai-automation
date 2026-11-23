@@ -3,6 +3,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
 import { decrypt, encrypt, sign } from "../crypto";
 import { provider } from "./registry";
+import { sandboxOn } from "./sandbox";
 import { PlatformError, PublishNotSupported, isTokenError, type AccountForUse, type DiscoveredAccount, type PublishContext } from "./types";
 import { CHECKED_ABSENT, isUnsettled, latestAttempt, markNeedsReconnect, reconnectMessage } from "./publish-ledger";
 import { log } from "../log";
@@ -114,7 +115,7 @@ export async function publishPost(postId: string) {
     return { ok: false as const, error: `BrandPilot doesn't know whether the last attempt reached ${p.label}. Check ${p.label} first (in the post's panel), then publish again if it isn't there.`, needsCheck: true as const };
   }
   if (!p.publish || p.capabilities.publishImage === "unsupported") return fail(`${p.label} doesn't support publishing image posts through its API.`);
-  if (["instagram", "pinterest", "facebook", "tiktok"].includes(p.id) && !isPublicAppUrl()) {
+  if (["instagram", "pinterest", "facebook", "tiktok"].includes(p.id) && !isPublicAppUrl() && !sandboxOn()) {
     return fail(`${p.label} downloads the image from a public URL. Set APP_URL to your public https domain before publishing.`);
   }
 

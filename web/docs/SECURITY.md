@@ -43,7 +43,7 @@ brand scope, members' sign-ins only from joining, refusals and their audit recor
 
 Postgres policies on `brands`, `posts` and `creatives` restrict rows to one organisation when a transaction sets `app.org_id` (`withTenant`, `RLS_PILOT=on`). They're a second layer under the application's scoping.
 
-- Superusers and `BYPASSRLS` roles ignore policies, so the app must connect as an ordinary role. A warning is logged at start-up otherwise.
+- Superusers and `BYPASSRLS` roles ignore policies, so the app must connect as an ordinary role. In staging and production with `RLS_PILOT=on`, the app **refuses to start** with such a role; elsewhere it logs a warning.
 - Results, cost and recommendation: [RLS_PILOT.md](RLS_PILOT.md).
 
 ## Client IPs and rate limits

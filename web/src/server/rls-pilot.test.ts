@@ -126,6 +126,10 @@ describe.skipIf(!ADMIN_URL)("row-level security pilot", () => {
     const { drizzle } = await import("drizzle-orm/postgres-js");
     const c = postgres(adminDbUrl, { max: 1, onnotice: () => {} });
     expect(await checkRlsRole(drizzle(c) as never)).toBe(false); // the test admin is a superuser
+    // In staging and production with the pilot on, start-up refuses such a role instead of warning.
+    const { assertRlsEffective, RlsNotEffectiveError } = await import("./db/tenant");
+    await expect(assertRlsEffective(drizzle(c) as never)).rejects.toBeInstanceOf(RlsNotEffectiveError);
+    await expect(assertRlsEffective(await getDb())).resolves.toBeUndefined();
     await c.end();
   });
 });
