@@ -102,7 +102,7 @@ Owners can download a ZIP of the organisation from Settings → Delete data → 
   - `files/`: uploaded assets and AI-generated images;
   - `README.txt`.
 - **Never included:** passwords, two-step secrets, sessions, social-account tokens, embeddings, claim tokens, and the raw AI prompts and responses. These are stripped by column name (`…Enc`, `…Hash`, `…Token`, `…Secret`), so a new secret column named that way is excluded too.
-- **Size:** files beyond 500 MB are listed as `over_budget` rather than bundled. Missing files are listed as `missing`.
+- **Size:** the archive is built in memory, so peak use is about twice the file budget. Files beyond the budget (`EXPORT_FILE_BUDGET_MB`, default 100, range 10–1000) are listed as `over_budget` rather than bundled; missing files are listed as `missing`. **Only one export runs at a time per server process**; another request gets 503 with `Retry-After: 60`.
 - **Controls:**
   - owners only;
   - a recent second factor;

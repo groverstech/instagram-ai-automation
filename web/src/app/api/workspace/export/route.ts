@@ -3,7 +3,7 @@ import { getSession } from "@/server/auth/session";
 import { AccessError } from "@/server/auth/guard";
 import { StepUpRequired } from "@/server/auth/step-up";
 import { RateLimitError } from "@/server/ratelimit";
-import { exportWorkspaceFor } from "@/server/tenant-export";
+import { ExportBusyError, exportWorkspaceFor } from "@/server/tenant-export";
 import { appUrl } from "@/server/social/service";
 
 /** GET /api/workspace/export?workspace=<id>: the organisation's data as a ZIP (tenant-export.ts). */
@@ -19,6 +19,7 @@ export async function GET(req: Request) {
   } catch (e) {
     if (e instanceof StepUpRequired) return NextResponse.redirect(`${appUrl()}/account/verify?next=${encodeURIComponent(url.pathname + url.search)}`);
     if (e instanceof AccessError) return NextResponse.json({ error: e.message || "Not allowed." }, { status: 403 });
+    if (e instanceof ExportBusyError) return NextResponse.json({ error: e.message }, { status: 503, headers: { "retry-after": "60" } });
     if (e instanceof RateLimitError) return NextResponse.json({ error: e.message }, { status: 429, headers: { "retry-after": String(e.retryAfter) } });
     throw e;
   }
