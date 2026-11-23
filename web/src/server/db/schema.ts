@@ -845,3 +845,17 @@ export const aiControls = pgTable("ai_controls", {
   setBy: text("set_by").notNull(),
   setAt: timestamp("set_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Invitation-only sign-up for the private beta (src/server/beta-invites.ts). With SIGNUP_MODE
+ * invite_only (the default in staging and production), only an email on this list, or one with a
+ * pending organisation invitation, can create an account. Managed by operators with
+ * `npm run beta:invite`; each change is audited. Emails are stored lower-case.
+ */
+export const betaInvites = pgTable("beta_invites", {
+  email: text("email").primaryKey(),
+  invitedBy: text("invited_by").notNull(),
+  note: text("note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+});

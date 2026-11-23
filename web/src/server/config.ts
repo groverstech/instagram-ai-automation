@@ -149,6 +149,9 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   if ((env.AI_TRIPWIRE_USD ?? "").trim() !== "" && !(Number(env.AI_TRIPWIRE_USD) > 0)) err("AI_TRIPWIRE_USD", "Use a dollar amount above 0, or leave it unset for no tripwire.");
   if ((env.AI_TRIPWIRE_WINDOW_MIN ?? "").trim() !== "" && !(Number(env.AI_TRIPWIRE_WINDOW_MIN) >= 1 && Number(env.AI_TRIPWIRE_WINDOW_MIN) <= 1440)) err("AI_TRIPWIRE_WINDOW_MIN", "Use a number of minutes from 1 to 1440.");
   if (strict && (env.AI_TRIPWIRE_USD ?? "").trim() === "") warn("AI_TRIPWIRE_USD", "No AI spending tripwire: a runaway loop or abuse isn't stopped automatically. Set it well above normal spend per window (docs/AI_SPEND_CONTROLS.md).");
+  const signup = norm(env.SIGNUP_MODE);
+  if (signup && !["invite_only", "open"].includes(signup)) err("SIGNUP_MODE", "Use `invite_only` (private beta; default in staging and production) or `open`. Until it's fixed, sign-up is invitation-only.");
+  else if (strict && signup === "open") warn("SIGNUP_MODE", "Sign-up is open to anyone: the private beta is invitation-only (`invite_only`, the default here).");
   const creditsMode = norm(env.CREDITS_MODE);
   if (creditsMode && !["shadow", "off"].includes(creditsMode)) err("CREDITS_MODE", creditsMode === "enforce" ? "Credit enforcement arrives with PR 4.6. Use `shadow` (default) or `off`." : "Use `shadow` (default) or `off`.");
 

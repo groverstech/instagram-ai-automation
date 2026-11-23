@@ -235,6 +235,7 @@ Full reference, including routing, retries, prices and the usage ledger:
 | `AUDIT_RETENTION_DAYS` | Security log retention (default 400, minimum 90); older events are deleted once a day by the scheduler tick |
 | `AI_STOP` | Kill switch from the environment: `all`, `anthropic`, `openai`, `model:<id>` (comma-separated). Normally use `npm run ai:controls` instead, which needs no restart |
 | `AI_TRIPWIRE_USD`, `AI_TRIPWIRE_WINDOW_MIN` | Spending tripwire: estimated spend per provider in the window (default 15 minutes) above which that provider is stopped until a person resumes it. Unset means no tripwire; staging and production warn |
+| `SIGNUP_MODE` | `invite_only` (default in staging and production) or `open` (default elsewhere). Invite-only: an account can be created only for an email on the beta list (`npm run beta:invite -- add <email> --by <name>`; `list`, `revoke`) or with a pending organisation invitation. No email is sent yet: tell invitees yourself. Uninvited emails all get the same refusal, before any account lookup |
 | `CREDITS_MODE` | `shadow` (default) or `off`. Plans and credits are configured with `npm run credits` (docs/CREDITS.md); credits are not enforced until PR 4.6 |
 | `LIVE_REPORT_DIR` | Where `npm run test:live` writes its report; Settings shows the result |
 | `CREATIVE_BRAND_CHECK` | `off` skips the Claude vision review (deterministic checks still run) |
