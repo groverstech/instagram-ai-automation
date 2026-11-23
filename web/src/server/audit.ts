@@ -33,6 +33,7 @@ export type AuditAction =
   | "brand.create"
   | "brand.delete"
   | "workspace.delete"
+  | "workspace.export"
   | "account.delete"
   | "social.connect"
   | "social.disconnect"

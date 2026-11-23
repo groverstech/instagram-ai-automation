@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
-import { AlertTriangle, Trash2 } from "lucide-react";
-import { deleteAccount, deleteBrand, deleteWorkspace } from "@/app/actions/settings";
+import { AlertTriangle, Download, Trash2 } from "lucide-react";
+import { deleteAccount, deleteBrand, deleteWorkspace, prepareWorkspaceExport } from "@/app/actions/settings";
 import { Button, Card, CardBody, CardHeader, Field, Input, Modal, Notice, Select } from "@/components/ui";
 import { useRun } from "@/components/hooks";
 import type { AccountDeletionPlan } from "@/server/deletion";
@@ -32,6 +32,18 @@ export function DeleteData({ workspace, brands, canDeleteBrand, isOwner, plan }:
     <Card aria-label="Delete data">
       <CardHeader title="Delete data" description="Permanent. Deleted data can't be recovered." />
       <CardBody className="space-y-4 pt-3 text-[13px]">
+        {isOwner ? (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-4">
+            <span className="min-w-0">Download a copy of everything in <strong className="font-medium">{workspace.name}</strong> first: data and files, as a ZIP.</span>
+            <Button
+              variant="secondary"
+              loading={busy("export")}
+              onClick={() => run(() => prepareWorkspaceExport(workspace.id), { key: "export", refresh: false, onOk: () => window.location.assign(`/api/workspace/export?workspace=${encodeURIComponent(workspace.id)}`) })}
+            >
+              <Download /> Export all data
+            </Button>
+          </div>
+        ) : null}
         {canDeleteBrand && brands.length ? (
           <div className="flex flex-wrap items-end gap-2">
             <Field label="Delete a brand" className="min-w-[min(100%,14rem)] flex-1">

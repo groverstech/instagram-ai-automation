@@ -80,6 +80,24 @@ brand scope, members' sign-ins only from joining, refusals and their audit recor
 - **Errors:** database, network and filesystem error messages are never shown to users. They see a
   reference ID that maps to the server log.
 
+### Organisation data export (D4)
+
+Owners can download a ZIP of the organisation from Settings → Delete data → **Export all data** (`src/server/tenant-export.ts`).
+
+- **Contents:**
+  - `data.json`: the organisation, its members, and every brand's data (profiles, memory, strategies, campaigns, creatives, posts and metrics, competitors, assistant history, AI tasks and usage, credit caps and alerts);
+  - `files/`: uploaded assets and AI-generated images;
+  - `README.txt`.
+- **Never included:** passwords, two-step secrets, sessions, social-account tokens, embeddings, claim tokens, and the raw AI prompts and responses. These are stripped by column name (`…Enc`, `…Hash`, `…Token`, `…Secret`), so a new secret column named that way is excluded too.
+- **Size:** files beyond 500 MB are listed as `over_budget` rather than bundled. Missing files are listed as `missing`.
+- **Controls:**
+  - owners only;
+  - a recent second factor;
+  - 3 exports per person per hour;
+  - recorded as `workspace.export`.
+
+The Security log has its own export (see Audit log).
+
 ## HTTP headers
 
 HSTS (2 years), `X-Content-Type-Options: nosniff`, `Referrer-Policy:
