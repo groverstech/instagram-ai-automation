@@ -100,6 +100,15 @@ An append-only `audit_events` table records:
 - refused access (`access.denied`) and viewing the Security log (`audit.view`, at most hourly per
   viewer).
 
+**Export and retention (F4):**
+- **Export:** owners and admins can download the Security log as CSV or JSON (Settings → Security log), for the organisation's records or an auditor.
+  - It has the same authorisation, brand scope and detail allow-list as the screen.
+  - It covers the last 365 days and up to 50,000 events.
+  - It needs a recent second factor (step-up).
+  - Each export is recorded as `audit.export`.
+  - In CSV, values a spreadsheet would run as a formula (`= + - @`) get a leading quote.
+- **Retention:** events older than `AUDIT_RETENTION_DAYS` (default 400, minimum 90) are deleted once a day by the scheduler tick, in batches. Each purge is recorded as `audit.retention_purge`.
+
 **Who sees what (Settings → Security log):**
 - Only active **owners and admins** of the workspace. Editors, viewers, client users and people
   outside the organisation are refused, and the refusal is recorded.

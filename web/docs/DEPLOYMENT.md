@@ -230,6 +230,7 @@ Full reference, including routing, retries, prices and the usage ledger:
 | `OPENAI_IMAGE_PRICE_*_PER_MTOK` | Contract rates per 1M tokens. Unset: OpenAI list prices from the catalog. Rates can also be changed without a redeploy in the `ai_prices` table ([AI_PROVIDERS.md](AI_PROVIDERS.md#how-costs-are-calculated)). `IMAGE_PRICE_USD*` is retired and ignored. |
 | `AI_TEXT_TIMEOUT_MS`, `AI_IMAGE_TIMEOUT_MS`, `AI_MAX_ATTEMPTS`, `AI_IMAGE_MAX_ATTEMPTS`, `AI_RETRY_BASE_MS`, `AI_RETRY_MAX_WAIT_MS`, `AI_CIRCUIT_THRESHOLD`, `AI_CIRCUIT_OPEN_MS` | Timeouts, retries and the circuit breaker (defaults in AI_PROVIDERS.md) |
 | `AI_MONTHLY_COST_LIMIT_USD`, `AI_MONTHLY_COST_LIMIT_USD_<PLAN>` | Optional monthly AI spending limit per organisation, from estimated cost; unset means none |
+| `AUDIT_RETENTION_DAYS` | Security log retention (default 400, minimum 90); older events are deleted once a day by the scheduler tick |
 | `AI_STOP` | Kill switch from the environment: `all`, `anthropic`, `openai`, `model:<id>` (comma-separated). Normally use `npm run ai:controls` instead, which needs no restart |
 | `AI_TRIPWIRE_USD`, `AI_TRIPWIRE_WINDOW_MIN` | Spending tripwire: estimated spend per provider in the window (default 15 minutes) above which that provider is stopped until a person resumes it. Unset means no tripwire; staging and production warn |
 | `CREDITS_MODE` | `shadow` (default) or `off`. Plans and credits are configured with `npm run credits` (docs/CREDITS.md); credits are not enforced until PR 4.6 |

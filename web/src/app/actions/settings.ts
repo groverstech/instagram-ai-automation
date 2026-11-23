@@ -78,3 +78,11 @@ export async function removeMember(workspaceId: string, memberId: string) {
     revalidatePath("/settings");
   });
 }
+
+/** Security log export: checks access and step-up first, then the client downloads /api/audit/export. */
+export async function prepareAuditExport(workspaceId: string) {
+  return safe(async () => {
+    const { auditExportReadyFor } = await import("@/server/audit");
+    await auditExportReadyFor(await me(), workspaceId);
+  });
+}
