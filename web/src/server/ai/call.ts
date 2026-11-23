@@ -1,7 +1,7 @@
 import "server-only";
 import { log } from "../log";
 import { circuitAllows, circuitFailure, circuitSuccess } from "./circuit";
-import { AIAccountingError, AIStoppedError, AIUnavailableError, classify } from "./errors";
+import { AIAccountingError, AICreditLimitError, AIStoppedError, AIUnavailableError, classify } from "./errors";
 import { openAttempt, settleAttempt, type Ticket } from "./spend-cap";
 import { attachUsage, usageFromError, type Usage } from "./llm";
 import { addUsage } from "./pricing";
@@ -75,10 +75,10 @@ export async function execute<T>(route: ResolvedRoute, pricing: Pricing, fn: (at
       ticket = await openAttempt(route, { attempt, params }, pricing.worstCaseUsd ?? null);
     } catch (e) {
       if (classify(e).kind !== "spend_cap") throw e;
-      const reason = e instanceof AIAccountingError ? "accounting" : e instanceof AIStoppedError ? "stopped" : "spend_cap";
+      const reason = e instanceof AIAccountingError ? "accounting" : e instanceof AIStoppedError ? "stopped" : e instanceof AICreditLimitError ? "credits" : "spend_cap";
       // Best effort: with the ledger down this write fails too (and is logged); nothing was sent.
       await recordAttempt({ route: route.key, provider: route.provider, model: route.model, kind: route.kind, params, attempt, outcome: "blocked", errorKind: reason });
-      log.warn(reason === "accounting" ? "ai.accounting_unavailable" : reason === "stopped" ? "ai.stopped_request" : "ai.spend_cap", { route: route.key, provider: route.provider });
+      log.warn(reason === "accounting" ? "ai.accounting_unavailable" : reason === "stopped" ? "ai.stopped_request" : reason === "credits" ? "ai.credit_limit" : "ai.spend_cap", { route: route.key, provider: route.provider });
       throw markHandled(withTotal(e, total, billed));
     }
     const counter = aiContext().attempts;

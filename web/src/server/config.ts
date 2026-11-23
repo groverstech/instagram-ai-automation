@@ -159,7 +159,8 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   if (signup && !["invite_only", "open"].includes(signup)) err("SIGNUP_MODE", "Use `invite_only` (private beta; default in staging and production) or `open`. Until it's fixed, sign-up is invitation-only.");
   else if (strict && signup === "open") warn("SIGNUP_MODE", "Sign-up is open to anyone: the private beta is invitation-only (`invite_only`, the default here).");
   const creditsMode = norm(env.CREDITS_MODE);
-  if (creditsMode && !["shadow", "off"].includes(creditsMode)) err("CREDITS_MODE", creditsMode === "enforce" ? "Credit enforcement arrives with PR 4.6. Use `shadow` (default) or `off`." : "Use `shadow` (default) or `off`.");
+  if (creditsMode && !["shadow", "off", "enforce"].includes(creditsMode)) err("CREDITS_MODE", "Use `shadow` (default), `off` or `enforce`.");
+  else if (creditsMode === "enforce" && strict) warn("CREDITS_MODE", "Credit enforcement is on: AI requests over an organisation's or brand's monthly credits are refused. It needs the owner's approval after a shadow period (decision D-17).");
 
   // AI models and routing (docs/AI_PROVIDERS.md): only catalogued models, so costs are known.
   if (set(env.ANTHROPIC_MODEL) && !Object.hasOwn(TEXT_MODELS, env.ANTHROPIC_MODEL!.trim())) {

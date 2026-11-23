@@ -54,6 +54,7 @@ export type AuditAction =
   | "credits.cap_change"
   | "config.plan_update"
   | "config.credits_update"
+  | "config.credits_grant"
   | "config.secrets_reencrypt"
   | "ai.stop"
   | "autonomy.changed"

@@ -6,6 +6,10 @@
 //   plan <starter|growth|agency> --by <name> [--name <text>] [--price <USD>] [--included-credits <n|none>]
 //        [--brands <n>] [--seats <n>] [--social-accounts <n>] [--ai-runs <n>]
 //   settings --by <name> [--credit-value <USD>] [--charge-failed <true|false>] [--thresholds <70,90,100>]
+//   grant --org <id> --credits <n> --reason <text> --by <name> [--period YYYY-MM] [--kind topup|adjustment]
+//        [--reference <id>]                adds (or removes, if negative) credits for a month; idempotent per reference
+//   reconcile [<YYYY-MM>] [--org <id>]     per organisation: charged, reserved, granted, cap; checks the credit
+//                                          gate and Settings agree; lists stale reservations and unpriced attempts
 //   shadow [<YYYY-MM>]                     per organisation: AI runs (enforced) vs credits (shadow) for the
 //                                          month, and whether credits would have stopped it
 //
@@ -14,7 +18,7 @@
 import { and, count, eq, gte, lt } from "drizzle-orm";
 import { addMonths } from "date-fns";
 import { getDb, schema } from "./db/client";
-import { creditStatus, getCreditSettings, listPlans, PLAN_KEYS, updateCreditSettings, updatePlan, type PlanKey } from "./credits";
+import { creditStatus, getCreditSettings, grantCredits, listPlans, PLAN_KEYS, reconcileCredits, updateCreditSettings, updatePlan, type PlanKey } from "./credits";
 
 function flags(args: string[]) {
   const out: Record<string, string> = {};
@@ -74,6 +78,31 @@ async function main() {
   const { f, rest } = flags(args);
   if (cmd === "show") return show();
   if (cmd === "shadow") return shadow(rest[0]);
+  if (cmd === "grant") {
+    const by = needBy(f);
+    if (!f.org) throw new Error("--org <organisation id> is required.");
+    const credits = Number(f.credits);
+    const kind = (f.kind ?? "adjustment") as "topup" | "adjustment";
+    if (kind !== "topup" && kind !== "adjustment") throw new Error("--kind is topup or adjustment.");
+    const r = await grantCredits({ workspaceId: f.org, credits, period: f.period, kind, reason: f.reason ?? "", by, reference: f.reference ?? null });
+    console.log(r.granted ? `Granted ${credits} credits for ${r.period}.` : `Already granted (reference ${f.reference}); nothing changed.`);
+    return;
+  }
+  if (cmd === "reconcile") {
+    const at = rest[0] ? new Date(`${rest[0]}-15T12:00:00Z`) : new Date();
+    if (Number.isNaN(at.getTime())) throw new Error("Month must look like 2026-11.");
+    const db = await getDb();
+    const wss = f.org ? [{ id: f.org, name: f.org }] : await db.select({ id: schema.workspaces.id, name: schema.workspaces.name }).from(schema.workspaces);
+    let bad = 0;
+    console.log("organisation                    charged  reserved  granted   cap     gate agrees  stale  unpriced");
+    for (const w of wss) {
+      const r = await reconcileCredits(w.id, at);
+      if (!r.consistent || r.stalePending) bad++;
+      console.log([w.name.slice(0, 30).padEnd(31), r.charged.toFixed(1).padStart(7), r.reserved.toFixed(1).padStart(9), String(r.granted).padStart(8), String(r.cap ?? "—").padStart(6), (r.consistent ? "yes" : "NO").padStart(12), String(r.stalePending).padStart(6), String(r.unpriced).padStart(9)].join(" "));
+    }
+    if (bad) process.exitCode = 1;
+    return;
+  }
   if (cmd === "plan") {
     const key = rest[0] as PlanKey;
     if (!PLAN_KEYS.includes(key)) throw new Error(`Plan must be one of ${PLAN_KEYS.join(", ")}.`);
@@ -108,7 +137,7 @@ async function main() {
     );
     return show();
   }
-  console.log("Usage: npm run credits -- show | plan <key> --by <name> [...] | settings --by <name> [...] | shadow [YYYY-MM]");
+  console.log("Usage: npm run credits -- show | plan <key> --by <name> [...] | settings --by <name> [...] | grant --org <id> --credits <n> --reason <text> --by <name> | reconcile [YYYY-MM] | shadow [YYYY-MM]");
   process.exitCode = 2;
 }
 

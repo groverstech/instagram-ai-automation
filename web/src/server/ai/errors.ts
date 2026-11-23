@@ -70,6 +70,24 @@ export class AIStoppedError extends Error {
   }
 }
 
+/**
+ * Credit enforcement (CREDITS_MODE=enforce, PR 4.6; credits.ts): this request's worst case would take
+ * the organisation or brand over its monthly credits. Nothing was sent or charged.
+ */
+export class AICreditLimitError extends Error {
+  constructor(
+    readonly scope: "organisation" | "brand",
+    readonly capCredits: number,
+    readonly usedCredits: number,
+    readonly reserveCredits: number,
+  ) {
+    const left = Math.max(0, Math.floor(capCredits - usedCredits));
+    super(
+      `${scope === "brand" ? "This brand" : "Your organisation"} has ${left} AI credit${left === 1 ? "" : "s"} left this month (${Math.ceil(usedCredits)} of ${capCredits} used or reserved), and this request may need up to ${Math.ceil(reserveCredits)}. Nothing was sent or charged. An owner can see the details in Settings → AI credits.`,
+    );
+  }
+}
+
 export class ImageProviderUnavailable extends Error {}
 /** The image provider refused the prompt (content policy). The message is safe to show. */
 export class ImageRefusedError extends Error {
@@ -167,7 +185,7 @@ export function classify(e: unknown): Classified {
     ...extra,
   });
   if (e instanceof AIUnavailableError) return base("circuit_open", { retryable: false, responded: false, serviceFailure: false });
-  if (e instanceof AISpendCapError || e instanceof AISpendCapConfigError || e instanceof AIAccountingError || e instanceof AIStoppedError) return base("spend_cap", { retryable: false, responded: false, serviceFailure: false });
+  if (e instanceof AISpendCapError || e instanceof AISpendCapConfigError || e instanceof AIAccountingError || e instanceof AIStoppedError || e instanceof AICreditLimitError) return base("spend_cap", { retryable: false, responded: false, serviceFailure: false });
   if (e instanceof AIConfigError || e instanceof ImageProviderUnavailable) return base("not_configured", { retryable: false, responded: false, serviceFailure: false });
   if (e instanceof AIRefusalError) return base("refusal");
   if (e instanceof AIOutputError) return base("output_invalid");
@@ -223,7 +241,7 @@ export function isServiceError(e: unknown): boolean {
 
 /** User-facing message for AI failures; never exposes raw API payloads or keys. */
 export function friendlyAIError(e: unknown): string | null {
-  if (e instanceof AIConfigError || e instanceof AIRefusalError || e instanceof AIOutputError || e instanceof AIUnavailableError || e instanceof AISpendCapError || e instanceof AISpendCapConfigError || e instanceof AIAccountingError || e instanceof AIStoppedError) return e.message;
+  if (e instanceof AIConfigError || e instanceof AIRefusalError || e instanceof AIOutputError || e instanceof AIUnavailableError || e instanceof AISpendCapError || e instanceof AISpendCapConfigError || e instanceof AIAccountingError || e instanceof AIStoppedError || e instanceof AICreditLimitError) return e.message;
   if (e instanceof ImageRefusedError) return e.message;
   if (e instanceof ImageProviderUnavailable) return "No image provider is configured. Choose brand photos or a typographic layout, or set OPENAI_API_KEY on the server.";
   const image = e instanceof ImageProviderError;
