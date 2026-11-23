@@ -133,6 +133,9 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   }
   const imageProvider = norm(env.IMAGE_PROVIDER) || "openai";
   if (!["openai", "none"].includes(imageProvider)) err("IMAGE_PROVIDER", "Use `openai`, or `none` to turn AI images off.");
+  else if (imageProvider === "openai" && !set(env.OPENAI_API_KEY)) {
+    warn("OPENAI_API_KEY", "Not set: AI images are unavailable (brand-photo and type-led creatives still work).");
+  }
   for (const prev of (env.APP_SECRET_PREVIOUS ?? "").split(",").map((x) => x.trim()).filter(Boolean)) {
     if (prev.length < 32) err("APP_SECRET_PREVIOUS", "Each previous secret must be the full old APP_SECRET (32+ characters). A shorter one is ignored, so values encrypted with it can't be read.");
     else if (prev === env.APP_SECRET) warn("APP_SECRET_PREVIOUS", "Same as APP_SECRET: nothing to rotate from. Remove it.");
@@ -148,9 +151,6 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   if (strict && (env.AI_TRIPWIRE_USD ?? "").trim() === "") warn("AI_TRIPWIRE_USD", "No AI spending tripwire: a runaway loop or abuse isn't stopped automatically. Set it well above normal spend per window (docs/AI_SPEND_CONTROLS.md).");
   const creditsMode = norm(env.CREDITS_MODE);
   if (creditsMode && !["shadow", "off"].includes(creditsMode)) err("CREDITS_MODE", creditsMode === "enforce" ? "Credit enforcement arrives with PR 4.6. Use `shadow` (default) or `off`." : "Use `shadow` (default) or `off`.");
-  else if (imageProvider === "openai" && !set(env.OPENAI_API_KEY)) {
-    warn("OPENAI_API_KEY", "Not set: AI images are unavailable (brand-photo and type-led creatives still work).");
-  }
 
   // AI models and routing (docs/AI_PROVIDERS.md): only catalogued models, so costs are known.
   if (set(env.ANTHROPIC_MODEL) && !Object.hasOwn(TEXT_MODELS, env.ANTHROPIC_MODEL!.trim())) {

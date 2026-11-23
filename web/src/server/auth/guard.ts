@@ -4,6 +4,22 @@ import { and, eq, inArray } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
 import { getSession, type SessionUser } from "./session";
 import { roleAtLeast, type Role } from "@/lib/roles";
+import { MfaEnrolmentRequired, mfaRequiredFor, mfaRequiredForAdmins } from "./mfa";
+
+/**
+ * Required two-step verification (F3a) is enforced here, for every server action and API route that
+ * resolves access through these guards, not only by the page layout's redirect: an owner or admin
+ * who must have MFA and hasn't set it up is refused until they do. Costs queries only when the
+ * requirement is on and the session isn't known to have MFA.
+ */
+async function assertMfaEnrolledIfRequired(session: SessionUser) {
+  if (session.mfaEnabled === true || !mfaRequiredForAdmins()) return;
+  // The flag is optional on SessionUser: confirm against the database before refusing anyone.
+  const db = await getDb();
+  const [u] = await db.select({ on: schema.users.mfaEnabledAt }).from(schema.users).where(eq(schema.users.id, session.user.id));
+  if (u?.on) return;
+  if (await mfaRequiredFor(session.user.id)) throw new MfaEnrolmentRequired();
+}
 
 export class AccessError extends Error {
   constructor(message = "You don't have access to this resource.") {
@@ -84,6 +100,7 @@ export async function requireBrandForUser(session: SessionUser, brandId: string,
     throw await denied(session, { workspaceId: owner.workspaceId, brandId, type: "brand", id: brandId }, r ? "outside_brand_scope" : "not_a_member", new AccessError());
   }
   if (!roleAtLeast(r.role, min)) throw await denied(session, { workspaceId: r.brand.workspaceId, brandId, type: "brand", id: brandId }, `needs_${min}`, new AccessError(`This action needs the ${min} role or higher.`));
+  await assertMfaEnrolledIfRequired(session);
   return { session, brand: r.brand, role: r.role };
 }
 
@@ -122,5 +139,6 @@ export async function requireWorkspaceRoleForUser(session: SessionUser, workspac
   }
   // Brand-scoped (client) members can't administer the workspace as a whole.
   if (Array.isArray(m.brandIds) && roleAtLeast(min, "admin")) throw await denied(session, { workspaceId, type: "workspace", id: workspaceId }, "outside_brand_scope", new AccessError("Your access is limited to specific brands."));
+  await assertMfaEnrolledIfRequired(session);
   return { session, role: m.role, brandIds: m.brandIds };
 }

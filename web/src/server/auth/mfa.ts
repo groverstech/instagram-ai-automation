@@ -20,6 +20,17 @@ import { newRecoveryCodes, newTotpSecret, otpauthUri, recoveryCodeCandidates, ve
  */
 export class MfaError extends Error {}
 
+/**
+ * The user must have two-step verification (an owner or admin where it's required) but hasn't set it
+ * up. Refused by the access guards and by step-up checks, so server actions and API routes can't be
+ * used with a password alone; pages redirect to Account → Security instead ((app)/layout.tsx).
+ */
+export class MfaEnrolmentRequired extends MfaError {
+  constructor() {
+    super("Set up two-step verification first: it's required for organisation owners and admins (Account → Security).");
+  }
+}
+
 type Env = Record<string, string | undefined>;
 
 export function mfaRequiredForAdmins(env: Env = process.env): boolean {
