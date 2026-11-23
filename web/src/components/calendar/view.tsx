@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { addDays, addMonths, addWeeks, endOfMonth, endOfWeek, format, isSameDay, isSameMonth, isToday, parse, startOfMonth, startOfWeek } from "date-fns";
 import { AlertTriangle, CalendarClock, Check, ChevronLeft, ChevronRight, ExternalLink, Palette, PenLine, SearchCheck, Send, Sparkles, Trash2, Undo2, X } from "lucide-react";
 import {
@@ -8,6 +8,7 @@ import {
   checkPublishAction,
   deletePost,
   markPublishOutcomeAction,
+  publishHistoryAction,
   movePost,
   publishNow,
   rejectPost,
@@ -316,6 +317,7 @@ function PostPanel({ post, brandId, role, accounts, creatives, campaignName, onC
             </div>
           </div>
         ) : null}
+        {post.status === "published" || post.status === "failed" || post.status === "publishing" ? <PublishHistory brandId={brandId} postId={post.id} status={post.status} /> : null}
         {post.status === "published" && post.externalUrl ? (
           <a href={post.externalUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-xl bg-success-soft px-3 py-2 text-[13px] font-medium text-success">
             View live post <ExternalLink className="size-3.5" />
@@ -463,5 +465,43 @@ function PostPanel({ post, brandId, role, accounts, creatives, campaignName, onC
         <Rationale>{post.rationale}</Rationale>
       </div>
     </aside>
+  );
+}
+
+type HistoryRow = { attempt: number; status: string; externalId: string | null; error: string | null; startedAt: string; finishedAt: string | null };
+const attemptLabel: Record<string, string> = { sending: "Sending", succeeded: "Published", failed: "Failed", unknown: "Outcome unknown", reconciled: "Confirmed on the platform" };
+
+/** The publish ledger for one post: every attempt, its outcome and when (PR 4.4a). */
+function PublishHistory({ brandId, postId, status }: { brandId: string; postId: string; status: string }) {
+  const [rows, setRows] = useState<HistoryRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    publishHistoryAction(brandId, postId).then((r) => {
+      if (!live) return;
+      if (r.ok) setRows(r.data);
+      else setError(r.error);
+    });
+    return () => {
+      live = false;
+    };
+  }, [brandId, postId, status]);
+  if (error) return <p className="text-[12px] text-muted">Publishing history isn&apos;t available right now.</p>;
+  if (!rows) return <p className="text-[12px] text-muted">Loading publishing history…</p>;
+  if (!rows.length) return null;
+  return (
+    <details className="rounded-xl border border-line px-3 py-2 text-[12px]" open={status === "failed"}>
+      <summary className="cursor-pointer font-medium text-ink">Publishing history ({rows.length})</summary>
+      <ol className="mt-2 space-y-1.5">
+        {rows.map((r) => (
+          <li key={r.attempt} className="flex flex-col">
+            <span>
+              <span className="font-medium">Attempt {r.attempt}</span> · {attemptLabel[r.status] ?? r.status} · <time dateTime={r.startedAt}>{format(new Date(r.startedAt), "d MMM, HH:mm")}</time>
+            </span>
+            {r.error ? <span className="text-muted">{r.error}</span> : null}
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }

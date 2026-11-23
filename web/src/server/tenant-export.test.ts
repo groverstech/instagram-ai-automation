@@ -44,6 +44,12 @@ async function org(name: string) {
   await db.insert(schema.creatives).values({ brandId: b.id, format: "instagram_portrait", style: "photo", concept: { headline: `${name} launch` }, imagePath });
   await db.insert(schema.socialAccounts).values({ brandId: b.id, platform: "instagram", externalId: "ig-1", name: `${name} IG`, accessTokenEnc: "token-never-exported", refreshTokenEnc: "refresh-never-exported" });
   await db.insert(schema.brandMemories).values({ brandId: b.id, kind: "fact", content: `${name} makes stoneware`, source: "user" });
+  // A post with two publish attempts (the ledger, PR 4.4a): a failure, then success.
+  const [p] = await db.insert(schema.posts).values({ brandId: b.id, platform: "instagram", title: `${name} post`, status: "published" }).returning();
+  await db.insert(schema.publishAttempts).values([
+    { postId: p.id, platform: "instagram", attempt: 1, idempotencyKey: `idem-never-exported-${name}-1`, status: "failed", error: `${name} timeout` },
+    { postId: p.id, platform: "instagram", attempt: 2, idempotencyKey: `idem-never-exported-${name}-2`, status: "succeeded", externalId: `${name}-ig-post` },
+  ]);
   return { ws: w.id, owner, admin, editor, brand: b.id };
 }
 
@@ -70,6 +76,12 @@ describe("organisation data export", () => {
     expect(data.socialAccounts[0]).toMatchObject({ platform: "instagram", name: "Kora IG" });
     expect(data.socialAccounts[0]).not.toHaveProperty("accessTokenEnc");
     expect(data.brandMemories[0]).not.toHaveProperty("embedding");
+    // Publishing history: this organisation's attempts only, without internal idempotency keys.
+    expect(data.publishAttempts.map((r: { attempt: number; status: string; externalId: string | null }) => [r.attempt, r.status, r.externalId]).sort()).toEqual([
+      [1, "failed", null],
+      [2, "succeeded", "Kora-ig-post"],
+    ]);
+    expect(data.publishAttempts[0]).not.toHaveProperty("idempotencyKey");
     // Files at their storage paths; a missing one is listed, not fatal.
     expect(await z.file(`files/brands/${a.brand}/assets/logo.png`)!.async("string")).toBe("logo of Kora");
     expect(await z.file(`files/brands/${a.brand}/creatives/c1.png`)!.async("string")).toBe("image of Kora");
@@ -79,7 +91,7 @@ describe("organisation data export", () => {
     const db = await getDb();
     const [ev] = await db.select().from(schema.auditEvents).where(eq(schema.auditEvents.action, "workspace.export"));
     expect(ev).toMatchObject({ workspaceId: a.ws, actorUserId: a.owner.user.id });
-    expect((ev.details as { status: string }).status).toMatch(/1 brands, 0 posts, 1 creatives, 2 files, 1 skipped/);
+    expect((ev.details as { status: string }).status).toMatch(/1 brands, 1 posts, 1 creatives, 2 files, 1 skipped/);
   });
 
   it("admins and editors are refused", async () => {

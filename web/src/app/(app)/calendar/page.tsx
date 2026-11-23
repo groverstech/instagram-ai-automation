@@ -32,7 +32,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ m
   }
   const all = focus && !posts.some((p) => p.id === focus!.id) ? [...posts, focus] : posts;
   // Failed posts whose last attempt may have gone out need a check before publishing again (PR 4.4a).
-  const checks = await checksNeeded(all.filter((p) => p.status === "failed"));
+  const checks = await withTenant(brand.workspaceId, (t) => checksNeeded(all.filter((p) => p.status === "failed"), t));
   return (
     <CalendarView
       key={format(month, "yyyy-MM")}

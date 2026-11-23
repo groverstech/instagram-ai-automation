@@ -18,7 +18,7 @@ Status values:
 |---|---|---|---|
 | Documented security architecture and trust boundaries | Partial | `ARCHITECTURE.md`, `SECURITY.md`, `ARCHITECTURE_DECISIONS.md` | No formal threat model (STRIDE or similar); recommended before the penetration test |
 | Centralised access control and validation | Met | `auth/guard.ts` (`requireBrandForUser`, `requireWorkspaceRoleForUser`), `safe()` for actions, zod schemas | — |
-| Tenant isolation layered in the database | Partial | Application scoping everywhere; RLS pilot on 3 of 23 tenant tables (#25, #32) | See `RLS_PILOT.md` |
+| Tenant isolation layered in the database | Partial | Application scoping everywhere; RLS pilot on 4 tenant tables: brands, posts, creatives, publish_attempts (#25, #32, migration 0020) | See `RLS_PILOT.md` |
 
 ## V2 Authentication
 
