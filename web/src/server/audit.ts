@@ -17,6 +17,8 @@ export type AuditAction =
   | "auth.login"
   | "auth.login_failed"
   | "auth.signup"
+  | "beta.invite_add"
+  | "beta.invite_revoke"
   | "auth.logout"
   | "auth.mfa_failed"
   | "mfa.enable"

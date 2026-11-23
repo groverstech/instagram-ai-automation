@@ -4,14 +4,16 @@ import { getDb, schema } from "../db/client";
 import { audit } from "../audit";
 import { enforce } from "../ratelimit";
 import type { SessionUser } from "./session";
-import { checkSecondFactor, MfaError } from "./mfa";
+import { checkSecondFactor, MfaEnrolmentRequired, MfaError, mfaRequiredFor } from "./mfa";
 
 /**
  * Step-up verification (FOLLOW_UPS F3b): for people with two-step verification on, sensitive
  * actions (member invitations, role and brand-access changes, removing members, billing, connecting
  * or disconnecting social accounts) need a second factor verified in this session within the last
  * 15 minutes. The sign-in verification counts, so they rarely see an extra prompt right after
- * signing in. People without MFA aren't asked; owners and admins have it on wherever it's required.
+ * signing in. People without MFA aren't asked, unless MFA is required for them (owners and admins in
+ * staging and production) and they haven't set it up: then the action is refused, so a password
+ * alone can never carry out a sensitive action for an account that must have a second factor.
  */
 export const STEP_UP_WINDOW_MS = 15 * 60 * 1000;
 
@@ -24,7 +26,10 @@ export class StepUpRequired extends Error {
 export async function requireRecentSecondFactor(session: Pick<SessionUser, "sessionId" | "user">, now = Date.now()) {
   const db = await getDb();
   const [u] = await db.select({ on: schema.users.mfaEnabledAt }).from(schema.users).where(eq(schema.users.id, session.user.id));
-  if (!u?.on) return;
+  if (!u?.on) {
+    if (await mfaRequiredFor(session.user.id)) throw new MfaEnrolmentRequired();
+    return;
+  }
   const [s] = await db.select({ at: schema.sessions.mfaVerifiedAt }).from(schema.sessions).where(and(eq(schema.sessions.id, session.sessionId), eq(schema.sessions.userId, session.user.id)));
   if (!s?.at || now - s.at.getTime() > STEP_UP_WINDOW_MS) throw new StepUpRequired();
 }
