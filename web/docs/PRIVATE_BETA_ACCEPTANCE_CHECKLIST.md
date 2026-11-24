@@ -31,7 +31,7 @@ Beta launch requires every P0 gate to pass: all gates except those marked P1 in 
 | S9 | Penetration test with findings fixed or accepted (F9) | **Not started** | After the beta build is feature-complete | Owner, External |
 | S11 | Account recovery: password reset and audited operator recovery for lost two-step factors (audit F-A2) | **In review** | #30: forgot/reset flow (no enumeration, hashed single-use 30-minute tokens, sessions ended, MFA kept), `npm run users` operator recovery; 6 tests, browser check 7/7. Email delivery needs O3 | Code, Owner |
 | S13 | Sign-up limited to invited people (invitation-only beta) | **In review** | #29: `SIGNUP_MODE=invite_only` by default in staging and production; beta list (`npm run beta:invite`) or a pending organisation invitation; one refusal message for every uninvited email | Code, Owner (the list) |
-| S12 | Integrated stack (all PRs plus #16) passes tests, build, regression and CSP feature checks | **Pass (pre-merge), to repeat** | Audit §4: 434/434 at #26 + #16, regression 19/16/10/20, CSP feature checks clean (`local/integration-check`). #27–#31 have since been added: repeat on the new top, and on `main` after merging | — |
+| S12 | Integrated stack (all PRs plus #16) passes tests, build, regression and CSP feature checks | **Pass (pre-merge, 24 Nov: #39 + #16 + #11 merge clean except the known row; 513/513; browser journey 15/15). Repeat on `main` after the merges** | Audit §4: 434/434 at #26 + #16, regression 19/16/10/20, CSP feature checks clean (`local/integration-check`). #27–#31 have since been added: repeat on the new top, and on `main` after merging | — |
 | S10 | Egress firewall and metadata protection (F7) | **Not started** | With the hosting platform | Owner |
 
 ## Data
@@ -94,7 +94,7 @@ Beta launch requires every P0 gate to pass: all gates except those marked P1 in 
 | # | Gate | Status | Evidence or next action | Blocker type |
 |---|---|---|---|---|
 | Q1 | Automated lifecycle journey: account → brand → strategy → content → visual → approve → schedule → publish → metrics (sandbox platform, labelled simulated) | **In review** | #34: `npm run e2e:lifecycle`, a production build with Postgres; runs in CI after the build. #39 extends it: email verification, publish history, autonomy settings, organisation export, invitation accepted after verification (17/17 locally). Simulated platforms and demo AI: not evidence of real integrations (P6, A1) | Code |
-| Q2 | Every PR reviewed by the owner or an independent reviewer | **Fail** | No reviews on #11–#26 (audit F-A6) | Owner |
+| Q2 | Every PR reviewed by the owner or an independent reviewer | **Fail** | No reviews yet on #11–#39 (audit F-A6). The merge sequence is in the owner decision pack §3 | Owner |
 | Q3 | `main` CI green after the merges, migrations applied on staging | **Pending** | After R-P0-0 | Owner, then code |
 | Q4 | Live AI validation passed and reconciled | **Pending** | Same as A1 and A2 | Owner |
 

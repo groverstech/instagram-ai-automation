@@ -52,7 +52,7 @@ production-grade deployment, with the security, data and operations gates below 
 Since 23 Nov 2026 these live in five documents, which replace the gate tables, work queue, decision list and checkpoints that used to be here:
 - **[PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md](PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md):** every launch gate with pass/fail status and evidence.
 - **[PRIVATE_BETA_ROADMAP.md](PRIVATE_BETA_ROADMAP.md):** remaining work by priority (P0, P1, P2), owner decision briefs, the live-validation plan and the critical path.
-- **[PRIVATE_BETA_DECISIONS_REQUIRED.md](PRIVATE_BETA_DECISIONS_REQUIRED.md):** every owner decision, with options, cost and a recommendation.
+- **[PRIVATE_BETA_OWNER_DECISION_PACK.md](PRIVATE_BETA_OWNER_DECISION_PACK.md):** the current owner decision pack: merge order with exact commits, the single register of open decisions (A–G) with recommendations, the deployment sequence, beta blockers and the safety defaults. (The older [PRIVATE_BETA_DECISIONS_REQUIRED.md](PRIVATE_BETA_DECISIONS_REQUIRED.md) is superseded.)
 - **[PRIVATE_BETA_PROGRESS.md](PRIVATE_BETA_PROGRESS.md):** open PRs, SHAs, CI, active work, known problems, how to resume, checkpoints.
 - **[PRIVATE_BETA_LAUNCH_AUDIT.md](PRIVATE_BETA_LAUNCH_AUDIT.md):** verified status of `main` and PRs #11–#26, the dependency graph, merge order and retargeting, the integrated-stack verification, the product inventory, findings and the security risk register.
 
@@ -62,7 +62,7 @@ See [PRIVATE_BETA_ROADMAP.md](PRIVATE_BETA_ROADMAP.md) §1–§2.
 
 ## 5. Decisions and inputs needed from the owner
 
-Moved to [PRIVATE_BETA_DECISIONS_REQUIRED.md](PRIVATE_BETA_DECISIONS_REQUIRED.md), with options, costs and recommendations.
+Moved to [PRIVATE_BETA_OWNER_DECISION_PACK.md](PRIVATE_BETA_OWNER_DECISION_PACK.md) §4.
 
 ## 6. Checkpoints
 

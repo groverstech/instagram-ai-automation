@@ -1,5 +1,8 @@
 # Decisions required from the owner
 
+> **Superseded on 24 Nov 2026 by [PRIVATE_BETA_OWNER_DECISION_PACK.md](PRIVATE_BETA_OWNER_DECISION_PACK.md) §4**, the single register of open decisions, grouped A–G with recommendations. The decision IDs below (D-1 to D-28) are kept for reference, and the pack maps them to its own IDs. Where the two differ, the pack is current.
+
+
 Every decision below needs you: engineering won't make it. Each has options, consequences, cost and a recommendation. Status and evidence are in [PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md](PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md); sequencing is in [PRIVATE_BETA_ROADMAP.md](PRIVATE_BETA_ROADMAP.md).
 
 Costs are indicative (late 2026 list prices as remembered, **not verified**). Check current pricing before choosing.

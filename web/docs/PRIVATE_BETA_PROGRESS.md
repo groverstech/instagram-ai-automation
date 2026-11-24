@@ -23,7 +23,7 @@ Two Claude Code sessions work on the mandate: **A** (`session_017ArpCNvaij8Z6GvK
 | [#36](https://github.com/groverstech/instagram-ai-automation/pull/36) | `publish_attempts` under RLS (migration 0020), in the organisation export, and a per-post publishing history | `feature/publish-attempts-isolation` → #35 | `a53cf9e` | 45203675000 green | A |
 | [#37](https://github.com/groverstech/instagram-ai-automation/pull/37) | Autonomy levels: Advisor, Assisted (default), Autonomous behind `AUTONOMOUS_PUBLISHING` (off); policy engine, three gates, safeguards, `agent_actions` (migration 0021) | `feature/autonomy-levels` → #36 | `f0518e9` | 45205797867 green | A |
 | [#38](https://github.com/groverstech/instagram-ai-automation/pull/38) | PR 4.6: credit enforcement behind `CREDITS_MODE=enforce` (off); grants (migration 0022); reconciliation | `feature/credit-enforcement` → #37 | `a085bc8` | 45207079864 green | A |
-| [#39](https://github.com/groverstech/instagram-ai-automation/pull/39) | Email verification, invitation emails, security notifications; Postmark/Resend adapters (migration 0023); extended lifecycle E2E | `feature/email-verification-invites` → #38 | `26ce58a` | 45238867448 green (includes the extended lifecycle step) | A |
+| [#39](https://github.com/groverstech/instagram-ai-automation/pull/39) | Email verification, invitation emails, security notifications; Postmark/Resend adapters (migration 0023); extended lifecycle E2E | `feature/email-verification-invites` → #38 | `58a0f91` | CI on `58a0f91` running at writing (`26ce58a`: 45238867448 green, including the extended lifecycle step) | A |
 
 **Stack order:** main → #12 → #13 → #14 → #15 → #17 → #18 → #19 → #20 → #21 → #22 → #23 → #24 → #25 → #26 → #27 → #29 → #28 → #30 → #31 → #32 → #34 → #33 → #35 → #36 → #37 → #38 → #39. **Linear**: #33 merged `feature/sandbox-lifecycle` and was retargeted onto #34; #35 merged #33 and was retargeted onto it. The lifecycle journey now goes through the publish ledger. #11 and #16 are independent.
 
@@ -76,3 +76,19 @@ The browser regression scripts live in the session scratchpad. They aren't in th
 | 23 Nov 2026 | #34 CI green including the new lifecycle step (45183763244); regression 19/16/10/20 on the #34 build. Opened #35: load test (no errors at 10 and 25 concurrent clients; calendar ~20 pages/s, CPU-bound) and ASVS L2 self-review (gaps become decisions D-26 and D-27). |
 | 23 Nov 2026 | Stack relinearised: #31 → #32 → #34 → #33 → #35 (merges only). Top of stack 472/472 on PG16. Session B has stopped new work and handed the next items back. Decisions: added autonomy levels and the plan-status confirmation to D-3. |
 | 23 Nov 2026 | Full completion mandate. Verified: nothing merged; CI green on #33 (45184903930) and #35 (45186220958). Opened #36 (publish_attempts RLS + export + history, 0020), #37 (autonomy levels, 0021), #38 (PR 4.6 credit enforcement, off; 0022) and #39 (email verification, invitations, notifications, provider adapters; 0023; extended lifecycle E2E). Full suite 512/512 on PG16; lifecycle journey passes end to end, including verification, invitation, export and autonomy checks. The Phase 4 plan is recorded as the approved baseline, with the autonomy levels added. |
+| 24 Nov 2026 | Owner review stage. Re-verified all 30 PRs: the same latest commits as reported, every one green on its latest commit, `main` unchanged (`b8a8353`). Integrated tree (stack + #16 + #11) merges with only the known `SECURITY.md` row; 513/513 tests and the browser journey 15/15 passed on stack + #16. **Defect found and fixed on #39 (`58a0f91`): `reviewer:setup` created the Meta reviewer unverified, which would block the review now that verification is required.** Added PRIVATE_BETA_OWNER_DECISION_PACK.md, the single register of open decisions. |
+
+## 6. Operator emergency stop: every brand at once (pre-approval requested, decision F-6)
+
+For an incident that needs all publishing stopped immediately, before an organisation-wide pause exists in the app. This is a production data change, so it runs only with your approval: either given in advance by approving F-6, or at the time.
+
+1. **Pause every brand.** Run this with the migrate role:
+
+   ```sql
+   UPDATE brands SET publishing_paused_at = now(), publishing_pause_reason = 'Platform emergency stop' WHERE publishing_paused_at IS NULL;
+   ```
+
+   Every publish refuses at its claim, which re-checks the pause in its transaction immediately before sending. The red "Publishing paused" bar shows on every page.
+2. **Optionally, stop the worker** (or the cron caller), so scheduled jobs don't run at all.
+3. **Investigate.** The Security log and `agent_actions` show who approved and published what.
+4. **Resume brand by brand** in the Content Calendar (admins). Future posts are re-queued; posts whose time passed go back to "approved".
