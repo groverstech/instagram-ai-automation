@@ -62,7 +62,7 @@ Costs are indicative list prices as remembered (**not verified**). Check current
 | 25 | #36 publish_attempts isolation (0020) | `feature/publish-attempts-isolation` → #35 | `a53cf9e` | 45203675000 ✅ | no |
 | 26 | #37 autonomy levels (0021) | `feature/autonomy-levels` → #36 | `f0518e9` | 45205797867 ✅ | no |
 | 27 | #38 credit enforcement, off (0022) | `feature/credit-enforcement` → #37 | `a085bc8` | 45207079864 ✅ | no |
-| 28 | #39 email, invitations (0023) | `feature/email-verification-invites` → #38 | **`58a0f91`** | see `PRIVATE_BETA_PROGRESS.md` §1 (`26ce58a`: 45238867448 ✅) | **yes:** the reviewer fix in §1 |
+| 28 | #39 email, invitations (0023) | `feature/email-verification-invites` → #38 | **`58a0f91`** | 45302392288 ✅ (including the browser journey) | **yes:** the reviewer fix in §1 |
 | 29 | #16 strict CSP | `feature/strict-csp` → `main` | `3259597` | 45060385217 ✅ | no |
 
 **Migrations:**
