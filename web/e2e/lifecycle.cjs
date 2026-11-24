@@ -94,6 +94,10 @@ const mailLink = async (to, pathPart) => {
   await p.goto(B + "/brand");
   await p.getByRole("button", { name: /Approve v1/ }).click();
   await p.locator("text=Approved").first().waitFor();
+  // Wait for the approval to be committed, not just for any "Approved" text on the page: the next
+  // step (the strategist) reads it (a race seen once in CI).
+  for (let i = 0; i < 40 && sql("select count(*) from brand_profiles where status='approved'") !== "1"; i++) await p.waitForTimeout(250);
+  if (sql("select count(*) from brand_profiles where status='approved'") !== "1") fail("brand profile approval wasn't recorded");
   log("brand profile approved");
 
   // --- Wizard (steps 1-4) and generation
