@@ -57,7 +57,10 @@ export async function setupReviewer(input: { email: string; reset?: boolean }) {
   const recovery = newRecoveryCodes();
   const [user] = await db
     .insert(schema.users)
-    .values({ email, name: "App reviewer", passwordHash: await hashPassword(password), mfaSecretEnc: encrypt(totpSecret), mfaEnabledAt: new Date(), mfaRecoveryHashes: recovery.hashes })
+    // Email verification is required in staging and production (#39). The reviewer's address is
+    // the platform's test login, not an inbox we can expect them to open, and an operator created
+    // the account on purpose: it's marked verified, or the review would stop at "Check your inbox".
+    .values({ email, name: "App reviewer", passwordHash: await hashPassword(password), mfaSecretEnc: encrypt(totpSecret), mfaEnabledAt: new Date(), mfaRecoveryHashes: recovery.hashes, emailVerifiedAt: new Date() })
     .returning();
   const [ws] = await db.insert(schema.workspaces).values({ name: "App review", type: "business", plan: "agency" }).returning();
   await db.insert(schema.workspaceMembers).values({ workspaceId: ws.id, userId: user.id, role: "owner", status: "active" });

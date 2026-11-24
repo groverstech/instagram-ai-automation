@@ -21,6 +21,12 @@ describe("platform reviewer account", () => {
     const [u] = await db.select().from(schema.users).where(eq(schema.users.id, r.userId));
     expect(u.passwordHash).not.toContain(r.password);
     expect(await verifyPassword(r.password, u.passwordHash)).toBe(true);
+    // Verification is required in staging and production: the reviewer must not stop at "Check your inbox".
+    expect(u.emailVerifiedAt).toBeInstanceOf(Date);
+    process.env.EMAIL_VERIFICATION = "required";
+    const { requireBrandForUser } = await import("./auth/guard");
+    await expect(requireBrandForUser({ sessionId: "s", activeBrandId: null, user: { id: u.id, email: u.email, name: u.name }, mfaEnabled: true }, r.brandId, "owner")).resolves.toBeTruthy();
+    delete process.env.EMAIL_VERIFICATION;
     const [m] = await db.select().from(schema.workspaceMembers).where(eq(schema.workspaceMembers.userId, r.userId));
     expect(m).toMatchObject({ workspaceId: r.workspaceId, role: "owner", status: "active", brandIds: null });
     const [b] = await db.select().from(schema.brands).where(eq(schema.brands.id, r.brandId));
