@@ -87,7 +87,7 @@ describe("emergency pause", () => {
     const [future] = await db.select().from(schema.posts).where(eq(schema.posts.id, ids.future));
     await expect(resumePublishingFor(sess(ids.editor), ids.brand)).rejects.toBeInstanceOf(AccessError);
 
-    expect(await resumePublishingFor(sess(ids.admin), ids.brand, now)).toEqual({ requeued: 1, unscheduled: 1 });
+    expect(await resumePublishingFor(sess(ids.admin), ids.brand, now)).toEqual({ requeued: 1, unscheduled: 1, operatorStop: null });
     const jobs = await queuedFor(future.id);
     expect(jobs).toHaveLength(1);
     expect(jobs[0].runAt.getTime()).toBe(future.scheduledAt!.getTime());
@@ -96,7 +96,7 @@ describe("emergency pause", () => {
     expect(await queuedFor(missed.id)).toEqual([]);
     const [b] = await db.select().from(schema.brands).where(eq(schema.brands.id, ids.brand));
     expect(b).toMatchObject({ publishingPausedAt: null, publishingPausedBy: null, publishingPauseReason: null });
-    expect(await resumePublishingFor(sess(ids.admin), ids.brand)).toEqual({ requeued: 0, unscheduled: 0 });
+    expect(await resumePublishingFor(sess(ids.admin), ids.brand)).toEqual({ requeued: 0, unscheduled: 0, operatorStop: null });
     const [ev] = await db.select().from(schema.auditEvents).where(eq(schema.auditEvents.action, "publishing.resume"));
     expect(ev).toMatchObject({ actorUserId: ids.admin, details: { requeued: 1, unscheduled: 1 } });
   });

@@ -76,8 +76,9 @@ strategy, creative, caption, campaign and analysis it produces.
   attempted where the official API supports it, needs an approved post and a connected
   account, and records the platform's real response (id/permalink or error). No simulated success.
 * **Secrets stay on the server.** Keys live only in env vars. OAuth tokens are encrypted at
-  rest. Public media links (needed by Instagram/Pinterest to fetch images) are HMAC-signed and
-  scoped to one creative.
+  rest. Public media links (needed by Instagram/Pinterest to fetch images) are HMAC-signed, expire in 24 hours,
+  and are bound to one approved version of one post: they serve nothing once that approval is
+  withdrawn or the content changes (SECURITY.md, approval integrity).
 
 ---
 

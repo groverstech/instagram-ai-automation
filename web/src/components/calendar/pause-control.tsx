@@ -40,7 +40,7 @@ export function PauseControl({ brandId, brandName, role, paused }: { brandId: st
             <div className="flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
               {paused ? (
-                <Button loading={busy("resume")} onClick={() => run(() => resumePublishing(brandId), { key: "resume", success: (r) => `Publishing resumed · ${r.requeued} queued again${r.unscheduled ? ` · ${r.unscheduled} missed post${r.unscheduled === 1 ? "" : "s"} back to approved` : ""}`, onOk: () => setOpen(false) })}>
+                <Button loading={busy("resume")} onClick={() => run(() => resumePublishing(brandId), { key: "resume", success: (r) => (r.operatorStop ? `Your pause is lifted, but publishing stays stopped by the BrandPilot team until they lift their stop.` : `Publishing resumed · ${r.requeued} queued again${r.unscheduled ? ` · ${r.unscheduled} missed post${r.unscheduled === 1 ? "" : "s"} back to approved` : ""}`), onOk: () => setOpen(false) })}>
                   Resume publishing
                 </Button>
               ) : (

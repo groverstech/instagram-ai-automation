@@ -66,6 +66,7 @@ export type AuditAction =
   | "post.approved"
   | "post.approval_invalidated"
   | "publishing.emergency_stop"
+  | "publishing.emergency_resume"
   | "autonomy.suspended"
   | "ai.resume"
   | "creative.approve_override"

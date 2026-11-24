@@ -4,6 +4,7 @@ import { mfaRequiredFor } from "@/server/auth/mfa";
 import { StepUpDialog } from "@/components/account/step-up-dialog";
 import { requireActiveBrand, listAccessibleBrands } from "@/server/auth/guard";
 import { getDb, schema } from "@/server/db/client";
+import { operatorStopFor } from "@/server/publishing-paused";
 import { aiStatus } from "@/server/ai/llm";
 import { sandboxOn } from "@/server/social/sandbox";
 import { imageModelLabel, imageStatus } from "@/server/ai/image";
@@ -19,10 +20,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   // Owners and admins must use two-step verification when it's required (auth/mfa.ts).
   if (!session.mfaEnabled && (await mfaRequiredFor(session.user.id))) redirect("/account/security?required=1");
   const db = await getDb();
-  const [brands, pending, history] = await Promise.all([
+  const [brands, pending, history, operatorStop] = await Promise.all([
     listAccessibleBrands(session.user.id),
     db.$count(schema.posts, and(eq(schema.posts.brandId, brand.id), eq(schema.posts.status, "pending_approval"))),
     assistantHistory(brand.id, 30),
+    // Only the banner: if this can't be read, every publishing path still refuses on its own check.
+    operatorStopFor(db, brand.workspaceId).catch(() => null),
   ]);
   const ai = aiStatus();
   const img = imageStatus();
@@ -58,6 +61,12 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             </span>
           </div>
         )}
+        {operatorStop ? (
+          <div role="status" aria-label="Publishing stopped" className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-danger/20 bg-danger-soft px-6 py-2 text-[12px] text-danger md:px-10">
+            <span className="rounded-full bg-danger px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white">Publishing stopped</span>
+            <span>Nothing is published for {brand.name} while the BrandPilot team&apos;s emergency stop is in force: {operatorStop.reason}. Only the BrandPilot team can lift it.</span>
+          </div>
+        ) : null}
         {brand.publishingPausedAt ? (
           <div role="status" aria-label="Publishing paused" className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-danger/20 bg-danger-soft px-6 py-2 text-[12px] text-danger md:px-10">
             <span className="rounded-full bg-danger px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-white">Publishing paused</span>

@@ -1,12 +1,14 @@
-// `npm run publishing:stop -- <command>`: operator emergency stop (review M4). Platform-level, never
-// in the web app. Every stop is recorded in each affected organisation's Security log.
+// `npm run publishing:stop -- <command>`: operator emergency stop (reviews M4, M-3). Platform-level,
+// never in the web app. Every stop and every clear is recorded in each covered organisation's
+// Security log.
 //
-//   stop --by <name> --reason <text> [--org <organisation id>]   pause every brand (or one organisation's)
-//   status                                                      list paused brands
+//   stop   --by <name> --reason <text> [--org <organisation id>]   stop publishing everywhere (or for one organisation)
+//   resume --by <name> --reason <text> [--org <organisation id>]   lift that stop (the same scope)
+//   status                                                        stops in force, and brands paused by their own admins
 //
-// There's no bulk resume on purpose: each brand is resumed in the app by one of its admins
-// (Content Calendar → Resume publishing). Never resume by editing the database.
-import { emergencyStop, pausedBrands } from "./emergency-stop";
+// Brand admins can't lift an operator stop: "Resume publishing" in the app only clears a brand's own
+// pause. Never lift a stop by editing the database: scheduled posts would be left without jobs.
+import { clearStop, emergencyStop, stopStatus } from "./emergency-stop";
 
 function flags(args: string[]) {
   const out: Record<string, string> = {};
@@ -19,17 +21,24 @@ async function main() {
   const f = flags(args);
   if (cmd === "stop") {
     const r = await emergencyStop({ by: f.by ?? "", reason: f.reason ?? "", workspaceId: f.org || null });
-    console.log(`Paused ${r.brands} brand(s) in ${r.organisations} organisation(s); cancelled ${r.cancelledJobs} queued publish job(s).`);
-    console.log("Resume each brand in the app (Content Calendar → Resume publishing). Don't resume in the database.");
+    console.log(`Stopped publishing (${r.scope}): ${r.brands} brand(s) in ${r.organisations} organisation(s); cancelled ${r.cancelledJobs} queued publish job(s).`);
+    console.log(`Lift it with: npm run publishing:stop -- resume --by <name> --reason <text>${f.org ? ` --org ${f.org}` : ""}`);
+    return;
+  }
+  if (cmd === "resume") {
+    const r = await clearStop({ by: f.by ?? "", reason: f.reason ?? "", workspaceId: f.org || null });
+    console.log(`Lifted the stop (${r.scope}) for ${r.organisations} organisation(s): re-queued ${r.requeued} scheduled post(s); ${r.unscheduled} missed post(s) returned to "approved".`);
     return;
   }
   if (cmd === "status") {
-    const rows = await pausedBrands();
-    if (!rows.length) console.log("No brand is paused.");
-    for (const r of rows) console.log(`${r.workspace} / ${r.name}: paused ${r.at?.toISOString()} (${r.reason ?? "no reason"})`);
+    const { stops, paused } = await stopStatus();
+    if (!stops.length) console.log("No operator stop is in force.");
+    for (const s of stops) console.log(`STOP ${s.scope}: since ${s.setAt.toISOString()} by ${s.setBy} (${s.reason})`);
+    if (!paused.length) console.log("No brand is paused by its own admins.");
+    for (const r of paused) console.log(`${r.workspace} / ${r.name}: paused ${r.at?.toISOString()} (${r.reason ?? "no reason"})`);
     return;
   }
-  console.log("Usage: npm run publishing:stop -- stop --by <name> --reason <text> [--org <id>] | status");
+  console.log("Usage: npm run publishing:stop -- stop|resume --by <name> --reason <text> [--org <id>] | status");
   process.exitCode = 2;
 }
 

@@ -52,16 +52,50 @@ export function approvalHash(post: Pick<Post, PublishedField>, creative: Creativ
   return crypto.createHash("sha256").update(JSON.stringify(body)).digest("hex");
 }
 
-/** The hash of a post as it stands in the database now (inside a transaction, pass it). */
-export async function currentApprovalHash(db: Reader, post: Post): Promise<string> {
+/**
+ * A post as it stands in the database now, with the exact creative and brand rows the hash was
+ * computed from. Callers that go on to publish or render use these rows, not a second read, so
+ * what's hashed and what's used can't differ (review M-1). Inside a transaction, pass it.
+ */
+export async function approvalSnapshot(db: Reader, post: Post): Promise<{ hash: string; creative: Creative | null; brand: Brand | null }> {
   const [creative] = post.creativeId ? await db.select().from(schema.creatives).where(eq(schema.creatives.id, post.creativeId)) : [];
-  const [brand] = await db.select({ name: schema.brands.name, colors: schema.brands.colors, fonts: schema.brands.fonts }).from(schema.brands).where(eq(schema.brands.id, post.brandId));
+  const [brand] = await db.select().from(schema.brands).where(eq(schema.brands.id, post.brandId));
   const logos = await db
     .select({ path: schema.brandAssets.path })
     .from(schema.brandAssets)
     .where(and(eq(schema.brandAssets.brandId, post.brandId), eq(schema.brandAssets.kind, "logo")))
     .orderBy(asc(schema.brandAssets.path));
-  return approvalHash(post, creative ?? null, brand ?? null, logos.map((l) => l.path));
+  return { hash: approvalHash(post, creative ?? null, brand ?? null, logos.map((l) => l.path)), creative: creative ?? null, brand: brand ?? null };
+}
+
+/** The hash of a post as it stands in the database now (inside a transaction, pass it). */
+export async function currentApprovalHash(db: Reader, post: Post): Promise<string> {
+  return (await approvalSnapshot(db, post)).hash;
+}
+
+/** The content no longer matches the approval the media link or publish was issued for. */
+export class NotApprovedContentError extends Error {}
+
+/**
+ * Render the image of exactly the approved version of a post (review M-1), for the public media
+ * link platforms fetch and for in-process uploads. Refuses unless the post still carries
+ * `expectedHash` as its approval and its current content still hashes to it, both before and after
+ * rendering, at the post's own format (the renderer reads the logo itself; storage keys are never reused, so equal hashes
+ * before and after mean the rendered image is the approved one).
+ */
+export async function renderApproved(db: Reader, postId: string, expectedHash: string): Promise<Buffer> {
+  const check = async () => {
+    const [post] = await db.select().from(schema.posts).where(eq(schema.posts.id, postId));
+    if (!post || !post.approvedContentHash || post.approvedContentHash !== expectedHash) throw new NotApprovedContentError("This post's approval has been withdrawn or replaced.");
+    const snap = await approvalSnapshot(db, post);
+    if (snap.hash !== expectedHash || !snap.creative || !snap.brand) throw new NotApprovedContentError("This post, its creative or the brand's look changed after it was approved.");
+    return { post, snap };
+  };
+  const { post, snap } = await check();
+  const { renderCreativePng } = await import("../creative/render");
+  const png = await renderCreativePng(snap.creative!, snap.brand!, post.format);
+  await check();
+  return png;
 }
 
 /** Which published fields differ between two versions of a post. */

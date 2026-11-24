@@ -1,6 +1,6 @@
 "use server";
 import { audit } from "@/server/audit";
-import { assertNotPaused } from "@/server/publishing-paused";
+import { assertPublishingAllowed } from "@/server/publishing-paused";
 import { revalidatePath } from "next/cache";
 import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -63,6 +63,12 @@ export async function updatePost(brandId: string, postId: string, patch: z.infer
     // platform, format, creative, target account) withdraws the approval. The approver isn't shown
     // against content they didn't see; queued publishing stops; a person approves again.
     const changed = changedPublishedFields(p, { ...v, scheduledAt: undefined } as Parameters<typeof changedPublishedFields>[1]);
+    // The last attempt may have gone out and hasn't been checked (review H-1): the post's content
+    // stays as sent until a check settles it, so the record matches what's on the platform.
+    if (changed.length) {
+      const { isUnsettled, latestAttempt } = await import("@/server/social/publish-ledger");
+      if (isUnsettled(await latestAttempt(postId))) throw new UserFacingError("This post may already be on the platform. Check it first (in the post's panel), then edit it.");
+    }
     const hadApproval = ["approved", "scheduled", "failed"].includes(p.status) || p.approvedAt != null;
     const invalidate = changed.length > 0 && hadApproval;
     const status = invalidate ? "pending_approval" : p.status;
@@ -147,12 +153,17 @@ export async function submitForApproval(brandId: string, postId: string) {
   });
 }
 
-export async function approvePostAction(brandId: string, postId: string) {
+/**
+ * Approve exactly the version the approver reviewed (review M-2): `reviewedHash` is the approval
+ * hash of the post as the page showed it (calendar/page.tsx). If the post, its creative or the
+ * brand's look changed since, nothing is approved and the approver is asked to reload.
+ */
+export async function approvePostAction(brandId: string, postId: string, reviewedHash: string) {
   return safe(async () => {
     const { session } = await requireBrand(brandId, "admin");
     const p = await ownPost(brandId, postId);
     if (!p.caption) throw new Error("A post needs a caption before it can be approved.");
-    await approvePost(brandId, postId, session.user.id);
+    await approvePost(brandId, postId, session.user.id, z.string().regex(/^[0-9a-f]{64}$/, "Reload the page and review the post again.").parse(reviewedHash));
     refresh();
   });
 }
@@ -173,7 +184,7 @@ export async function rejectPost(brandId: string, postId: string, reason: string
 export async function schedulePost(brandId: string, postId: string) {
   return safe(async () => {
     const { brand } = await requireBrand(brandId, "admin");
-    assertNotPaused(brand);
+    await assertPublishingAllowed(await getDb(), brand);
     const p = await ownPost(brandId, postId);
     if (p.status !== "approved") throw new Error("Approve the post before scheduling it.");
     if (!p.scheduledAt) throw new Error("Pick a date and time.");
@@ -206,7 +217,7 @@ export async function unschedulePost(brandId: string, postId: string) {
 export async function publishNow(brandId: string, postId: string) {
   return safe(async () => {
     const { brand } = await requireBrand(brandId, "admin");
-    assertNotPaused(brand);
+    await assertPublishingAllowed(await getDb(), brand);
     const p = await ownPost(brandId, postId);
     if (!["approved", "scheduled", "failed"].includes(p.status)) throw new Error("Approve the post first.");
     if (p.status === "scheduled") await cancelJobs("publish_post", (j) => j.postId === postId);

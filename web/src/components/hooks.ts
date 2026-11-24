@@ -34,7 +34,12 @@ export function useRun() {
         // Ask for a code, then run the same action again.
         const detail: StepUpDetail = { retry: () => run(fn, opts), cancel: () => toast("Cancelled: a code is needed to continue.", "error") };
         window.dispatchEvent(new CustomEvent(STEP_UP_EVENT, { detail }));
-      } else toast(r.error, "error");
+      } else {
+        toast(r.error, "error");
+        // 409: the content changed under the user (e.g. approving a post that was edited since it
+        // was shown, review M-2). Reload it so they review what's there now.
+        if (r.status === 409) router.refresh();
+      }
       setKey(null);
     });
   }

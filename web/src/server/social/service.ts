@@ -7,10 +7,9 @@ import { sandboxOn } from "./sandbox";
 import { PlatformError, PublishNotSupported, isTokenError, type AccountForUse, type DiscoveredAccount, type PublishContext } from "./types";
 import { CHECKED_ABSENT, isUnsettled, latestAttempt, markNeedsReconnect, reconnectMessage } from "./publish-ledger";
 import { log } from "../log";
-import { renderCreativePng } from "../creative/render";
 import { remember } from "../memory";
-import { pausedMessage, PublishingPausedError } from "../publishing-paused";
-import { CLEARED_APPROVAL, currentApprovalHash } from "./approval";
+import { operatorStopFor, pausedMessage, PublishingPausedError, stoppedMessage } from "../publishing-paused";
+import { CLEARED_APPROVAL, NotApprovedContentError, approvalSnapshot, renderApproved } from "./approval";
 import { audit } from "../audit";
 import { publishGate, suspendAutonomy } from "../autonomy/service";
 
@@ -27,9 +26,13 @@ export function isPublicAppUrl() {
   }
 }
 
-/** Signed URL platforms can fetch the rendered creative from, as sRGB JPEG (valid 24h). */
-export function publicMediaUrl(creativeId: string, format?: string) {
-  const token = sign({ c: creativeId, f: format ?? null, exp: Date.now() + 24 * 3600 * 1000 });
+/**
+ * Signed URL platforms fetch the post's image from, as sRGB JPEG (valid 24h). It's bound to one
+ * approved version of one post (review M-1): the route serves the image only while the post still
+ * carries that approval and its content still matches it (social/approval.ts renderApproved).
+ */
+export function publicMediaUrl(postId: string, approvalHash: string) {
+  const token = sign({ p: postId, h: approvalHash, exp: Date.now() + 24 * 3600 * 1000 });
   // JPEG: Instagram's content publishing API accepts JPEG images only (plan defect D1).
   return `${appUrl()}/api/public/media/${token}.jpg`;
 }
@@ -88,8 +91,12 @@ export async function publishPost(postId: string) {
   if (!["approved", "scheduled", "failed"].includes(post.status)) throw new Error(`Post must be approved before publishing (current status: ${post.status}).`);
   if (!post.approvedAt) throw new Error("Post has no recorded approval.");
   // Emergency pause: refuse without changing the post, so resuming can pick it up again.
-  const [owner] = await db.select({ name: schema.brands.name, publishingPausedAt: schema.brands.publishingPausedAt }).from(schema.brands).where(eq(schema.brands.id, post.brandId));
+  const [owner] = await db.select({ name: schema.brands.name, publishingPausedAt: schema.brands.publishingPausedAt, workspaceId: schema.brands.workspaceId }).from(schema.brands).where(eq(schema.brands.id, post.brandId));
+  const brandWorkspace = owner?.workspaceId ?? null;
   if (owner?.publishingPausedAt) return { ok: false as const, error: pausedMessage(owner), paused: true as const };
+  // Operator emergency stop (review M-3): separate from the brand's own pause.
+  const stopNow = brandWorkspace ? await operatorStopFor(db, brandWorkspace) : null;
+  if (stopNow) return { ok: false as const, error: stoppedMessage(stopNow), paused: true as const };
 
   const fail = async (msg: string) => {
     await db.update(schema.posts).set({ status: "failed", publishError: msg }).where(eq(schema.posts.id, postId));
@@ -123,9 +130,8 @@ export async function publishPost(postId: string) {
     return fail(`${p.label} downloads the image from a public URL. Set APP_URL to your public https domain before publishing.`);
   }
 
-  const [brand] = await db.select().from(schema.brands).where(eq(schema.brands.id, post.brandId));
   // Set inside the claim transaction (a holder object, so the values survive the closure).
-  const claim: { invalidated?: { workspaceId: string | null; hadHash: boolean }; post?: typeof post; creative?: typeof schema.creatives.$inferSelect | null } = {};
+  const claim: { invalidated?: { workspaceId: string | null; hadHash: boolean }; post?: typeof post; creative?: typeof schema.creatives.$inferSelect | null; hash?: string } = {};
   // Claim the post atomically: only one caller (scheduled job or "publish now") can move it to
   // "publishing", so concurrent attempts can't both publish. In the same transaction, with the
   // account row locked: the emergency pause and the autonomy policy are checked again immediately
@@ -134,16 +140,21 @@ export async function publishPost(postId: string) {
     await tx.execute(sql`select id from social_accounts where id = ${acct.id} for update`);
     const [fresh] = await tx.select().from(schema.posts).where(eq(schema.posts.id, postId));
     if (!fresh) return { ok: false as const, error: "Post not found" };
+    // Operator emergency stop (review M-3), checked again under the claim.
+    const stop = brandWorkspace ? await operatorStopFor(tx as unknown as typeof db, brandWorkspace) : null;
+    if (stop) return { ok: false as const, error: stoppedMessage(stop), paused: true as const };
     // Approval integrity (H1): what's about to be published must be exactly what was approved:
     // the post, its creative and the brand identity drawn on the image. Otherwise it goes back to
     // a person, unsent. A post approved before hashes existed has none and needs a fresh approval.
-    const hash = await currentApprovalHash(tx as unknown as typeof db, fresh);
+    // The rows hashed here are the ones published (review M-1): no second read.
+    const snap = await approvalSnapshot(tx as unknown as typeof db, fresh);
+    const hash = snap.hash;
     if (!fresh.approvedContentHash || fresh.approvedContentHash !== hash) {
       await tx
         .update(schema.posts)
         .set({ status: "pending_approval", ...CLEARED_APPROVAL, publishError: "The post, its creative or the brand's look changed after it was approved, so it needs a new approval. Nothing was sent." })
         .where(eq(schema.posts.id, postId));
-      claim.invalidated = { workspaceId: brand?.workspaceId ?? null, hadHash: Boolean(fresh.approvedContentHash) };
+      claim.invalidated = { workspaceId: brandWorkspace, hadHash: Boolean(fresh.approvedContentHash) };
       return { ok: false as const, error: "This post changed after it was approved, so it needs a new approval. Nothing was sent.", toPerson: true as const };
     }
     const d = await publishGate(tx as unknown as typeof db, fresh, acct);
@@ -161,28 +172,33 @@ export async function publishPost(postId: string) {
     if (!claimed) return { ok: false as const, error: "This post is already being published." };
     // Publish exactly the version checked above (edits are refused while it's publishing).
     claim.post = fresh;
-    const [c] = await tx.select().from(schema.creatives).where(eq(schema.creatives.id, fresh.creativeId!));
-    claim.creative = c ?? null;
+    claim.creative = snap.creative;
+    claim.hash = hash;
     return null;
   });
   if (claim.invalidated) {
     await audit({ action: "post.approval_invalidated", workspaceId: claim.invalidated.workspaceId, brandId: post.brandId, actorType: "system", targetType: "post", targetId: postId, details: { at: "publish", reason: claim.invalidated.hadHash ? "content_changed" : "approved_before_integrity_checks" } });
   }
   if (gate) return gate;
-  if (!claim.post || !claim.creative) return { ok: false as const, error: "The post or its creative is missing." };
+  if (!claim.post || !claim.creative || !claim.hash) return { ok: false as const, error: "The post or its creative is missing." };
   const snapshot = claim.post;
-  const snapshotCreative = claim.creative;
+  const approved = claim.hash;
 
   const caption = captionOf(snapshot);
   // The attempt is recorded before anything is sent. If it can't be, nothing is sent.
   const attemptNo = (last?.attempt ?? 0) + 1;
-  // A container from an attempt that a check found unpublished can be reused (Instagram).
-  const resume = last && last.status === "failed" && (last.error ?? "").startsWith(CHECKED_ABSENT) ? last.progress : {};
+  // A container from an attempt that a check found unpublished can be reused (Instagram), but only
+  // for the same approved content (review H-1): a container holds the caption and image it was
+  // created with, so after an edit and a new approval a fresh one is made from the new version.
+  const lastProgress = (last?.progress ?? {}) as Record<string, unknown>;
+  const resume = last && last.status === "failed" && (last.error ?? "").startsWith(CHECKED_ABSENT) && lastProgress.approvalHash === approved ? lastProgress : {};
   let attemptId: string;
   try {
     const [row] = await db
       .insert(schema.publishAttempts)
-      .values({ postId, socialAccountId: acct.id, platform: acct.platform, attempt: attemptNo, idempotencyKey: `post:${postId}:${attemptNo}` })
+      // What this attempt sends is recorded with it: the approval it carries (container reuse) and the
+      // exact text (a later check looks for this text, not the post's current one).
+      .values({ postId, socialAccountId: acct.id, platform: acct.platform, attempt: attemptNo, idempotencyKey: `post:${postId}:${attemptNo}`, progress: { approvalHash: approved, caption } })
       .returning({ id: schema.publishAttempts.id });
     attemptId = row.id;
   } catch (e) {
@@ -190,7 +206,7 @@ export async function publishPost(postId: string) {
     await db.update(schema.posts).set({ status: post.status, publishError: post.publishError }).where(eq(schema.posts.id, postId));
     return { ok: false as const, error: "BrandPilot couldn't record the publish attempt, so nothing was sent. Try again." };
   }
-  let progress: Record<string, unknown> = {};
+  let progress: Record<string, unknown> = { approvalHash: approved, caption };
   let finalSent = false;
   const ctx: PublishContext = {
     resume,
@@ -202,8 +218,10 @@ export async function publishPost(postId: string) {
     // once more (M4): a pause that arrives while the post is being prepared still stops it, and
     // nothing has been sent. After this point the request is out and can't be recalled.
     async finalSend() {
-      const [b] = await db.select({ name: schema.brands.name, publishingPausedAt: schema.brands.publishingPausedAt }).from(schema.brands).where(eq(schema.brands.id, post.brandId));
+      const [b] = await db.select({ name: schema.brands.name, publishingPausedAt: schema.brands.publishingPausedAt, workspaceId: schema.brands.workspaceId }).from(schema.brands).where(eq(schema.brands.id, post.brandId));
       if (b?.publishingPausedAt) throw new PublishingPausedError(pausedMessage(b));
+      const stop = b ? await operatorStopFor(db, b.workspaceId) : null;
+      if (stop) throw new PublishingPausedError(stoppedMessage(stop));
       finalSent = true;
     },
   };
@@ -216,8 +234,10 @@ export async function publishPost(postId: string) {
       {
         caption,
         title: snapshot.title ?? undefined,
-        imageUrl: publicMediaUrl(snapshotCreative.id, snapshot.format),
-        image: () => renderCreativePng(snapshotCreative, brand, snapshot.format),
+        // Both are bound to the approved version (review M-1): the link refuses, and the in-process
+        // render throws, if the post, creative or brand no longer match the approval.
+        imageUrl: publicMediaUrl(postId, approved),
+        image: () => renderApproved(db, postId, approved),
       },
       ctx,
     );
@@ -235,6 +255,13 @@ export async function publishPost(postId: string) {
       await db.update(schema.publishAttempts).set({ status: "failed", error: `Stopped by the emergency pause before sending: ${detail}`.slice(0, 1000), finishedAt: new Date() }).where(eq(schema.publishAttempts.id, attemptId));
       await db.update(schema.posts).set({ status: post.status, publishError: null }).where(and(eq(schema.posts.id, postId), eq(schema.posts.status, "publishing")));
       return { ok: false as const, error: detail, paused: true as const };
+    }
+    if (e instanceof NotApprovedContentError) {
+      // The content changed after the claim (review M-1): the image wasn't sent; a person approves again.
+      await db.update(schema.publishAttempts).set({ status: "failed", error: `Not sent: ${detail}`.slice(0, 1000), finishedAt: new Date() }).where(eq(schema.publishAttempts.id, attemptId));
+      await db.update(schema.posts).set({ status: "pending_approval", ...CLEARED_APPROVAL, publishError: "The post, its creative or the brand's look changed while it was being published, so it needs a new approval. Nothing was sent." }).where(eq(schema.posts.id, postId));
+      await audit({ action: "post.approval_invalidated", workspaceId: brandWorkspace, brandId: post.brandId, actorType: "system", targetType: "post", targetId: postId, details: { at: "publish_render", reason: "content_changed" } });
+      return { ok: false as const, error: "This post changed while it was being published, so it needs a new approval. Nothing was sent.", toPerson: true as const };
     }
     if (isTokenError(e)) await markNeedsReconnect(acct.id, detail);
     // Automatic safeguard (docs/AUTONOMY.md): a failed autonomous publish, or a rejected token,
@@ -329,24 +356,40 @@ export async function syncMetrics(brandId: string) {
 /** A refusal whose message is safe to show (kept local: this module is also loaded by the worker). */
 export class UserFacingErrorLike extends Error {}
 
-/** Approval checkpoint: records who approved, and exactly what, and teaches brand memory. */
-export async function approvePost(brandId: string, postId: string, userId: string) {
+/** The post changed between review and approval (review M-2): the approver reloads and reviews it. */
+export class ApprovalConflictError extends UserFacingErrorLike {}
+
+/**
+ * Approval checkpoint: records who approved, and exactly what, and teaches brand memory.
+ *
+ * `reviewedHash` is the approval hash of the version the approver was shown (review M-2). In one
+ * transaction, with the post row locked (a concurrent edit waits, then finds it approved and is
+ * refused), the current hash is recomputed and must equal it; otherwise nothing is approved. A
+ * change to the creative or brand that lands after this still can't publish: the publish claim
+ * compares against the hash recorded here.
+ */
+export async function approvePost(brandId: string, postId: string, userId: string, reviewedHash: string) {
   const db = await getDb();
-  // The approval is for exactly this version (social/approval.ts): its hash is recorded, and the
-  // update only applies if the post hasn't changed or moved on since it was read.
-  const [cur] = await db.select().from(schema.posts).where(and(eq(schema.posts.id, postId), eq(schema.posts.brandId, brandId)));
-  if (!cur) return undefined;
-  if (["publishing", "published"].includes(cur.status)) throw new UserFacingErrorLike("This post has already been published.");
-  const hash = await currentApprovalHash(db, cur);
-  const [p] = await db
-    .update(schema.posts)
-    .set({ status: "approved", approvedBy: userId, approvedAt: new Date(), approvedContentHash: hash, autoApprovedVersion: null, publishError: null })
-    .where(and(eq(schema.posts.id, postId), eq(schema.posts.brandId, brandId), eq(schema.posts.status, cur.status)))
-    .returning();
-  if (!p) throw new UserFacingErrorLike("The post changed while you were approving it. Reload and review it again.");
+  const result = await db.transaction(async (tx) => {
+    await tx.execute(sql`select id from posts where id = ${postId} and brand_id = ${brandId} for update`);
+    const [cur] = await tx.select().from(schema.posts).where(and(eq(schema.posts.id, postId), eq(schema.posts.brandId, brandId)));
+    if (!cur) return undefined;
+    if (["publishing", "published"].includes(cur.status)) throw new UserFacingErrorLike("This post has already been published.");
+    const { hash } = await approvalSnapshot(tx as unknown as typeof db, cur);
+    if (!reviewedHash || hash !== reviewedHash) throw new ApprovalConflictError("This post, its creative or the brand's look changed since you opened it. Nothing was approved: reload and review it again.");
+    const [p] = await tx
+      .update(schema.posts)
+      .set({ status: "approved", approvedBy: userId, approvedAt: new Date(), approvedContentHash: hash, autoApprovedVersion: null, publishError: null })
+      .where(and(eq(schema.posts.id, postId), eq(schema.posts.brandId, brandId), eq(schema.posts.status, cur.status)))
+      .returning();
+    if (!p) throw new ApprovalConflictError("The post changed while you were approving it. Reload and review it again.");
+    return { p, hash, from: cur.status };
+  });
+  if (!result) return undefined;
+  const { p, hash, from } = result;
   const [b] = await db.select({ workspaceId: schema.brands.workspaceId }).from(schema.brands).where(eq(schema.brands.id, brandId));
-  await audit({ action: "post.approved", workspaceId: b?.workspaceId ?? null, brandId, actorUserId: userId, targetType: "post", targetId: postId, details: { contentHash: hash.slice(0, 16), from: cur.status } });
-  if (p?.caption) {
+  await audit({ action: "post.approved", workspaceId: b?.workspaceId ?? null, brandId, actorUserId: userId, targetType: "post", targetId: postId, details: { contentHash: hash.slice(0, 16), from } });
+  if (p.caption) {
     await remember(brandId, [{ kind: "approval", content: `Approved ${p.platform} caption (${p.objective ?? "general"}): "${p.caption.slice(0, 280)}"`, source: "post:approved", weight: 1.2 }]);
   }
   return p;

@@ -6,6 +6,7 @@ import { withTenant } from "@/server/db/tenant";
 import { CalendarView } from "@/components/calendar/view";
 import { PROVIDERS } from "@/server/social/registry";
 import { checksNeeded } from "@/server/social/publish-ledger";
+import { currentApprovalHash } from "@/server/social/approval";
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ m?: string; post?: string }> }) {
   const sp = await searchParams;
@@ -33,6 +34,9 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ m
   const all = focus && !posts.some((p) => p.id === focus!.id) ? [...posts, focus] : posts;
   // Failed posts whose last attempt may have gone out need a check before publishing again (PR 4.4a).
   const checks = await withTenant(brand.workspaceId, (t) => checksNeeded(all.filter((p) => p.status === "failed"), t));
+  // The version each approvable post is shown at (review M-2): approving sends it back, and the
+  // approval is refused if the post, its creative or the brand's look changed since.
+  const reviewHashes = new Map(await Promise.all(all.filter((p) => ["draft", "pending_approval"].includes(p.status)).map(async (p) => [p.id, await currentApprovalHash(db, p)] as const)));
   return (
     <CalendarView
       key={format(month, "yyyy-MM")}
@@ -63,6 +67,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ m
         externalUrl: p.externalUrl,
         publishError: p.publishError,
         check: checks[p.id] ?? null,
+        reviewHash: reviewHashes.get(p.id) ?? null,
         origin: p.origin,
         autoApprovedVersion: p.autoApprovedVersion,
         rationale: p.rationale,

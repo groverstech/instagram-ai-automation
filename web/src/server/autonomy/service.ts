@@ -1,4 +1,5 @@
 import "server-only";
+import { operatorStopFor } from "../publishing-paused";
 import crypto from "node:crypto";
 import { and, desc, eq, gte, inArray, isNotNull, lt, ne, sql } from "drizzle-orm";
 import { getDb, schema, type DB } from "../db/client";
@@ -83,7 +84,8 @@ export async function contextFor(db: Pick<DB, "select">, brand: Brand, post: Pos
     accountLevel: account?.autonomyLevel ?? null,
     planMax: await planMax(db, brand.workspaceId),
     suspended: Boolean(brand.autonomySuspendedAt),
-    paused: Boolean(brand.publishingPausedAt),
+    // The brand's own pause or an operator emergency stop (review M-3).
+    paused: Boolean(brand.publishingPausedAt) || Boolean(await operatorStopFor(db, brand.workspaceId)),
     aiStopped: await globalAiStopped(db, env),
     rules,
     rulesVersion: brand.autonomyRulesVersion,

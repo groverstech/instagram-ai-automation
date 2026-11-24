@@ -47,6 +47,8 @@ type Post = {
   publishError: string | null;
   /** The last attempt may have gone out: check the platform ("auto") or ask a person ("manual"). */
   check: "auto" | "manual" | null;
+  /** The approval hash of the version shown (review M-2): approving sends it back; null when not approvable. */
+  reviewHash: string | null;
   /** "ai": planned by the AI; autoApprovedVersion: approved by the autonomy policy (rules version). */
   origin: string;
   autoApprovedVersion: number | null;
@@ -435,8 +437,8 @@ function PostPanel({ post, brandId, role, accounts, creatives, campaignName, onC
                 <Send /> Submit for approval
               </Button>
             ) : null}
-            {!dirty && isAdmin && ["draft", "pending_approval"].includes(post.status) ? (
-              <Button className="w-full" variant="accent" loading={busy("approve")} onClick={() => run(() => approvePostAction(brandId, post.id), { key: "approve", success: "Approved" })}>
+            {!dirty && isAdmin && ["draft", "pending_approval"].includes(post.status) && post.reviewHash ? (
+              <Button className="w-full" variant="accent" loading={busy("approve")} onClick={() => run(() => approvePostAction(brandId, post.id, post.reviewHash!), { key: "approve", success: "Approved" })}>
                 <Check /> Approve
               </Button>
             ) : null}

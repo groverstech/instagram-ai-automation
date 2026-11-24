@@ -881,6 +881,19 @@ export const usageAlerts = pgTable(
  * within seconds and without a deploy: "all", "provider:<anthropic|openai>" or "model:<id>".
  * Set by an operator (`npm run ai:controls`) or by the spending tripwire; only a person clears it.
  */
+/**
+ * Operator emergency stops of publishing (review M-3; src/server/emergency-stop.ts). Separate from a
+ * brand's own pause (brands.publishing_paused_*), which its admins control: an active stop blocks
+ * every publishing path for the brands it covers, and only the operator command clears it.
+ * `scope` is "all" or "org:<organisation id>". History is in each organisation's Security log.
+ */
+export const publishingStops = pgTable("publishing_stops", {
+  scope: text("scope").primaryKey(),
+  reason: text("reason").notNull(),
+  setBy: text("set_by").notNull(),
+  setAt: timestamp("set_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const aiControls = pgTable("ai_controls", {
   scope: text("scope").primaryKey(),
   reason: text("reason").notNull(),
