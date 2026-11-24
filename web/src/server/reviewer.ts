@@ -101,5 +101,9 @@ export async function setupReviewer(input: { email: string; reset?: boolean }) {
       })),
     )
     .returning({ id: schema.posts.id, platform: schema.posts.platform });
+  // Approval integrity (social/approval.ts): record exactly what was approved. Choosing the account
+  // to publish to changes the post, so the reviewer approves it again before publishing.
+  const { recordApprovedContent } = await import("./social/approval");
+  for (const p of posts) await recordApprovedContent(db, p.id);
   return { email, password, totpSecret, recoveryCodes: recovery.codes, userId: user.id, workspaceId: ws.id, brandId: brand.id, creativeId: creative.id, posts };
 }

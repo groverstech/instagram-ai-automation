@@ -42,6 +42,18 @@ export function exceeded(positions: Position[], reserveCredits: number): Positio
   return null;
 }
 
+/**
+ * Whether any credit cap applies to this organisation (and brand): its own cap, the plan's included
+ * credits, or a cap on the brand. Grants only add to a cap that exists. Without one, nothing can be
+ * exceeded and the usage sums are skipped.
+ */
+export async function anyCapApplies(tx: Tx, workspaceId: string, brandId: string | null): Promise<boolean> {
+  const limits = await tx.select({ brandId: schema.creditLimits.brandId }).from(schema.creditLimits).where(eq(schema.creditLimits.workspaceId, workspaceId));
+  if (limits.some((l) => l.brandId === "" || (brandId != null && l.brandId === brandId))) return true;
+  const [p] = await tx.select({ included: schema.plans.includedCredits }).from(schema.workspaces).innerJoin(schema.plans, eq(schema.plans.key, schema.workspaces.plan)).where(eq(schema.workspaces.id, workspaceId));
+  return p?.included != null;
+}
+
 /** The organisation's (and the brand's) credit position this month, with open reservations. */
 export async function creditPositions(tx: Tx, workspaceId: string, brandId: string | null, now = new Date()): Promise<{ positions: Position[]; creditValueUsd: number }> {
   const since = startOfMonth(now);
@@ -85,6 +97,9 @@ export async function creditGate(tx: Tx, ctx: { workspaceId?: string | null; bra
     return;
   }
   try {
+    // Most requests have no cap to check (review L2). Two small reads decide that before the usage
+    // sums, all inside the same locked transaction, so correctness is unchanged.
+    if (!(await anyCapApplies(tx, ctx.workspaceId, ctx.brandId ?? null))) return;
     const { positions, creditValueUsd } = await creditPositions(tx, ctx.workspaceId, ctx.brandId ?? null, now);
     const reserveCredits = creditValueUsd > 0 ? reserveUsd / creditValueUsd : 0;
     const over = exceeded(positions, reserveCredits);

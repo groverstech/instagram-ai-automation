@@ -107,6 +107,23 @@ Enforcement that keeps this true:
   pending ledger row fails them.
 - Staging and paid commands install the network guard at runtime.
 
+### Voyage embeddings (review L3)
+
+**Voyage calls aren't metered by the AI ledger:** no spending cap, tripwire, credits or usage rows.
+
+**So BrandPilot calls Voyage only when `VOYAGE_API_KEY` is set and all of these hold:**
+- no hard spending cap (`AI_SPEND_CAP_USD`, `AI_SPEND_CAP_REQUIRED`);
+- no tripwire (`AI_TRIPWIRE_USD`);
+- credits aren't enforced;
+- AI isn't stopped (`AI_STOP` or the kill switch's `all` scope);
+- in staging or production, the owner has set `VOYAGE_UNMETERED_OK=true` to accept unmetered Voyage spend.
+
+**Otherwise:**
+- The local embedder is used: nothing is sent, and memory keeps working with weaker recall.
+- A key set under those conditions is a configuration error at start-up.
+
+For the beta, keep `VOYAGE_API_KEY` unset.
+
 ### Open items
 1. **Voyage in production**: route it through `execute()` as an `embedding` route kind with a
    per-token price and reserve, or make it refuse unless accounted. Until then production should

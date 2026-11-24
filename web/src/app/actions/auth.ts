@@ -1,6 +1,6 @@
 "use server";
 import { redirect } from "next/navigation";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "@/server/db/client";
 import { hashPassword, needsRehash, verifyDummy, verifyPassword } from "@/server/auth/password";
@@ -68,7 +68,9 @@ export async function signUp(_: unknown, fd: FormData): Promise<AuthFormState> {
   const pending = await db
     .select({ id: schema.workspaceMembers.id })
     .from(schema.workspaceMembers)
-    .where(and(eq(schema.workspaceMembers.invitedEmail, email), isNull(schema.workspaceMembers.userId), eq(schema.workspaceMembers.status, "invited")));
+    // Expired invitations don't count (review L5): otherwise no organisation is created and the
+    // new account is left with nowhere to go.
+    .where(and(eq(schema.workspaceMembers.invitedEmail, email), isNull(schema.workspaceMembers.userId), eq(schema.workspaceMembers.status, "invited"), or(isNull(schema.workspaceMembers.inviteExpiresAt), gt(schema.workspaceMembers.inviteExpiresAt, new Date()))));
   let accepted = 0;
   if (!mustVerify && pending.length) {
     const { acceptInvitesForVerifiedEmail } = await import("@/server/members");

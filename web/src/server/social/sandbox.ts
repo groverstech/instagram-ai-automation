@@ -62,7 +62,7 @@ export function sandboxed(real: SocialProvider): SocialProvider {
           // Render the image as the real publishers do, so a broken render fails here too.
           const png = await input.image();
           if (png.length < 100) throw new Error("Sandbox: the rendered image is empty.");
-          ctx?.finalSend(); // like the real publishers: everything before this can't have published
+          await ctx?.finalSend(); // like the real publishers: everything before this can't have published
           const id = `sandbox-post-${crypto.randomBytes(8).toString("hex")}`;
           const list = published.get(account.id) ?? [];
           list.push({ externalId: id, caption: input.caption, at: Date.now() });

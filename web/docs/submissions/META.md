@@ -81,7 +81,9 @@ Delete the reviewer's organisation (Settings → Delete data) after the review.
    continue as the test user and choose the test Page. *(`pages_show_list`, `instagram_basic`)*
 3. Back in BrandPilot, show the Page and the linked Instagram account under Social Accounts.
 4. **Content Calendar:** open the approved post "Made to last (Instagram)" (or its direct link),
-   choose the Instagram account, and **Publish now**. Show the post on Instagram. *(`instagram_content_publish`)*
+   choose the Instagram account and save, then **Approve** (choosing where it's published changes
+   the post, so BrandPilot asks for approval again) and **Publish now**. Show the post on Instagram.
+   *(`instagram_content_publish`)*
 5. Repeat with the Facebook Page; show the post on the Page. *(`pages_manage_posts`)*
 6. **Analytics:** sync metrics and show reach, impressions, likes, comments, saves and followers for
    both. *(`pages_read_engagement`, `read_insights`, `instagram_manage_insights`)*

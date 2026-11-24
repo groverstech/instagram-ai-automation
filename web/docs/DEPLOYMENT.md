@@ -378,6 +378,41 @@ Use this when someone can't sign in. **Confirm their identity out of band first*
 
 Every use appears in the organisation's Security log.
 
+### Emergency stop of all publishing (review M4)
+
+**Break-glass only.** For an incident that needs publishing stopped for every brand (or one organisation) at once:
+
+```
+npm run publishing:stop -- stop --by "<your name>" --reason "<what happened>" [--org <organisation id>]
+npm run publishing:stop -- status
+```
+
+**What the stop does:**
+- Pauses every brand that isn't already paused. The reason shows on every paused brand.
+- Cancels their queued publish jobs.
+- Writes a `publishing.emergency_stop` event, with who and why, to each affected organisation's Security log.
+
+**What it can't do:**
+- Recall a post a platform has already received.
+- Stop a post that is already past its final request. A publish that was claimed earlier is checked again immediately before that final request, and stops there if the request hasn't been sent.
+
+**Recovery:**
+- **Recovery is only through the app:** each brand's admin uses Content Calendar → Resume publishing. That re-queues future posts and returns missed ones to "approved".
+- **There's no bulk resume.**
+- **Never resume by editing the database:** posts would be left "scheduled" with no job and would never publish.
+
+**Who may run it:** only named operators with production database or CLI access. Before the first beta invitation, the owner records them here (at most two people):
+
+| Operator | Role | Since |
+|---|---|---|
+| _to be named by the owner_ | | |
+
+**Before beta invitations:**
+1. Rehearse a stop and an in-app resume once on staging.
+2. Record the date here.
+
+**Raw SQL fallback (only if the CLI can't run):** pause with the `UPDATE brands SET publishing_paused_at = now(), …` statement in `PRIVATE_BETA_PROGRESS.md` §6. Then record what you did in each affected organisation's Security log, and still resume only in the app.
+
 ### Stopping AI spend (kill switch and tripwire)
 
 - **Stop:** `npm run ai:controls -- stop <all|anthropic|openai|model:<id>> --reason "<why>" --by "<you>"`.

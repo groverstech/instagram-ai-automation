@@ -79,6 +79,8 @@ async function post(platform: "instagram" | "facebook" | "linkedin", status = "a
     .insert(schema.posts)
     .values({ brandId, platform, format: "ig_feed_square", status: status as "approved", approvedAt: new Date(), approvedBy: userId, creativeId, socialAccountId: acct[platform], caption: `Post ${n++}: made to last`, hashtags: ["stoneware"] })
     .returning();
+  // An approval is for this exact content (social/approval.ts).
+  await (await import("./social/approval")).recordApprovedContent(db, p.id);
   return p;
 }
 const attempts = async (postId: string) => (await getDb()).select().from(schema.publishAttempts).where(eq(schema.publishAttempts.postId, postId)).orderBy(desc(schema.publishAttempts.attempt));
@@ -115,6 +117,32 @@ describe("the attempt ledger", () => {
     expect(results.filter((r) => r.ok)).toHaveLength(1);
     expect(count("POST", "/photos")).toBe(1);
     expect(await attempts(p.id)).toHaveLength(1);
+  });
+
+  it("a pause that arrives after the claim but before the final request stops it: nothing is sent, the post keeps its approval and waits for resume (review M4)", async () => {
+    instagram();
+    const p = await post("instagram", "scheduled");
+    const db = await getDb();
+    const wrapped = globalThis.fetch;
+    // While Instagram is "processing the image" (after the claim, before media_publish), an admin pauses.
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/container-1") && (init?.method ?? "GET") === "GET") await db.update(schema.brands).set({ publishingPausedAt: new Date() }).where(eq(schema.brands.id, brandId));
+      return wrapped(input, init);
+    }) as typeof fetch;
+    try {
+      expect(await publishPost(p.id)).toMatchObject({ ok: false, paused: true });
+    } finally {
+      globalThis.fetch = wrapped;
+      await db.update(schema.brands).set({ publishingPausedAt: null }).where(eq(schema.brands.id, brandId));
+    }
+    expect(count("POST", "/media_publish")).toBe(0); // the request that makes it public was never sent
+    expect((await attempts(p.id))[0]).toMatchObject({ status: "failed" });
+    expect((await attempts(p.id))[0].error).toMatch(/emergency pause before sending/);
+    const [after] = await db.select().from(schema.posts).where(eq(schema.posts.id, p.id));
+    expect(after.status).toBe("scheduled"); // still approved and scheduled: resuming publishes it
+    expect(after.approvedContentHash).not.toBeNull();
+    expect(await checksNeeded([{ id: p.id, platform: "instagram" }])).toEqual({}); // definite: no check needed
   });
 
   it("a refusal before the final request is a definite failure: retrying is allowed straight away", async () => {

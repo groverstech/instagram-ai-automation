@@ -201,7 +201,15 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
     if (!set(env.AI_SPEND_CAP_USD)) err("AI_SPEND_CAP_USD", "Required with AI_SPEND_CAP_REQUIRED (and in staging): the hard spending cap in USD.");
     if (!set(env.AI_SPEND_CAP_SINCE)) err("AI_SPEND_CAP_SINCE", "Required with AI_SPEND_CAP_REQUIRED (and in staging): when the budget starts, in UTC, e.g. 2026-11-14T00:00:00Z.");
     else if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(env.AI_SPEND_CAP_SINCE!.trim())) err("AI_SPEND_CAP_SINCE", "Must be UTC in the form 2026-11-14T00:00:00Z.");
-    if (set(env.VOYAGE_API_KEY)) err("VOYAGE_API_KEY", "Voyage embeddings aren't covered by the spending cap, so they're refused while it is required. Unset it (the local embedder is used).");
+  }
+  // Voyage embeddings aren't metered by the AI ledger (review L3). The app refuses to call them
+  // whenever a control depends on that metering (ai/embeddings.ts voyageRefusal) and uses the local
+  // embedder instead; a key set under those conditions is a configuration error, so it's visible.
+  if (set(env.VOYAGE_API_KEY)) {
+    if (capRequired || set(env.AI_SPEND_CAP_USD)) err("VOYAGE_API_KEY", "Voyage embeddings aren't metered by the spending cap, so they're refused while a cap is set. Unset it (the local embedder is used).");
+    else if (set(env.AI_TRIPWIRE_USD)) err("VOYAGE_API_KEY", "Voyage embeddings aren't metered by the spending tripwire, so they're refused while it's set. Unset it (the local embedder is used).");
+    else if (norm(env.CREDITS_MODE) === "enforce") err("VOYAGE_API_KEY", "Voyage embeddings aren't metered by credits, so they're refused while credits are enforced. Unset it (the local embedder is used).");
+    else if (strict && norm(env.VOYAGE_UNMETERED_OK) !== "true") err("VOYAGE_API_KEY", "Voyage spend isn't metered by BrandPilot's AI controls. Set VOYAGE_UNMETERED_OK=true to accept that here, or unset the key (the local embedder is used).");
   }
   // Images are priced per token from reported usage; a flat per-image price is no longer used.
   for (const k of Object.keys(env)) {

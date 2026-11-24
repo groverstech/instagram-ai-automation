@@ -100,6 +100,19 @@ The defaults are strict: 1 a day, 5 a week, 4 hours apart, weekdays 08:00–19:0
   - suspension on an expired token;
   - the decision log.
 
+## Before Autonomous can be turned on (D-28): blockers
+
+Autonomous stays **off**. Each of these must be done, and reviewed, before it can be turned on:
+
+| Requirement | Status |
+|---|---|
+| A person's edit to an AI draft is never approved by the policy (review M2) | **Done** in the hardening PR. Any human change to an AI draft's content makes it `ai_edited`, which only a person can approve. Tested |
+| Approval integrity: what's published is exactly what was approved (review H1) | **Done** in the hardening PR, for people and the policy alike (content hash checked at the publish claim) |
+| Stronger restricted-content detection: Unicode normalisation (NFKC, zero-width characters removed), written-out numbers and offers, competitor-name variants (review M3) | **Open** |
+| A second moderation check that can only escalate to a person, never approve on its own | **Open** |
+| An organisation-wide emergency pause in the app | **Open**. The operator stop (`npm run publishing:stop`) exists |
+| Regression and adversarial tests for all of the above; two weeks on test accounts with zero unapproved restricted posts, duplicates or cap overruns | **Open** |
+
 ## Not built (owner decision or later)
 
 - Daily digest email to owners (needs the email provider, D-7).

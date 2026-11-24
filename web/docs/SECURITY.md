@@ -190,6 +190,24 @@ An append-only `audit_events` table records:
   3 times.
 - **Interrupted publishes** are never re-sent automatically: the post is flagged so a person checks
   the platform first.
+- **Approval integrity (review H1):**
+  - An approval records a hash of exactly what will be published:
+    - the post's caption, hashtags, title, platform, format, creative and target account;
+    - the creative's content and image;
+    - the brand name, colours, fonts and logo drawn on it.
+  - Editing any of those withdraws the approval: the post goes back to "awaiting approval", queued jobs are cancelled, and `post.approval_invalidated` is audited with the fields and the previous approver.
+  - The publish claim recomputes the hash and refuses on any difference, so changes made elsewhere (the Creative Studio, the brand profile) are caught too. Nothing is sent.
+  - Posts approved before this existed need a fresh approval.
+  - The scheduled time isn't part of the approval.
+  - The claimed version is what's published: edits are refused while a post is publishing.
+- **Schedule consistency (review M1):**
+  - Changing a scheduled post's time replaces its queued job.
+  - A job left over from an earlier time refuses to publish before the post's time.
+  - The publish claim prevents a double publish.
+- **Emergency pause:**
+  - The pause is checked at the claim, and again immediately before the request that makes a post public (Instagram after image processing, Facebook before its single request).
+  - **A request already sent can't be recalled.** The operator stop and its runbook are in DEPLOYMENT §9.
+- **The autonomy decision log (`agent_actions`) is append-only for the application (review L6):** a database trigger refuses direct `UPDATE` and `DELETE`. Deleting a post, brand or organisation still works through foreign keys. **It isn't tamper-proof against the database owner or a superuser,** who can disable the trigger. Tamper evidence against them needs a separate, restricted application role, or log shipping to external storage (an infrastructure decision).
 
 ## Public platform callbacks (PR 4.3)
 

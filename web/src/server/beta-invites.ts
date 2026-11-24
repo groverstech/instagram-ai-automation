@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, gt, isNull, or } from "drizzle-orm";
 import { getDb, schema } from "./db/client";
 import { audit } from "./audit";
 import { isStrict } from "./config";
@@ -40,7 +40,8 @@ export async function mayCreateAccount(email: string, env: Env = process.env): P
   const [member] = await db
     .select({ id: schema.workspaceMembers.id })
     .from(schema.workspaceMembers)
-    .where(and(eq(schema.workspaceMembers.invitedEmail, e), isNull(schema.workspaceMembers.userId), eq(schema.workspaceMembers.status, "invited")))
+    // Only a current invitation counts: an expired one must not open the door (review L5).
+    .where(and(eq(schema.workspaceMembers.invitedEmail, e), isNull(schema.workspaceMembers.userId), eq(schema.workspaceMembers.status, "invited"), or(isNull(schema.workspaceMembers.inviteExpiresAt), gt(schema.workspaceMembers.inviteExpiresAt, new Date()))))
     .limit(1);
   return Boolean(member);
 }

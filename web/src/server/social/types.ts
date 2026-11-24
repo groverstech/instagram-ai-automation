@@ -68,7 +68,8 @@ export type PublishResult = { externalId: string; url?: string };
 export type PublishContext = {
   resume: Record<string, unknown>;
   progress(data: Record<string, unknown>): Promise<void>;
-  finalSend(): void;
+  /** Awaited: it re-checks the emergency pause and throws if publishing was paused meanwhile. */
+  finalSend(): Promise<void>;
 };
 
 export type MetricsResult = {

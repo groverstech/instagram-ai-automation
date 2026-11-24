@@ -9,7 +9,9 @@ import { CHECKED_ABSENT, isUnsettled, latestAttempt, markNeedsReconnect, reconne
 import { log } from "../log";
 import { renderCreativePng } from "../creative/render";
 import { remember } from "../memory";
-import { pausedMessage } from "../publishing-paused";
+import { pausedMessage, PublishingPausedError } from "../publishing-paused";
+import { CLEARED_APPROVAL, currentApprovalHash } from "./approval";
+import { audit } from "../audit";
 import { publishGate, suspendAutonomy } from "../autonomy/service";
 
 export function appUrl() {
@@ -121,8 +123,9 @@ export async function publishPost(postId: string) {
     return fail(`${p.label} downloads the image from a public URL. Set APP_URL to your public https domain before publishing.`);
   }
 
-  const [creative] = await db.select().from(schema.creatives).where(eq(schema.creatives.id, post.creativeId));
   const [brand] = await db.select().from(schema.brands).where(eq(schema.brands.id, post.brandId));
+  // Set inside the claim transaction (a holder object, so the values survive the closure).
+  const claim: { invalidated?: { workspaceId: string | null; hadHash: boolean }; post?: typeof post; creative?: typeof schema.creatives.$inferSelect | null } = {};
   // Claim the post atomically: only one caller (scheduled job or "publish now") can move it to
   // "publishing", so concurrent attempts can't both publish. In the same transaction, with the
   // account row locked: the emergency pause and the autonomy policy are checked again immediately
@@ -131,11 +134,23 @@ export async function publishPost(postId: string) {
     await tx.execute(sql`select id from social_accounts where id = ${acct.id} for update`);
     const [fresh] = await tx.select().from(schema.posts).where(eq(schema.posts.id, postId));
     if (!fresh) return { ok: false as const, error: "Post not found" };
+    // Approval integrity (H1): what's about to be published must be exactly what was approved:
+    // the post, its creative and the brand identity drawn on the image. Otherwise it goes back to
+    // a person, unsent. A post approved before hashes existed has none and needs a fresh approval.
+    const hash = await currentApprovalHash(tx as unknown as typeof db, fresh);
+    if (!fresh.approvedContentHash || fresh.approvedContentHash !== hash) {
+      await tx
+        .update(schema.posts)
+        .set({ status: "pending_approval", ...CLEARED_APPROVAL, publishError: "The post, its creative or the brand's look changed after it was approved, so it needs a new approval. Nothing was sent." })
+        .where(eq(schema.posts.id, postId));
+      claim.invalidated = { workspaceId: brand?.workspaceId ?? null, hadHash: Boolean(fresh.approvedContentHash) };
+      return { ok: false as const, error: "This post changed after it was approved, so it needs a new approval. Nothing was sent.", toPerson: true as const };
+    }
     const d = await publishGate(tx as unknown as typeof db, fresh, acct);
     if (d.result === "deny") return { ok: false as const, error: d.reasons[0] === "Publishing is paused for this brand" && owner ? pausedMessage(owner) : d.reasons.join("; "), paused: d.reasons[0] === "Publishing is paused for this brand" };
     if (d.result === "require_approval") {
       // A post the policy approved no longer qualifies: it goes back to a person, unsent.
-      await tx.update(schema.posts).set({ status: "pending_approval", approvedAt: null, autoApprovedVersion: null, publishError: `Needs a person's approval: ${d.reasons.join("; ")}` }).where(eq(schema.posts.id, postId));
+      await tx.update(schema.posts).set({ status: "pending_approval", ...CLEARED_APPROVAL, publishError: `Needs a person's approval: ${d.reasons.join("; ")}` }).where(eq(schema.posts.id, postId));
       return { ok: false as const, error: `Needs a person's approval: ${d.reasons.join("; ")}`, toPerson: true as const };
     }
     const [claimed] = await tx
@@ -144,11 +159,21 @@ export async function publishPost(postId: string) {
       .where(and(eq(schema.posts.id, postId), inArray(schema.posts.status, ["approved", "scheduled", "failed"])))
       .returning({ id: schema.posts.id });
     if (!claimed) return { ok: false as const, error: "This post is already being published." };
+    // Publish exactly the version checked above (edits are refused while it's publishing).
+    claim.post = fresh;
+    const [c] = await tx.select().from(schema.creatives).where(eq(schema.creatives.id, fresh.creativeId!));
+    claim.creative = c ?? null;
     return null;
   });
+  if (claim.invalidated) {
+    await audit({ action: "post.approval_invalidated", workspaceId: claim.invalidated.workspaceId, brandId: post.brandId, actorType: "system", targetType: "post", targetId: postId, details: { at: "publish", reason: claim.invalidated.hadHash ? "content_changed" : "approved_before_integrity_checks" } });
+  }
   if (gate) return gate;
+  if (!claim.post || !claim.creative) return { ok: false as const, error: "The post or its creative is missing." };
+  const snapshot = claim.post;
+  const snapshotCreative = claim.creative;
 
-  const caption = captionOf(post);
+  const caption = captionOf(snapshot);
   // The attempt is recorded before anything is sent. If it can't be, nothing is sent.
   const attemptNo = (last?.attempt ?? 0) + 1;
   // A container from an attempt that a check found unpublished can be reused (Instagram).
@@ -173,7 +198,12 @@ export async function publishPost(postId: string) {
       progress = { ...progress, ...data };
       await db.update(schema.publishAttempts).set({ progress }).where(eq(schema.publishAttempts.id, attemptId));
     },
-    finalSend() {
+    // Immediately before the request that makes the post public, the emergency pause is checked
+    // once more (M4): a pause that arrives while the post is being prepared still stops it, and
+    // nothing has been sent. After this point the request is out and can't be recalled.
+    async finalSend() {
+      const [b] = await db.select({ name: schema.brands.name, publishingPausedAt: schema.brands.publishingPausedAt }).from(schema.brands).where(eq(schema.brands.id, post.brandId));
+      if (b?.publishingPausedAt) throw new PublishingPausedError(pausedMessage(b));
       finalSent = true;
     },
   };
@@ -185,9 +215,9 @@ export async function publishPost(postId: string) {
       toUsable(acct),
       {
         caption,
-        title: post.title ?? undefined,
-        imageUrl: publicMediaUrl(creative.id, post.format),
-        image: () => renderCreativePng(creative, brand, post.format),
+        title: snapshot.title ?? undefined,
+        imageUrl: publicMediaUrl(snapshotCreative.id, snapshot.format),
+        image: () => renderCreativePng(snapshotCreative, brand, snapshot.format),
       },
       ctx,
     );
@@ -199,6 +229,13 @@ export async function publishPost(postId: string) {
     return { ok: true as const, ...res };
   } catch (e) {
     const detail = e instanceof Error ? e.message : String(e);
+    if (e instanceof PublishingPausedError && !finalSent) {
+      // Paused while it was being prepared: nothing was sent. The post keeps its approval and
+      // status, so resuming publishes it as planned (publishing-pause.ts).
+      await db.update(schema.publishAttempts).set({ status: "failed", error: `Stopped by the emergency pause before sending: ${detail}`.slice(0, 1000), finishedAt: new Date() }).where(eq(schema.publishAttempts.id, attemptId));
+      await db.update(schema.posts).set({ status: post.status, publishError: null }).where(and(eq(schema.posts.id, postId), eq(schema.posts.status, "publishing")));
+      return { ok: false as const, error: detail, paused: true as const };
+    }
     if (isTokenError(e)) await markNeedsReconnect(acct.id, detail);
     // Automatic safeguard (docs/AUTONOMY.md): a failed autonomous publish, or a rejected token,
     // drops the brand from Autonomous to Assisted until an owner has looked.
@@ -289,14 +326,26 @@ export async function syncMetrics(brandId: string) {
   return report;
 }
 
-/** Approval checkpoint: records who approved and teaches brand memory. */
+/** A refusal whose message is safe to show (kept local: this module is also loaded by the worker). */
+export class UserFacingErrorLike extends Error {}
+
+/** Approval checkpoint: records who approved, and exactly what, and teaches brand memory. */
 export async function approvePost(brandId: string, postId: string, userId: string) {
   const db = await getDb();
+  // The approval is for exactly this version (social/approval.ts): its hash is recorded, and the
+  // update only applies if the post hasn't changed or moved on since it was read.
+  const [cur] = await db.select().from(schema.posts).where(and(eq(schema.posts.id, postId), eq(schema.posts.brandId, brandId)));
+  if (!cur) return undefined;
+  if (["publishing", "published"].includes(cur.status)) throw new UserFacingErrorLike("This post has already been published.");
+  const hash = await currentApprovalHash(db, cur);
   const [p] = await db
     .update(schema.posts)
-    .set({ status: "approved", approvedBy: userId, approvedAt: new Date() })
-    .where(and(eq(schema.posts.id, postId), eq(schema.posts.brandId, brandId)))
+    .set({ status: "approved", approvedBy: userId, approvedAt: new Date(), approvedContentHash: hash, autoApprovedVersion: null, publishError: null })
+    .where(and(eq(schema.posts.id, postId), eq(schema.posts.brandId, brandId), eq(schema.posts.status, cur.status)))
     .returning();
+  if (!p) throw new UserFacingErrorLike("The post changed while you were approving it. Reload and review it again.");
+  const [b] = await db.select({ workspaceId: schema.brands.workspaceId }).from(schema.brands).where(eq(schema.brands.id, brandId));
+  await audit({ action: "post.approved", workspaceId: b?.workspaceId ?? null, brandId, actorUserId: userId, targetType: "post", targetId: postId, details: { contentHash: hash.slice(0, 16), from: cur.status } });
   if (p?.caption) {
     await remember(brandId, [{ kind: "approval", content: `Approved ${p.platform} caption (${p.objective ?? "general"}): "${p.caption.slice(0, 280)}"`, source: "post:approved", weight: 1.2 }]);
   }

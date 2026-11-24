@@ -45,6 +45,8 @@ async function approvedPost() {
     .insert(schema.posts)
     .values({ brandId, platform: "linkedin", format: "linkedin_post", status: "approved", approvedAt: new Date(), approvedBy: userId, creativeId, socialAccountId: accountId, caption: "Hello" })
     .returning();
+  // An approval is for this exact content (social/approval.ts).
+  await (await import("./social/approval")).recordApprovedContent(db, p.id);
   return p;
 }
 
