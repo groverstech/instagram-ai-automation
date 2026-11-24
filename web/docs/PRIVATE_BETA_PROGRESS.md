@@ -80,6 +80,12 @@ The browser regression scripts live in the session scratchpad. They aren't in th
 
 ## 6. Operator emergency stop: every brand at once (pre-approval requested, decision F-6)
 
+> **Status (24 Nov, review finding M4):**
+> - This is **break-glass only**, and it **has no audit trail** of its own: the SQL writes no Security-log event.
+> - **Never resume by reversing the SQL.** That leaves scheduled posts with no job, and they never publish. Resume only in the app.
+> - It can't stop a publish that was already claimed or sent before it ran.
+> - An audited replacement is in progress on the hardening PR.
+
 For an incident that needs all publishing stopped immediately, before an organisation-wide pause exists in the app. This is a production data change, so it runs only with your approval: either given in advance by approving F-6, or at the time.
 
 1. **Pause every brand.** Run this with the migrate role:

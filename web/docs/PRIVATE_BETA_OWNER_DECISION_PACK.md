@@ -227,8 +227,8 @@ Use GitHub's **"Create a merge commit"** for every PR.
 |---|---|---|
 | **Assisted** is the default autonomy level for every brand | `brands.autonomy_level` defaults to `assisted` (migration 0021) | `autonomy.test.ts`; the browser journey shows "In effect: Assisted" |
 | **Autonomous is disabled** | `AUTONOMOUS_PUBLISHING` defaults to off; Settings can't select it; a brand stored at Autonomous works as Assisted | `autonomy.test.ts` (switch off), browser journey |
-| **A person approves every post before publishing** | The publish path refuses a post without a recorded approval. Policy approvals exist only when Autonomous is on | `autonomy-policy.test.ts`, `publish-ledger.test.ts` |
-| **The emergency pause overrides publishing** | The pause is checked in the publish claim transaction, before anything is sent, at every level | Property test: 600 combinations and 500 random contexts never allowed; `autonomy.test.ts` |
+| **A person approves every post before publishing: NOT YET GUARANTEED (review finding H1, 24 Nov)** | The publish path refuses a post with no recorded approval, and policy approvals exist only when Autonomous is on. **But until H1 is fixed, an editor can change an approved post's hashtags, target account or format without the approval being invalidated, and the changed post publishes.** A fix is in progress on the hardening PR | Reproduced by review probe P1 |
+| **The emergency pause stops publishing that hasn't been sent yet** | The pause is checked when a post is claimed for publishing, at every autonomy level. A publish that was already claimed before the pause can still go out during its few seconds of rendering and sending. **No pause can recall a request already sent to a platform** | Property test: 600 combinations and 500 random contexts never allowed; `autonomy.test.ts` |
 | **Credit enforcement disabled until separately authorised** | `CREDITS_MODE` defaults to shadow; enforce only when set explicitly; a warning in staging and production | `credit-enforcement.test.ts` |
 | **No automatic AI budget top-ups** | The app has no purchasing or top-up code; grants are only operator-entered (CLI); provider consoles must have auto-reload off (D-4s) | Code review; `docs/CREDITS.md` |
 | **No real customer invitations before launch approval** | `SIGNUP_MODE=invite_only` by default in staging and production; the beta list is empty until `npm run beta:invite` is run | `invite-only-signup.test.ts` |
@@ -241,7 +241,7 @@ Use GitHub's **"Create a merge commit"** for every PR.
 - **Required before** Autonomous (F-5) or larger agencies join.
 - **Risk of launching with per-brand pause only:**
   - In an incident across a whole organisation (a compromised admin account, a bad bulk approval, a platform policy problem), someone must pause each brand separately, one click per brand. For an agency with many brands, posts on not-yet-paused brands can go out in the meantime.
-  - In the beta this is limited: every post already has a person's approval, organisations are small, and an operator can stop all publishing at once.
+  - In the beta this is limited: posts need a person's approval (with the H1 gap until it's fixed), organisations are small, and an operator can stop new publishing for every brand at once (break-glass procedure).
 - **The operator emergency stop:** one SQL statement pauses every brand. Each publish then refuses at its claim, because the pause is re-checked there. Stopping the worker also halts scheduled publishing.
 - **Caveat:** the SQL stop doesn't cancel queued jobs, but each one refuses at its claim. Resuming is per brand in the Content Calendar, which re-queues future posts.
 
