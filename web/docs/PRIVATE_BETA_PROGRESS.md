@@ -24,10 +24,11 @@ Two Claude Code sessions work on the mandate: **A** (`session_017ArpCNvaij8Z6GvK
 | [#37](https://github.com/groverstech/instagram-ai-automation/pull/37) | Autonomy levels: Advisor, Assisted (default), Autonomous behind `AUTONOMOUS_PUBLISHING` (off); policy engine, three gates, safeguards, `agent_actions` (migration 0021) | `feature/autonomy-levels` → #36 | `f0518e9` | 45205797867 green | A |
 | [#38](https://github.com/groverstech/instagram-ai-automation/pull/38) | PR 4.6: credit enforcement behind `CREDITS_MODE=enforce` (off); grants (migration 0022); reconciliation | `feature/credit-enforcement` → #37 | `a085bc8` | 45207079864 green | A |
 | [#39](https://github.com/groverstech/instagram-ai-automation/pull/39) | Email verification, invitation emails, security notifications; Postmark/Resend adapters (migration 0023); extended lifecycle E2E | `feature/email-verification-invites` → #38 | `58a0f91` | 45302392288 green (includes the lifecycle step) | A |
+| [#40](https://github.com/groverstech/instagram-ai-automation/pull/40) | Pre-beta hardening: approval integrity (H1), schedule consistency (M1), operator emergency stop and pause before final send (M4), invitations (L4, L5), export completeness (L1), spend-control paths (L2, L3), append-only decision log (L6), journey HTTP checks (L8); migration 0024 | `fix/pre-beta-hardening` → #39 | `b694e7e` | see the final report | A |
 
-**Stack order:** main → #12 → #13 → #14 → #15 → #17 → #18 → #19 → #20 → #21 → #22 → #23 → #24 → #25 → #26 → #27 → #29 → #28 → #30 → #31 → #32 → #34 → #33 → #35 → #36 → #37 → #38 → #39. **Linear**: #33 merged `feature/sandbox-lifecycle` and was retargeted onto #34; #35 merged #33 and was retargeted onto it. The lifecycle journey now goes through the publish ledger. #11 and #16 are independent.
+**Stack order:** main → #12 → #13 → #14 → #15 → #17 → #18 → #19 → #20 → #21 → #22 → #23 → #24 → #25 → #26 → #27 → #29 → #28 → #30 → #31 → #32 → #34 → #33 → #35 → #36 → #37 → #38 → #39 → #40. **Linear**: #33 merged `feature/sandbox-lifecycle` and was retargeted onto #34; #35 merged #33 and was retargeted onto it. The lifecycle journey now goes through the publish ledger. #11 and #16 are independent.
 
-**Migrations:** 0011 (#12), 0012 (#15), 0013 (#17), 0014 (#19), 0015 (#20), 0016 (#25), 0017 (#29), 0018 (#30), 0019 (#33), 0020 (#36), 0021 (#37), 0022 (#38), 0023 (#39). **Next free: 0024.**
+**Migrations:** 0011 (#12), 0012 (#15), 0013 (#17), 0014 (#19), 0015 (#20), 0016 (#25), 0017 (#29), 0018 (#30), 0019 (#33), 0020 (#36), 0021 (#37), 0022 (#38), 0023 (#39), 0024 (#40). **Next free: 0025.**
 
 ## 2. Active work
 
@@ -81,10 +82,10 @@ The browser regression scripts live in the session scratchpad. They aren't in th
 ## 6. Operator emergency stop: every brand at once (pre-approval requested, decision F-6)
 
 > **Status (24 Nov, review finding M4):**
-> - This is **break-glass only**, and it **has no audit trail** of its own: the SQL writes no Security-log event.
-> - **Never resume by reversing the SQL.** That leaves scheduled posts with no job, and they never publish. Resume only in the app.
-> - It can't stop a publish that was already claimed or sent before it ran.
-> - An audited replacement is in progress on the hardening PR.
+> - **Superseded by `npm run publishing:stop` (#40):** audited per organisation, cancels queued jobs, no bulk resume. Runbook in `docs/DEPLOYMENT.md` §9.
+> - The SQL below is the last resort, only if the CLI can't run. It writes no audit event, so record one by hand.
+> - **Never resume by reversing the SQL.** Resume only in the app, per brand.
+> - A request already sent to a platform can't be recalled.
 
 For an incident that needs all publishing stopped immediately, before an organisation-wide pause exists in the app. This is a production data change, so it runs only with your approval: either given in advance by approving F-6, or at the time.
 
@@ -98,3 +99,4 @@ For an incident that needs all publishing stopped immediately, before an organis
 2. **Optionally, stop the worker** (or the cron caller), so scheduled jobs don't run at all.
 3. **Investigate.** The Security log and `agent_actions` show who approved and published what.
 4. **Resume brand by brand** in the Content Calendar (admins). Future posts are re-queued; posts whose time passed go back to "approved".
+| 24 Nov 2026 | Adversarial review of the stack: H1 (edits after approval published without re-approval) and M1 (time changes left stale jobs) found, plus M2–M5 and L1–L8. Docs corrected at once (M5). Hardening PR #40 fixes H1, M1, M2 (Autonomous stays off), M4, L1–L6 and L8; the new concurrency test also found and fixed a membership-deleting race in invitation acceptance. Local: 541/541 on PG16, 542/542 integrated with #16, browser journey 16/16 (also with #16), migrations 0000–0024 on a fresh PG16. CI's first run on #40 failed on a pre-existing journey race (approval text vs commit), fixed in `b694e7e`. |

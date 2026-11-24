@@ -106,3 +106,12 @@ Beta launch requires every P0 gate to pass: all gates except those marked P1 in 
 | AU2 | Credit enforcement implemented but disabled | **In review** | #38: reserve, settle and release under the ledger lock; parallel-request test; reconciliation; off by default (D-17) | Code, Owner |
 | E1 | Email verification and invitation emails | **In review** | #39: hashed single-use links, required in staging and production and enforced in the guards; invitations pending until accepted; tested with the memory and file outboxes. Delivery needs D-7 | Code, Owner |
 | D7 | Publish history isolated and exported | **In review** | #36: RLS policy on `publish_attempts`; included in the organisation export without idempotency keys | Code |
+
+## Added 24 Nov 2026 (adversarial review and hardening)
+
+| ID | Gate | Status | Evidence | Owner |
+|---|---|---|---|---|
+| H1 | What's published is exactly what a person approved | **In review (#40)** | Content-hash approval; edits withdraw it; the publish claim refuses on any difference; per-field negative tests (editor and client editor); creative, brand and legacy cases; browser step | Code |
+| M1 | The calendar time and the scheduler agree | **In review (#40)** | Job replaced on time change; stale jobs refuse; concurrent edits; paused | Code |
+| M4 | Emergency stop: audited, recoverable, rehearsed | **Code in review (#40); owner steps open** | `npm run publishing:stop`; pause re-checked before the final send. **Owner:** name the operators and rehearse on staging before invitations | Code, Owner |
+| L1–L6, L8 | Invitations, export completeness, spend-control paths, append-only decision log, journey HTTP checks | **In review (#40)** | `pre-beta-hardening.test.ts` (28), journey 16/16 | Code |
