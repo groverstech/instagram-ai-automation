@@ -23,6 +23,8 @@ export type AuditAction =
   | "mfa.disable"
   | "mfa.recovery_used"
   | "mfa.recovery_regenerated"
+  | "mfa.step_up"
+  | "auth.logout_all"
   | "member.invite"
   | "member.role_change"
   | "member.brand_scope_change"

@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { ShieldCheck } from "lucide-react";
-import { confirmMfaEnrolment, disableMfaAction, regenerateRecoveryCodesAction, startMfaEnrolment } from "@/app/actions/mfa";
+import { confirmMfaEnrolment, disableMfaAction, regenerateRecoveryCodesAction, signOutOtherSessionsAction, startMfaEnrolment } from "@/app/actions/mfa";
 import { Badge, Button, Card, CardBody, CardHeader, Field, Input, Notice } from "@/components/ui";
 import { useRun } from "@/components/hooks";
 
@@ -87,6 +87,12 @@ export function MfaSettings({ status, requiredNotice }: { status: Status; requir
             {status.required ? <p className="text-[12px] text-faint">Required for organisation owners and admins, so it can&apos;t be turned off.</p> : null}
           </div>
         ) : null}
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
+          <span className="text-muted">Lost a device or used a shared computer?</span>
+          <Button variant="secondary" loading={busy("others")} onClick={() => run(() => signOutOtherSessionsAction(), { key: "others", success: (d) => `Signed out of ${d.ended} other session${d.ended === 1 ? "" : "s"}` })}>
+            Sign out everywhere else
+          </Button>
+        </div>
       </CardBody>
     </Card>
   );
