@@ -1,4 +1,5 @@
 import "server-only";
+import { assertAiMayDraft } from "../autonomy/service";
 import { addDays, format as fmt } from "date-fns";
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
@@ -33,6 +34,7 @@ export type CampaignRequest = {
  * Everything lands as drafts; nothing is published without approval.
  */
 export async function createCampaign(scope: RunScope, brand: Brand, req: CampaignRequest) {
+  await assertAiMayDraft(brand.id, "plan a campaign");
   const days = Math.max(3, Math.min(req.days, 90));
   const platforms = (req.platforms?.length ? req.platforms : brand.platforms).filter((p) => (PLATFORM_IDS as readonly string[]).includes(p));
   const ctx = await buildContext(brand, `campaign ${req.type} ${req.brief}`);

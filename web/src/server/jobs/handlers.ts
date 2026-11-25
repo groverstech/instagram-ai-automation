@@ -80,6 +80,11 @@ export async function tick(scope: TickScope = { jobs: true, ai: true }) {
     lastRetention = Date.now();
     await import("../audit").then((m) => m.purgeExpiredAuditEvents()).catch((e) => log.error("audit.retention_failed", { error: e instanceof Error ? e.message : String(e) }));
   }
+  // Autonomy (docs/AUTONOMY.md): the AI's own complete drafts are scheduled within the brand's
+  // rules or sent to a person. Does nothing unless AUTONOMOUS_PUBLISHING=on.
+  if (scope.jobs) {
+    await import("../autonomy/service").then((m) => m.autonomyTick()).catch((e) => log.error("autonomy.tick_failed", { error: e instanceof Error ? e.message : String(e) }));
+  }
   if (scope.ai) {
     await import("./all").then((m) => m.recoverDueTasks()).catch((e) => log.error("jobs.ai_recovery_failed", { error: e instanceof Error ? e.message : String(e) }));
   }

@@ -56,6 +56,8 @@ export type AuditAction =
   | "config.credits_update"
   | "config.secrets_reencrypt"
   | "ai.stop"
+  | "autonomy.changed"
+  | "autonomy.suspended"
   | "ai.resume"
   | "creative.approve_override"
   | "access.denied"

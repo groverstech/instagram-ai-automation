@@ -47,6 +47,9 @@ type Post = {
   publishError: string | null;
   /** The last attempt may have gone out: check the platform ("auto") or ask a person ("manual"). */
   check: "auto" | "manual" | null;
+  /** "ai": planned by the AI; autoApprovedVersion: approved by the autonomy policy (rules version). */
+  origin: string;
+  autoApprovedVersion: number | null;
   rationale: string | null;
   brief: string;
   hooks: string[];
@@ -316,6 +319,11 @@ function PostPanel({ post, brandId, role, accounts, creatives, campaignName, onC
               </Button>
             </div>
           </div>
+        ) : null}
+        {post.autoApprovedVersion != null ? (
+          <Notice tone="info">Approved by this brand&apos;s autonomy rules (version {post.autoApprovedVersion}), not by a person. It&apos;s checked again just before publishing; see Settings → Autonomy.</Notice>
+        ) : post.origin === "ai" && post.status !== "published" ? (
+          <p className="text-[12px] text-muted">Planned by the AI.{post.status === "draft" || post.status === "pending_approval" ? " A person approves it before it can be scheduled." : ""}</p>
         ) : null}
         {post.status === "published" || post.status === "failed" || post.status === "publishing" ? <PublishHistory brandId={brandId} postId={post.id} status={post.status} /> : null}
         {post.status === "published" && post.externalUrl ? (
