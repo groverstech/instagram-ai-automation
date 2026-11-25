@@ -53,6 +53,8 @@ Each is a `(scope, period, amount, action)` rule:
 - Optionally per route kind (e.g. a brand may use text but not image generation).
 
 ### 2.4 Subscription-based AI credits (PRs 4.5–4.6)
+> **Status:** PR 4.5 built the shadow-mode part: plans as configuration, credits computed from the usage ledger, organisation and brand caps, and alerts. It is not enforced. See `docs/CREDITS.md`. The rest of this section is PR 4.6.
+
 - Credits are the customer-facing unit; dollars stay internal. A `credit_ledger` (append-only:
   grants per billing period, purchases, refunds, expiries, consumption) per organisation.
 - **Reserve, then settle**, exactly like the spend ledger: `openAttempt()` reserves the attempt's

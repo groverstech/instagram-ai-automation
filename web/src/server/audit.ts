@@ -42,6 +42,10 @@ export type AuditAction =
   | "publishing.resume"
   | "billing.checkout_started"
   | "billing.plan_changed"
+  | "credits.alert"
+  | "credits.cap_change"
+  | "config.plan_update"
+  | "config.credits_update"
   | "creative.approve_override"
   | "access.denied"
   | "audit.view";

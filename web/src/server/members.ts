@@ -7,7 +7,7 @@ import { AccessError, inBrandScope, requireBrandForUser, requireWorkspaceRoleFor
 import { setActiveBrand, type SessionUser } from "./auth/session";
 import { assertCanAdd } from "./quota";
 import { audit } from "./audit";
-import { PLANS, type PlanId } from "@/lib/plans";
+import { getPlan, listPlans } from "./credits";
 import type { Role } from "@/lib/roles";
 
 /**
@@ -141,6 +141,6 @@ export async function workspaceSettingsFor(session: SessionUser, workspaceId: st
       access: scoped ? { all: 0, scoped: 0 } : { all: allMembers.filter((m) => !m.brandIds).length, scoped: allMembers.filter((m) => m.brandIds?.includes(b.id)).length },
     }));
   const members = scoped ? allMembers.filter((m) => m.userId === session.user.id) : allMembers;
-  const plan = PLANS[(ws.plan as PlanId) ?? "starter"] ?? PLANS.starter;
-  return { workspace: ws, role, scoped, brands, members, brandLimit: plan.brands, canAddBrand: !scoped && (role === "owner" || role === "admin") && allBrands.length < plan.brands };
+  const [plan, plans] = await Promise.all([getPlan(ws.plan), listPlans()]);
+  return { workspace: ws, role, scoped, brands, members, plan, plans, brandLimit: plan.limits.brands, canAddBrand: !scoped && (role === "owner" || role === "admin") && allBrands.length < plan.limits.brands };
 }

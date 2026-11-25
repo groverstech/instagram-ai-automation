@@ -764,3 +764,71 @@ export const aiLedgerMeta = pgTable("ai_ledger_meta", {
   key: text("key").primaryKey(),
   createdAt: createdAt(),
 });
+
+/**
+ * Plans as configuration (PR 4.5, plan defect D5): limits, display price and included monthly
+ * credits. Seeded from the values that used to be hardcoded in src/lib/plans.ts. The plan keys
+ * stay fixed (starter, growth, agency) because Stripe prices map to them (billing.ts) until PR 4.6.
+ * Changed with `npm run credits -- plan ...`; every change is audited.
+ */
+export type PlanLimits = { brands: number; seats: number; socialAccounts: number; aiRunsPerMonth: number };
+export const plans = pgTable("plans", {
+  key: text("key").$type<"starter" | "growth" | "agency">().primaryKey(),
+  name: text("name").notNull(),
+  /** Shown on the plan picker; what Stripe charges is the price object, not this. */
+  priceMonthlyUsd: real("price_monthly_usd").notNull(),
+  limits: jsonb("limits").$type<PlanLimits>().notNull(),
+  /** Credits included each month; null until the owner sets the allowance (no cap is assumed). */
+  includedCredits: integer("included_credits"),
+  features: jsonb("features").$type<Record<string, unknown>>().notNull().default({}),
+  updatedBy: text("updated_by"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Credit configuration (one row, id "default"): what a credit is worth in provider cost, whether
+ * failed and retried attempts are charged, and the alert thresholds.
+ */
+export const creditSettings = pgTable("credit_settings", {
+  id: text("id").primaryKey(),
+  creditValueUsd: real("credit_value_usd").notNull(),
+  chargeFailedAttempts: boolean("charge_failed_attempts").notNull().default(false),
+  alertThresholds: jsonb("alert_thresholds").$type<number[]>().notNull(),
+  updatedBy: text("updated_by"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Monthly credit caps set by an organisation's owners and admins: brand_id "" is the organisation. */
+export const creditLimits = pgTable(
+  "credit_limits",
+  {
+    id: id(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    brandId: text("brand_id").notNull().default(""),
+    monthlyCapCredits: integer("monthly_cap_credits").notNull(),
+    updatedBy: text("updated_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("credit_limits_scope").on(t.workspaceId, t.brandId)],
+);
+
+/** Each threshold alert once per period and scope (brand_id "" is the organisation). */
+export const usageAlerts = pgTable(
+  "usage_alerts",
+  {
+    id: id(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    brandId: text("brand_id").notNull().default(""),
+    /** "YYYY-MM" (UTC), the credit period. */
+    period: text("period").notNull(),
+    threshold: integer("threshold").notNull(),
+    creditsUsed: real("credits_used").notNull(),
+    capCredits: integer("cap_credits").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("usage_alerts_once").on(t.workspaceId, t.brandId, t.period, t.threshold)],
+);
