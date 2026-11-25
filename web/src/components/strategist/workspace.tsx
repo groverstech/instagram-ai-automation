@@ -398,7 +398,7 @@ function Overview({ doc, go, working }: { doc: StrategyDoc; go: (t: TabId) => vo
         ))}
       </div>
       {research ? <ResearchMode r={research} /> : null}
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader title="Content mix" description="Share of content per pillar" />
           <CardBody>{pillars.length ? <PillarShare pillars={pillars} /> : <p className="text-[13px] text-muted">Not generated yet.</p>}</CardBody>

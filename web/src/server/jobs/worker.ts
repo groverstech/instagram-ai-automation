@@ -11,10 +11,12 @@
 // another worker after its heartbeat goes stale. AI steps are idempotent, and publishes are never
 // re-sent automatically (see queue.ts / handlers.ts).
 import { enforceConfig } from "../config";
+import { installConfiguredReporters } from "../monitoring";
 import { tick, type TickScope } from "./handlers";
 import { log } from "../log";
 
 enforceConfig("worker");
+installConfiguredReporters();
 if (!process.env.DATABASE_URL) {
   console.error("The standalone worker needs DATABASE_URL. With embedded PGlite, jobs run inside the web server.");
   process.exit(1);

@@ -1,5 +1,7 @@
 # Private-beta roadmap
 
+> **Snapshot, superseded (25 Nov 2026):** every PR named here is merged to `main`. Current state: [PRIVATE_BETA_PROGRESS.md](PRIVATE_BETA_PROGRESS.md) and [PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md](PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md); what only the owner can do: [PRIVATE_BETA_OWNER_ACTIONS.md](PRIVATE_BETA_OWNER_ACTIONS.md).
+
 What remains between the current state ([PRIVATE_BETA_LAUNCH_AUDIT.md](PRIVATE_BETA_LAUNCH_AUDIT.md)) and an invite-only private beta. Gates and evidence are in [PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md](PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md).
 
 Priorities:

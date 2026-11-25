@@ -24,7 +24,8 @@
     "secrets:rotate": "node --conditions=react-server --import tsx src/server/secrets-rotate-cli.ts",
     "users": "node --conditions=react-server --import tsx src/server/users-cli.ts",
     "publishing:stop": "node --conditions=react-server --import tsx src/server/emergency-stop-cli.ts",
-    "e2e:lifecycle": "bash e2e/lifecycle.sh"
+    "e2e:lifecycle": "bash e2e/lifecycle.sh",
+    "e2e:staging": "bash e2e/staging-rehearsal.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",

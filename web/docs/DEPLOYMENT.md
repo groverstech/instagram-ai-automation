@@ -145,8 +145,15 @@ volume there, or point `STORAGE_DIR` at one. Production uses Postgres and, from 
 ## 4. Deploy procedure
 
 1. **Back up** the database (or confirm the latest PITR point).
-2. **Migrate:** run the `migrate` role with the new image. It's safe to run concurrently (advisory
-   lock) and idempotent. It refuses unsafe configuration in staging and production.
+2. **Migrate:** run the `migrate` role with the new image, as the database owner role. It's safe to
+   run concurrently (advisory lock) and idempotent. It refuses unsafe configuration in staging and
+   production.
+   - **First deployment only:** the app connects as an ordinary role (no superuser, no `BYPASSRLS`;
+     docs/RLS_PILOT.md). Grant it access once, as the owner, after the first migration:
+     `psql "$OWNER_DATABASE_URL" -v app_role=<app role> -f deploy/app-role-grants.sql`. It covers
+     the tables, the migration journal readiness reads, and (through default privileges) tables
+     that later migrations create, as long as the same owner role runs them. Without it, readiness
+     reports which grant is missing instead of becoming ready.
 3. **Deploy web**, rolling. Instances never migrate in staging or production; new instances join
    the load balancer once `/api/health/ready` returns 200 (it returns 503 while migrations are
    pending, so a skipped step 2 keeps new instances out of rotation).
@@ -170,6 +177,21 @@ doesn't need to be rolled back.
 
 **Large tables:** indexes are created inside the migration transaction. That's fine at today's
 sizes; for tables with millions of rows, create indexes `CONCURRENTLY` in a separate step first.
+
+### Staging rehearsal
+
+`npm run e2e:staging` (also a CI step) runs the production build in strict staging mode as an
+ordinary database role with the RLS pilot on and no email, sandbox or AI provider: what a fresh
+staging is before its accounts are connected. It sets the role up exactly as above, then checks
+readiness, invitation-only sign-up (no account enumeration), required two-step verification for
+owners, onboarding under RLS, the operator emergency-stop drill (a brand admin can't lift it) and
+the Meta reviewer account. The full configuration for staging is in `deploy/staging.env.example`.
+
+On the real staging, run the same checks once its accounts exist: `e2e/staging-rehearsal.cjs`
+with `STAGING_BASE_URL`, `SERVER_DATABASE_URL` (the server's own database settings, for the
+operator commands) and `CHECK_DATABASE_URL` (a read-capable role for the script's own checks).
+With an email provider, confirm the owner's address with the link from the email instead of the
+database step the script uses.
 
 ## 5. Health checks
 
@@ -211,6 +233,7 @@ limiter, and are never cached. Responses carry `version` from `APP_VERSION` or `
 | `APP_VERSION` / `GIT_SHA` | — | Reported by the health endpoints |
 | `EMAIL_PROVIDER` / `EMAIL_FROM` | `log` | Transactional email. Only `log` exists until a provider is chosen; it never claims delivery and is refused in staging and production. |
 | `CRON_SECRET` | — | Protects `GET /api/cron/tick` (`Authorization: Bearer <secret>`), at least 32 characters. Missing or short means the endpoint refuses every call (503). Failed attempts are rate-limited per IP. |
+| `SENTRY_DSN` | — | Optional error tracking (decision D-8). With a Sentry DSN, every unexpected error is also sent to Sentry with its reference, route and redacted context (no request bodies, headers or secrets), from web and worker. A malformed DSN is a configuration error; none is a warning in staging and production. |
 
 **AI:**
 

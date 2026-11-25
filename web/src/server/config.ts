@@ -91,6 +91,10 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
     if (set(env[k]) && !["true", "false"].includes(norm(env[k]))) err(k, "Must be `true` or `false`.");
   }
 
+  // Error tracking (O2): optional; a malformed DSN would silently report nothing.
+  if (set(env.SENTRY_DSN) && !/^https:\/\/[^@/\s]+@[^/\s]+\/(?:[^\s]*\/)?\d+\/?$/.test(env.SENTRY_DSN!.trim())) err("SENTRY_DSN", "Not a Sentry DSN (https://<key>@<host>/<project id>).");
+  else if (!set(env.SENTRY_DSN) && strict) warn("SENTRY_DSN", "No error tracking: unexpected errors are only in the logs (decision D-8).");
+
   // Secrets used to encrypt OAuth tokens and sign links.
   if (!set(env.APP_SECRET) || (env.APP_SECRET ?? "").length < 32) {
     (prod ? err : warn)("APP_SECRET", "Must be set to a random value of at least 32 characters (e.g. `openssl rand -base64 48`).");

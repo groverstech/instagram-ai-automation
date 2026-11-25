@@ -1,5 +1,7 @@
 # Private-beta launch audit
 
+> **Snapshot, superseded (25 Nov 2026):** every PR named here is merged to `main`. Current state: [PRIVATE_BETA_PROGRESS.md](PRIVATE_BETA_PROGRESS.md) and [PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md](PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md); what only the owner can do: [PRIVATE_BETA_OWNER_ACTIONS.md](PRIVATE_BETA_OWNER_ACTIONS.md).
+
 Reconciled status of BrandPilot against the approved first-release scope, as of **23 Nov 2026** (updated 13:10 UTC with #27–#31). Companion documents:
 - [PRIVATE_BETA_ROADMAP.md](PRIVATE_BETA_ROADMAP.md): what remains, by priority, with the critical path;
 - [PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md](PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md): launch gates with pass/fail status and evidence;

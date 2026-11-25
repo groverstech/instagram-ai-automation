@@ -304,18 +304,18 @@ In CI, the full suite also runs against real Postgres 16 with pgvector.
 
 ## Known gaps and accepted risks
 
-Follow-up requirements for these gaps (sign-up privacy, strict CSP, MFA, audit-log retention and
-export) are recorded in [FOLLOW_UPS.md](FOLLOW_UPS.md). **None is implemented yet.**
+The original follow-ups (sign-up privacy, strict CSP, MFA, audit-log retention and export,
+[FOLLOW_UPS.md](FOLLOW_UPS.md)) are implemented and merged (25 Nov 2026). What remains is below.
 
 | Item | Status |
 |---|---|
-| Sign-up reveals whether an email is registered ("account already exists") | Accepted for now (sign-up is rate-limited per IP). The fix needs email verification, which needs an email provider. |
+| Sign-up reveals whether an email is registered | **Fixed (S5).** Where verification is required (staging, production), sign-up never signs anyone in and answers new and existing addresses identically; the existing account's owner is emailed (rate-limited). In invite-only mode a registered address is answered like an uninvited one. Development still says "already exists". |
 | CSP `script-src` | Strict, with per-request nonces (F2), see HTTP headers. `style-src` keeps `'unsafe-inline'` for inline style attributes. |
 | Multi-factor authentication | **Two-step verification (TOTP) implemented (F3a, F3b)**: enrolment, sign-in challenge, one-time recovery codes, required for owners and admins in staging and production (F3a); a fresh second factor for sensitive actions and "sign out everywhere else" (F3b). Not in the first-release scope: WebAuthn/passkeys. |
-| "Sign out everywhere" and session revocation on password change | No password-change flow exists yet; add both together. |
-| Row-Level Security | Defence in depth planned (PR 4.9 pilot). Application-level isolation is tested. |
+| "Sign out everywhere" and session revocation on password change | **Implemented.** Account → Security: "Sign out everywhere else" (F3b) and a password change (current password required, rate-limited, other sessions signed out, audited, emailed); a password reset ends every session. |
+| Row-Level Security | **Pilot implemented (S8, #25, #32, #36)** on brands, posts, creatives and publish attempts behind `RLS_PILOT=on`; staging and production refuse to start with a role that bypasses it. Application-level isolation is tested. Extending RLS to every tenant table is a post-beta step (docs/RLS_PILOT.md). |
 | Hot rate-limit counters in Postgres | Fine at current scale; move to Redis per the scalability plan (PR 4.9). |
-| Audit-log retention and export | Not yet configurable (PR 4.9). |
+| Audit-log retention and export | **Implemented (F4).** CSV/JSON export (step-up, audited) and retention (`AUDIT_RETENTION_DAYS`, default 400). |
 | Security-event volume | Refused access and failed sign-ins are capped at 20 records per source (user, or IP when anonymous) per 10 minutes, then one "further attempts not recorded" marker. Requests are still refused, and counted, every time. Unknown brand or workspace ids are never recorded. Retention and export: PR 4.9. |
 | Public readiness output | `/api/health/ready` shows error, warning and migration counts (never values). Restrict it at the load balancer if preferred. |
-| Penetration test | Planned before launch (PR 4.9). |
+| Penetration test | Before public launch (owner decision D-23); not required for the private beta. |

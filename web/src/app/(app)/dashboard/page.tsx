@@ -71,7 +71,7 @@ export default async function Dashboard() {
 
       {progress < steps.length ? (
         <Card className="overflow-hidden">
-          <div className="grid gap-0 md:grid-cols-[1fr_1.4fr]">
+          <div className="grid grid-cols-1 gap-0 md:grid-cols-[1fr_1.4fr]">
             <div className="ai-gradient p-6">
               <p className="text-[12px] font-medium text-ink-2">Setup</p>
               <p className="mt-1 font-display text-[28px] leading-tight">
@@ -96,7 +96,7 @@ export default async function Dashboard() {
         </Card>
       ) : null}
 
-      <div className="grid items-start gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader title="Brand overview" description={profile ? profile.summary : "Your Brand Intelligence Profile will appear here."} action={<Badge tone={approved ? "success" : latest ? "warn" : "neutral"}>{approved ? "Approved" : latest ? "Draft profile" : "Not generated"}</Badge>} />
           <CardBody>
@@ -163,7 +163,7 @@ export default async function Dashboard() {
         </Card>
       </div>
 
-      <div className="grid items-start gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader title="Upcoming posts" action={<Link href="/calendar" className="text-[12px] font-medium text-muted hover:text-ink">Open calendar →</Link>} />
           <CardBody className="pt-3">
@@ -217,7 +217,7 @@ export default async function Dashboard() {
         </Card>
       </div>
 
-      <div className="grid items-start gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3">
         <Card>
           <CardHeader title="Active campaigns" action={<Link href="/campaigns" className="text-[12px] font-medium text-muted hover:text-ink">All →</Link>} />
           <CardBody className="space-y-2 pt-3">

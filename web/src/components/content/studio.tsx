@@ -27,7 +27,7 @@ export function ContentStudio({ brandId, role, platforms, pillars }: { brandId: 
     <div>
       <PageHeader eyebrow="Content Studio" title="Captions & copy" description="The Copywriter writes in your brand voice, tuned to each platform and to the post's objective." />
 
-      <div className="grid gap-6 lg:grid-cols-[380px_1fr]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[380px_1fr]">
         <div className="space-y-6">
           <Card>
             <CardHeader title="Write a post" />

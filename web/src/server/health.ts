@@ -40,7 +40,7 @@ export async function readiness() {
   if (db.value) {
     const m = await timed(() => migrationStatus(db.value!));
     checks.migrations = m.value
-      ? { ok: m.value.upToDate, detail: `${m.value.applied}/${m.value.expected} applied`, ms: m.ms }
+      ? { ok: m.value.upToDate, detail: m.value.unreadable ?? `${m.value.applied}/${m.value.expected} applied`, ms: m.ms }
       : { ok: false, detail: m.error, ms: m.ms };
   } else {
     checks.migrations = { ok: false, detail: "database unavailable" };

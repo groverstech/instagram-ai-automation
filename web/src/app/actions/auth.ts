@@ -56,11 +56,22 @@ export async function signUp(_: unknown, fd: FormData): Promise<AuthFormState> {
   const { mayCreateAccount, markInviteUsed, NOT_INVITED } = await import("@/server/beta-invites");
   if (!(await mayCreateAccount(email))) return { error: NOT_INVITED, values };
   const db = await getDb();
-  const [exists] = await db.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.email, email));
-  if (exists) return { error: "An account with this email already exists.", values };
-  const [user] = await db.insert(schema.users).values({ name, email, passwordHash: await hashPassword(password) }).returning();
-  const { emailVerificationRequired, sendVerification } = await import("@/server/auth/verify-email");
+  const { emailVerificationRequired, sendVerification, notifyExistingAccount } = await import("@/server/auth/verify-email");
   const mustVerify = emailVerificationRequired();
+  const [exists] = await db.select({ id: schema.users.id }).from(schema.users).where(eq(schema.users.email, email));
+  if (exists) {
+    // Development (verification optional) says so plainly.
+    if (!mustVerify) return { error: "An account with this email already exists.", values };
+    // Staging and production (review S5/F1): the answer is the same as for a new account, so sign-up
+    // can't be used to find out whether an address is registered. The address's owner gets an email
+    // saying someone tried; nothing is created and nobody is signed in. A dummy hash keeps the time
+    // close to creating an account.
+    await verifyDummy(password);
+    await notifyExistingAccount(exists.id);
+    await audit({ action: "auth.signup_existing_email", actorUserId: null, targetType: "user", targetId: exists.id, ip, details: {} });
+    redirect("/verify-email?sent=1");
+  }
+  const [user] = await db.insert(schema.users).values({ name, email, passwordHash: await hashPassword(password) }).returning();
 
   // Invitations for this email are accepted only once the address is verified (or the invitation
   // link is opened while signed in): signing up with someone else's address must not claim them.
@@ -86,8 +97,12 @@ export async function signUp(_: unknown, fd: FormData): Promise<AuthFormState> {
   await audit({ action: "auth.signup", workspaceId, actorUserId: user.id, targetType: "user", targetId: user.id, ip, details: { pendingInvites: pending.length, acceptedInvites: accepted } });
   const sent = await sendVerification(user.id);
   await audit({ action: "auth.verification_sent", actorUserId: user.id, targetType: "user", targetId: user.id, ip, details: { delivered: sent.delivered } });
+  // Where verification is required, nobody is signed in by sign-up (the same response as for an
+  // address that already has an account, S5): the link in the email confirms the address, then the
+  // person signs in. Elsewhere (development), straight in as before.
+  if (mustVerify) redirect("/verify-email?sent=1");
   await createSession(user.id);
-  redirect(mustVerify ? "/verify-email" : pending.length ? "/dashboard" : "/onboarding");
+  redirect(pending.length ? "/dashboard" : "/onboarding");
 }
 
 /** "Send the link again" on the verification page (signed in, rate-limited per account). */

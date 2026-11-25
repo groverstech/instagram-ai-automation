@@ -267,7 +267,7 @@ function InputsForm({ brand, canEdit }: { brand: Brand; canEdit: boolean }) {
         run(() => updateBrand(brand.id, fd), { success: "Business details saved. Re-analyse to update the profile." });
       }}
     >
-      <fieldset disabled={!canEdit} className="grid gap-6 lg:grid-cols-2">
+      <fieldset disabled={!canEdit} className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader title="Business" />
           <CardBody className="space-y-4">
@@ -351,7 +351,7 @@ function Memory({ brandId, memories, canEdit }: { brandId: string; memories: { i
     </li>
   );
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
       <div className="space-y-6">
         <Card>
           <CardHeader title="Brand instructions" description="Standing rules included in every AI task, regardless of topic." />

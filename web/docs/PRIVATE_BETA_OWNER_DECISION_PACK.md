@@ -1,5 +1,7 @@
 # Owner decision pack: merge review and controlled release
 
+> **Snapshot, superseded (25 Nov 2026):** every PR named here is merged to `main`. Current state: [PRIVATE_BETA_PROGRESS.md](PRIVATE_BETA_PROGRESS.md) and [PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md](PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md); what only the owner can do: [PRIVATE_BETA_OWNER_ACTIONS.md](PRIVATE_BETA_OWNER_ACTIONS.md).
+
 Prepared on 24 Nov 2026, for the owner review and controlled release-preparation stage.
 
 This document is the **single register of open owner decisions**. It replaces the decision lists in `PRIVATE_BETA_DECISIONS_REQUIRED.md`, which now points here. Progress and evidence remain in `PRIVATE_BETA_PROGRESS.md` and `PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md`.

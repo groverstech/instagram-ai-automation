@@ -43,6 +43,43 @@ describe.skipIf(!ADMIN_URL)("real Postgres", () => {
     await sql.end();
   }, 120_000);
 
+  it("an app role that can't read the migration journal is reported as such, and the grants script fixes it", async () => {
+    const { runPostgresMigrations, migrationStatus, expectedMigrations } = await import("./db/migrate");
+    const { default: postgres } = await import("postgres");
+    const { execFileSync } = await import("node:child_process");
+    const url = await freshDatabase("grants");
+    await runPostgresMigrations(url);
+    const role = `bp_grants_${Date.now()}`;
+    const admin = postgres(url, { max: 1, onnotice: () => {} });
+    await admin.unsafe(`create role ${role} login password 'grants-pw' nosuperuser nobypassrls`);
+    const asApp = new URL(url);
+    asApp.username = role;
+    asApp.password = "grants-pw";
+    const { drizzle } = await import("drizzle-orm/postgres-js");
+    const status = async () => {
+      const c = postgres(asApp.toString(), { max: 1, onnotice: () => {} });
+      try {
+        return await migrationStatus(drizzle(c));
+      } finally {
+        await c.end();
+      }
+    };
+    // Without grants: not "nothing applied", but what's wrong and how to fix it.
+    expect(await status()).toMatchObject({ applied: 0, upToDate: false, unreadable: expect.stringMatching(/app-role-grants\.sql/) });
+    execFileSync("psql", [url, "-q", "-v", `app_role=${role}`, "-f", "deploy/app-role-grants.sql"]);
+    expect(await status()).toMatchObject({ applied: expectedMigrations().length, upToDate: true, unreadable: undefined });
+    // The default privileges cover tables a later migration creates.
+    await admin.unsafe("create table later_release_table (id int)");
+    const c = postgres(asApp.toString(), { max: 1, onnotice: () => {} });
+    await c.unsafe("insert into later_release_table values (1)");
+    expect((await c.unsafe("select count(*)::int as n from later_release_table"))[0].n).toBe(1);
+    await c.end();
+    await admin.end();
+    const root = postgres(ADMIN_URL!, { max: 1, onnotice: () => {} });
+    await root.unsafe(`drop owned by ${role} cascade`).catch(() => {});
+    await root.end();
+  }, 120_000);
+
   it("runs the app's database client, readiness and audit log on real Postgres", async () => {
     const url = await freshDatabase("app");
     process.env.DATABASE_URL = url;

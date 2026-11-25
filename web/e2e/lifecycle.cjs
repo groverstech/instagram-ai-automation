@@ -22,16 +22,26 @@ const sql = (q) => execSync(`psql "${DB}" -tAc "${q}"`).toString().trim();
 const fs = require("fs");
 const OUTBOX = process.env.E2E_OUTBOX;
 if (!OUTBOX) throw new Error("Set E2E_OUTBOX (the runner does).");
-/** The newest email to `to` in the file outbox, and the first link in it to `path`. */
+const outbox = (to) => (fs.existsSync(OUTBOX) ? fs.readdirSync(OUTBOX) : []).sort().map((f) => JSON.parse(fs.readFileSync(path.join(OUTBOX, f), "utf8"))).filter((m) => m.to === to);
+/** The newest email to `to` in the file outbox that has a link to `path`, and that link. */
 const mailLink = async (to, pathPart) => {
   for (let i = 0; i < 40; i++) {
-    const msgs = (fs.existsSync(OUTBOX) ? fs.readdirSync(OUTBOX) : []).sort().map((f) => JSON.parse(fs.readFileSync(path.join(OUTBOX, f), "utf8"))).filter((m) => m.to === to);
-    const m = msgs.at(-1);
-    const link = m && (m.text.match(new RegExp(`https?://\\S+/${pathPart}\\?token=\\S+`)) || [])[0];
-    if (link) return { subject: m.subject, link };
+    for (const m of outbox(to).reverse()) {
+      const link = (m.text.match(new RegExp(`https?://\\S+/${pathPart}\\?token=\\S+`)) || [])[0];
+      if (link) return { subject: m.subject, link };
+    }
     await new Promise((r) => setTimeout(r, 250));
   }
   fail(`no email to ${to} with a ${pathPart} link`);
+};
+/** The newest email to `to` whose subject matches. */
+const mailWithSubject = async (to, re) => {
+  for (let i = 0; i < 40; i++) {
+    const m = outbox(to).reverse().find((x) => re.test(x.subject));
+    if (m) return m;
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  fail(`no email to ${to} with subject ${re}`);
 };
 (async () => {
   const browser = await chromium.launch();
@@ -63,15 +73,28 @@ const mailLink = async (to, pathPart) => {
   await p.goto(B + "/signup");
   await p.fill("input[name=name]", "Asha Rao"); await p.fill("input[name=email]", "life@kora.test");
   await p.fill("input[name=password]", "supersecret1"); await p.fill("input[name=workspace]", "Kora Studio");
-  await p.click('button:has-text("Create account")'); await p.waitForURL("**/verify-email");
-  // Unverified: the app is closed until the address is confirmed.
-  await p.goto(B + "/dashboard"); await p.waitForURL("**/verify-email");
-  await p.getByText("Check your inbox").waitFor();
+  await p.click('button:has-text("Create account")'); await p.waitForURL(/\/verify-email\?sent=1$/);
+  // The same answer whether or not the address already has an account (S5): nobody is signed in yet.
+  await p.getByRole("heading", { name: "Check your inbox" }).waitFor();
+  await p.goto(B + "/dashboard"); await p.waitForURL(/\/login/);
+  // An address that already has an account gets exactly the same page, and its owner an email.
+  const firstPage = await p.goto(B + "/verify-email?sent=1").then(() => p.getByRole("heading", { name: "Check your inbox" }).locator("xpath=..").innerText());
+  await p.goto(B + "/signup");
+  await p.fill("input[name=name]", "Someone Else"); await p.fill("input[name=email]", "life@kora.test");
+  await p.fill("input[name=password]", "anotherpass9"); await p.fill("input[name=workspace]", "Not Created");
+  await p.click('button:has-text("Create account")'); await p.waitForURL(/\/verify-email\?sent=1$/);
+  if ((await p.getByRole("heading", { name: "Check your inbox" }).locator("xpath=..").innerText()) !== firstPage) fail("sign-up answered an existing address differently");
+  await mailWithSubject("life@kora.test", /Someone tried to create a BrandPilot account/);
+  if (sql("select count(*) from workspaces where name='Not Created'") !== "0") fail("an organisation was created for an existing address");
   const v = await mailLink("life@kora.test", "verify-email");
   await p.goto(v.link);
   await p.getByRole("button", { name: "Confirm my email address" }).click();
+  await p.waitForURL(/\/login\?verified=1/);
+  await p.getByText("Your email address is confirmed").waitFor();
+  await p.fill("input[name=email]", "life@kora.test"); await p.fill("input[name=password]", "supersecret1");
+  await p.click('button:has-text("Sign in")');
   await p.waitForURL("**/onboarding");
-  log(`signed up; email verified through the test outbox ("${v.subject}")`);
+  log(`signed up (no session until confirmed, S5); email verified through the test outbox ("${v.subject}"); signed in`);
   await p.fill("input[name=name]", "Kora Ceramics");
   await p.fill("textarea[name=description]", "A two-person studio in Bengaluru making small-batch stoneware for everyday use.");
   await p.fill("input[name=industry]", "Home & lifestyle");
@@ -209,7 +232,7 @@ const mailLink = async (to, pathPart) => {
   // Metrics and results.
   await p.goto(B + "/analytics");
   await p.getByRole("button", { name: /Sync metrics/ }).click();
-  await p.getByText(/Synced 1 posts and \d+ accounts/).first().waitFor({ timeout: 20000 });
+  await p.getByText(/Synced 1 post and \d+ accounts?/).first().waitFor({ timeout: 20000 });
   const reach = sql(`select reach from post_metrics where post_id='${postId}' order by captured_at desc limit 1`);
   if (!(Number(reach) > 0)) fail("no post metrics");
   await p.reload();
@@ -261,11 +284,14 @@ const mailLink = async (to, pathPart) => {
   await q.getByRole("link", { name: /Create an account with mira@kora.test/ }).click();
   await q.fill("input[name=name]", "Mira K"); await q.fill("input[name=email]", "mira@kora.test");
   await q.fill("input[name=password]", "supersecret2"); await q.fill("input[name=workspace]", "unused");
-  await q.click('button:has-text("Create account")'); await q.waitForURL("**/verify-email");
+  await q.click('button:has-text("Create account")'); await q.waitForURL(/\/verify-email\?sent=1$/);
   if (sql("select count(*) from workspace_members m join users u on u.id=m.user_id where u.email='mira@kora.test'") !== "0") fail("joined before verifying");
   const v2 = await mailLink("mira@kora.test", "verify-email");
   await q.goto(v2.link);
   await q.getByRole("button", { name: "Confirm my email address" }).click();
+  await q.waitForURL(/\/login\?verified=1/);
+  await q.fill("input[name=email]", "mira@kora.test"); await q.fill("input[name=password]", "supersecret2");
+  await q.click('button:has-text("Sign in")');
   await q.waitForURL("**/dashboard");
   const role = sql("select m.role || '|' || m.status from workspace_members m join users u on u.id=m.user_id join workspaces w on w.id=m.workspace_id where u.email='mira@kora.test' and w.name='Kora Studio'");
   if (role !== "editor|active") fail(`teammate membership: ${role}`);
