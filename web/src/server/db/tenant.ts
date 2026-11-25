@@ -45,3 +45,15 @@ export async function checkRlsRole(db: DB) {
     return null;
   }
 }
+
+export class RlsNotEffectiveError extends Error {
+  constructor() {
+    super("RLS_PILOT=on, but the database role is a superuser or has BYPASSRLS, so row-level security would do nothing. Connect as an ordinary role (docs/RLS_PILOT.md), or turn RLS_PILOT off.");
+  }
+}
+
+/** In strict environments with the pilot on: fail unless policies actually apply to this role. */
+export async function assertRlsEffective(db: DB) {
+  // Fail closed: a role check that can't run counts as not effective.
+  if ((await checkRlsRole(db)) !== true) throw new RlsNotEffectiveError();
+}
