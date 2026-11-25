@@ -162,6 +162,13 @@
       "when": 1795447821257,
       "tag": "0022_credit_enforcement",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1795448270709,
+      "tag": "0023_email_verification",
+      "breakpoints": true
     }
   ]
 }

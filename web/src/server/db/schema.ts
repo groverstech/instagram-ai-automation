@@ -34,6 +34,8 @@ export const users = pgTable("users", {
   /** The last TOTP step accepted: a code can't be used twice. */
   mfaLastStep: integer("mfa_last_step"),
   mfaRecoveryHashes: jsonb("mfa_recovery_hashes").$type<string[]>().notNull().default([]),
+  /** When the user proved they receive mail at `email` (auth/verify-email.ts). */
+  emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
 
@@ -88,6 +90,10 @@ export const workspaceMembers = pgTable(
      * brand ids. Enforced in requireBrandForUser / listAccessibleBrands.
      */
     brandIds: jsonb("brand_ids").$type<string[] | null>(),
+    /** Pending invitations (members.ts): a single-use link, stored only as a SHA-256, with an expiry. */
+    inviteTokenHash: text("invite_token_hash").unique(),
+    inviteExpiresAt: timestamp("invite_expires_at", { withTimezone: true }),
+    invitedBy: text("invited_by"),
     createdAt: createdAt(),
   },
   (t) => [index("wm_user_idx").on(t.userId), index("wm_ws_idx").on(t.workspaceId)],
@@ -994,4 +1000,21 @@ export const creditGrants = pgTable(
     createdAt: createdAt(),
   },
   (t) => [index("credit_grants_ws_period").on(t.workspaceId, t.period)],
+);
+
+/** Email verification links (auth/verify-email.ts): single use, hashed, expiring, for one address. */
+export const emailVerifications = pgTable(
+  "email_verifications",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("email_verifications_user").on(t.userId)],
 );

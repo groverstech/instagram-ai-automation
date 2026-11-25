@@ -5,7 +5,7 @@ import { getDb, schema } from "@/server/db/client";
 import { AccessError, requireWorkspaceRole } from "@/server/auth/guard";
 import { destroySession, getSession } from "@/server/auth/session";
 import { deleteAccountFor, deleteBrandFor, deleteWorkspaceFor } from "@/server/deletion";
-import { changeRoleFor, inviteMemberFor, removeMemberFor, setMemberBrandsFor } from "@/server/members";
+import { changeRoleFor, inviteMemberFor, removeMemberFor, resendInviteFor, setMemberBrandsFor } from "@/server/members";
 import { safe } from "@/server/action";
 import { audit } from "@/server/audit";
 import type { Role } from "@/lib/roles";
@@ -52,8 +52,17 @@ async function me() {
 
 export async function inviteMember(workspaceId: string, email: string, role: Role, brandIds?: string[] | null) {
   return safe(async () => {
-    await inviteMemberFor(await me(), workspaceId, email, role, brandIds);
+    const m = await inviteMemberFor(await me(), workspaceId, email, role, brandIds);
     revalidatePath("/settings");
+    return { emailed: m.delivered };
+  });
+}
+
+export async function resendInvite(workspaceId: string, memberId: string) {
+  return safe(async () => {
+    const r = await resendInviteFor(await me(), workspaceId, memberId);
+    revalidatePath("/settings");
+    return { emailed: r.delivered };
   });
 }
 

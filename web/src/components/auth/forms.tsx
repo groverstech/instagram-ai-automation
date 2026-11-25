@@ -4,7 +4,7 @@ import { useActionState } from "react";
 import { logIn, signUp, type AuthFormState } from "@/app/actions/auth";
 import { Button, Field, Input, Notice, Select } from "@/components/ui";
 
-export function LoginForm({ notice }: { notice?: string } = {}) {
+export function LoginForm({ notice, next }: { notice?: string; next?: string } = {}) {
   const [state, action, pending] = useActionState(logIn, {} as AuthFormState);
   return (
     <form action={action} className="w-full max-w-sm space-y-4">
@@ -14,6 +14,7 @@ export function LoginForm({ notice }: { notice?: string } = {}) {
       </div>
       {notice && !state.error ? <Notice tone="success">{notice}</Notice> : null}
       {state.error ? <Notice tone="danger">{state.error}</Notice> : null}
+      {next ? <input type="hidden" name="next" value={next} /> : null}
       <Field label="Email">
         {/* React resets the form after the action; defaultValue brings back what was typed. */}
         <Input name="email" type="email" autoComplete="email" defaultValue={state.values?.email} required />

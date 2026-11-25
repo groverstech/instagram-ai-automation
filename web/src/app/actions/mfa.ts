@@ -22,7 +22,7 @@ export async function verifyMfaLogin(_: unknown, fd: FormData): Promise<MfaFormS
     if (e instanceof MfaError || e instanceof RateLimitError) return { error: e.message };
     throw e;
   }
-  redirect("/dashboard");
+  redirect(safeNext(String(fd.get("next") ?? "/dashboard")));
 }
 
 async function me() {

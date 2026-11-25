@@ -5,7 +5,8 @@ import { format } from "date-fns";
 import { ArrowLeftRight, Building2, Check, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { switchBrand } from "@/app/actions/brand";
-import { changeRole, inviteMember, prepareAuditExport, removeMember, setMemberBrands, updateWorkspace } from "@/app/actions/settings";
+import { changeRole, inviteMember,
+  resendInvite, prepareAuditExport, removeMember, setMemberBrands, updateWorkspace } from "@/app/actions/settings";
 import { openBillingPortal, startCheckout } from "@/app/actions/billing";
 import { Badge, Button, Card, CardBody, CardHeader, Field, Input, Modal, Notice, PageHeader, Select } from "@/components/ui";
 import { useRun } from "@/components/hooks";
@@ -15,7 +16,7 @@ import { AutonomyCard, type AutonomyView } from "./autonomy-card";
 import { ROLE_DESCRIPTIONS, roleAtLeast, type Role } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
-type Member = { id: string; role: Role; brandIds: string[] | null; status: string; invitedEmail: string | null; userId: string | null; name: string | null; email: string | null };
+type Member = { id: string; role: Role; brandIds: string[] | null; status: string; invitedEmail: string | null; userId: string | null; name: string | null; email: string | null; inviteExpiresAt?: Date | string | null };
 import type { AuditRow, AuditScope } from "@/server/audit";
 import type { AiOverview } from "@/server/ai/overview";
 import { AiUsageCard } from "./ai-usage";
@@ -106,7 +107,7 @@ export function SettingsView(props: {
                       <Building2 /> {scopeLabel(inviteScope, brandName, props.brands.length)}
                     </Button>
                   ) : null}
-                  <Button loading={busy("inv")} disabled={!email} onClick={() => run(() => inviteMember(props.workspace.id, email, inviteRole, inviteScope), { key: "inv", success: "Member added. Pending invites join when they sign up with this email.", onOk: () => { setEmail(""); setInviteScope(null); } })}>
+                  <Button loading={busy("inv")} disabled={!email} onClick={() => run(() => inviteMember(props.workspace.id, email, inviteRole, inviteScope), { key: "inv", success: "Invitation created. They join when they accept the link we email them (valid 7 days).", onOk: () => { setEmail(""); setInviteScope(null); } })}>
                     <Plus /> Invite
                   </Button>
                 </div>
@@ -116,7 +117,7 @@ export function SettingsView(props: {
                   <li key={m.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5">
                     <div className="min-w-[min(100%,14rem)] flex-1">
                       <p className="truncate text-[13px] font-medium">{m.name ?? m.invitedEmail}</p>
-                      <p className="truncate text-[11px] text-faint">{m.email ?? m.invitedEmail}{m.status === "invited" ? " · invitation pending" : ""}{m.brandIds ? ` · client access: ${m.brandIds.map(brandName).join(", ")}` : m.role === "owner" || m.role === "admin" ? " · all brands" : ""}</p>
+                      <p className="truncate text-[11px] text-faint">{m.email ?? m.invitedEmail}{m.status === "invited" ? (m.inviteExpiresAt && new Date(m.inviteExpiresAt) < new Date() ? " · invitation expired" : " · invitation pending") : ""}{m.brandIds ? ` · client access: ${m.brandIds.map(brandName).join(", ")}` : m.role === "owner" || m.role === "admin" ? " · all brands" : ""}</p>
                     </div>
                     {isAdmin && m.userId !== props.me && (m.role === "editor" || m.role === "viewer") && (props.brands.length > 1 || isAgency) ? (
                       <Button size="sm" variant="secondary" onClick={() => setScopeFor(m)} aria-label={`Brand access for ${m.name ?? m.invitedEmail}`}>
@@ -130,8 +131,13 @@ export function SettingsView(props: {
                     ) : (
                       <Badge className="capitalize">{m.role}</Badge>
                     )}
+                    {isAdmin && m.status === "invited" ? (
+                      <Button size="sm" variant="secondary" loading={busy(`re-${m.id}`)} onClick={() => run(() => resendInvite(props.workspace.id, m.id), { key: `re-${m.id}`, success: "Invitation sent again with a new link" })} aria-label={`Send the invitation to ${m.invitedEmail} again`}>
+                        Resend
+                      </Button>
+                    ) : null}
                     {isAdmin && m.userId !== props.me && m.role !== "owner" ? (
-                      <Button size="icon" variant="ghost" onClick={() => run(() => removeMember(props.workspace.id, m.id), { success: "Removed" })} aria-label="Remove member"><Trash2 /></Button>
+                      <Button size="icon" variant="ghost" onClick={() => run(() => removeMember(props.workspace.id, m.id), { success: m.status === "invited" ? "Invitation withdrawn" : "Removed" })} aria-label={m.status === "invited" ? "Withdraw invitation" : "Remove member"}><Trash2 /></Button>
                     ) : null}
                   </li>
                 ))}

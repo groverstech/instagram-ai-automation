@@ -21,6 +21,20 @@ async function assertMfaEnrolledIfRequired(session: SessionUser) {
   if (await mfaRequiredFor(session.user.id)) throw new MfaEnrolmentRequired();
 }
 
+/**
+ * Email verification (auth/verify-email.ts), enforced for every action and route that resolves
+ * access here when it's required, not only by the page redirect.
+ */
+async function assertEmailVerifiedIfRequired(session: SessionUser) {
+  if (session.emailVerified === true) return;
+  const { emailVerificationRequired } = await import("./verify-email");
+  if (!emailVerificationRequired()) return;
+  const db = await getDb();
+  const [u] = await db.select({ at: schema.users.emailVerifiedAt }).from(schema.users).where(eq(schema.users.id, session.user.id));
+  if (u?.at) return;
+  throw new AccessError("Confirm your email address first: open the link we sent you, or send a new one from the sign-in page.");
+}
+
 export class AccessError extends Error {
   constructor(message = "You don't have access to this resource.") {
     super(message);
@@ -41,6 +55,13 @@ export async function requireUser(): Promise<SessionUser> {
   const s = await getSession();
   if (!s) redirect("/login");
   return s;
+}
+
+/** For pages: an account that must verify its email sees only the "check your inbox" page. */
+export async function redirectIfUnverified(session: SessionUser) {
+  if (session.emailVerified === true) return;
+  const { emailVerificationRequired } = await import("./verify-email");
+  if (emailVerificationRequired()) redirect("/verify-email");
 }
 
 /** Brands the user can see, with their role in each brand's workspace. */
@@ -101,12 +122,14 @@ export async function requireBrandForUser(session: SessionUser, brandId: string,
   }
   if (!roleAtLeast(r.role, min)) throw await denied(session, { workspaceId: r.brand.workspaceId, brandId, type: "brand", id: brandId }, `needs_${min}`, new AccessError(`This action needs the ${min} role or higher.`));
   await assertMfaEnrolledIfRequired(session);
+  await assertEmailVerifiedIfRequired(session);
   return { session, brand: r.brand, role: r.role };
 }
 
 /** For pages: the active brand (or first accessible), redirecting to onboarding when none. */
 export async function requireActiveBrand(): Promise<BrandAccess> {
   const session = await requireUser();
+  await redirectIfUnverified(session);
   const all = await listAccessibleBrands(session.user.id);
   if (!all.length) redirect("/onboarding");
   const picked = all.find((b) => b.brand.id === session.activeBrandId) ?? all[0];
@@ -140,5 +163,6 @@ export async function requireWorkspaceRoleForUser(session: SessionUser, workspac
   // Brand-scoped (client) members can't administer the workspace as a whole.
   if (Array.isArray(m.brandIds) && roleAtLeast(min, "admin")) throw await denied(session, { workspaceId, type: "workspace", id: workspaceId }, "outside_brand_scope", new AccessError("Your access is limited to specific brands."));
   await assertMfaEnrolledIfRequired(session);
+  await assertEmailVerifiedIfRequired(session);
   return { session, role: m.role, brandIds: m.brandIds };
 }
