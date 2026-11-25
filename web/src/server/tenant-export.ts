@@ -14,7 +14,7 @@ import { log } from "./log";
  * Organisation data export (launch gate D4; data portability). Owners only, with a recent second
  * factor; rate-limited; audited as `workspace.export`. A ZIP with:
  *   data.json   the organisation, its members and every brand's data (profiles, memory, strategies,
- *               campaigns, creatives, posts and metrics, competitors, assistant history, AI tasks
+ *               campaigns, creatives, posts, publishing history and metrics, competitors, assistant history, AI tasks
  *               and usage, credit caps and alerts)
  *   files/…     uploaded brand assets and AI-generated images, at their storage paths
  *   README.txt  what's included and what isn't
@@ -51,7 +51,7 @@ export async function exportSlot<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-const STRIP = /(Enc|Hash|Token|Secret)$|^(embedding|claimToken|input|output)$/;
+const STRIP = /(Enc|Hash|Token|Secret)$|^(embedding|claimToken|input|output|idempotencyKey)$/;
 export function stripSecrets<T extends Record<string, unknown>>(row: T): Record<string, unknown> {
   return Object.fromEntries(Object.entries(row).filter(([k]) => !STRIP.test(k)));
 }
@@ -109,8 +109,9 @@ async function buildExport(workspaceId: string, actorUserId: string, budget: num
   ]);
   const postIds = posts.map((p) => String(p.id));
   const accountIds = accounts.map((a) => String(a.id));
-  const [postMetrics, accountMetrics, usage, creditLimits, usageAlerts] = await Promise.all([
+  const [postMetrics, publishAttempts, accountMetrics, usage, creditLimits, usageAlerts] = await Promise.all([
     postIds.length ? db.select().from(s.postMetrics).where(inArray(s.postMetrics.postId, postIds)) : [],
+    postIds.length ? db.select().from(s.publishAttempts).where(inArray(s.publishAttempts.postId, postIds)) : [],
     accountIds.length ? db.select().from(s.accountMetrics).where(inArray(s.accountMetrics.socialAccountId, accountIds)) : [],
     db.select().from(s.usageEvents).where(eq(s.usageEvents.workspaceId, workspaceId)),
     db.select().from(s.creditLimits).where(eq(s.creditLimits.workspaceId, workspaceId)),
@@ -159,6 +160,9 @@ async function buildExport(workspaceId: string, actorUserId: string, budget: num
     creatives,
     posts,
     postMetrics: postMetrics.map((r) => stripSecrets(r)),
+    // The publish ledger: every attempt, its outcome and the platform's post id (no tokens; the
+    // idempotency key is internal and stripped).
+    publishAttempts: publishAttempts.map((r) => stripSecrets(r)),
     socialAccounts: accounts,
     accountMetrics: accountMetrics.map((r) => stripSecrets(r)),
     competitors,

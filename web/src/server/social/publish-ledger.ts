@@ -1,6 +1,6 @@
 import "server-only";
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { getDb, schema } from "../db/client";
+import { getDb, schema, type DB } from "../db/client";
 import { log } from "../log";
 import { provider } from "./registry";
 import type { AccountForUse } from "./types";
@@ -38,9 +38,9 @@ export async function latestAttempt(postId: string): Promise<Attempt | null> {
 }
 
 /** For the calendar: which of these posts need a check before they can be published again, and how. */
-export async function checksNeeded(posts: { id: string; platform: string }[]): Promise<Record<string, "auto" | "manual">> {
+export async function checksNeeded(posts: { id: string; platform: string }[], tx?: DB): Promise<Record<string, "auto" | "manual">> {
   if (!posts.length) return {};
-  const db = await getDb();
+  const db = tx ?? (await getDb());
   const rows = await db
     .select({ postId: schema.publishAttempts.postId, attempt: schema.publishAttempts.attempt, status: schema.publishAttempts.status })
     .from(schema.publishAttempts)
@@ -53,6 +53,20 @@ export async function checksNeeded(posts: { id: string; platform: string }[]): P
     if (a && isUnsettled(a)) out[p.id] = provider(p.platform).findRecentPost ? "auto" : "manual";
   }
   return out;
+}
+
+/**
+ * Publishing history for one post, newest first, for the post's detail view. Pass the tenant
+ * transaction (withTenant) so the RLS pilot covers it; callers check the post's brand first.
+ */
+export async function attemptsForPost(postId: string, tx?: DB) {
+  const db = tx ?? (await getDb());
+  return db
+    .select({ attempt: schema.publishAttempts.attempt, platform: schema.publishAttempts.platform, status: schema.publishAttempts.status, externalId: schema.publishAttempts.externalId, error: schema.publishAttempts.error, startedAt: schema.publishAttempts.startedAt, finishedAt: schema.publishAttempts.finishedAt })
+    .from(schema.publishAttempts)
+    .where(eq(schema.publishAttempts.postId, postId))
+    .orderBy(desc(schema.publishAttempts.attempt))
+    .limit(20);
 }
 
 /** The platform rejected this account's token (or it expired): show "Reconnect", fail fast. */

@@ -14,7 +14,8 @@ import { approvePost, publishPost, syncMetrics } from "@/server/social/service";
 import { enqueue, cancelJobs } from "@/server/jobs/queue";
 import { remember } from "@/server/memory";
 import { provider } from "@/server/social/registry";
-import { reconcilePost, settleManually } from "@/server/social/publish-ledger";
+import { attemptsForPost, reconcilePost, settleManually } from "@/server/social/publish-ledger";
+import { withTenant } from "@/server/db/tenant";
 import { UserFacingError } from "@/server/jobs/engine";
 
 async function ownPost(brandId: string, postId: string) {
@@ -209,6 +210,16 @@ export async function markPublishOutcomeAction(brandId: string, postId: string, 
     if (!done) throw new UserFacingError("There's nothing to settle for this post.");
     await audit({ action: "post.publish_outcome_marked", workspaceId: brand.workspaceId, brandId, actorUserId: session.user.id, targetType: "post", targetId: postId, details: { wentOut } });
     refresh();
+  });
+}
+
+/** Publishing history of one post (the publish ledger), for anyone who can see the brand. */
+export async function publishHistoryAction(brandId: string, postId: string) {
+  return safe(async () => {
+    const { brand } = await requireBrand(brandId, "viewer");
+    await ownPost(brandId, postId);
+    const rows = await withTenant(brand.workspaceId, (t) => attemptsForPost(postId, t));
+    return rows.map((r) => ({ ...r, startedAt: r.startedAt.toISOString(), finishedAt: r.finishedAt?.toISOString() ?? null }));
   });
 }
 

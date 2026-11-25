@@ -102,6 +102,42 @@ describe.skipIf(!ADMIN_URL)("row-level security pilot", () => {
     expect(deleted).toEqual([]);
   });
 
+  it("publish attempts (migration 0020): only the organisation's own; no writes against another organisation's posts; deleted with their post", async () => {
+    process.env.RLS_PILOT = "on";
+    const { getDb, schema } = await import("./db/client");
+    const { withTenant } = await import("./db/tenant");
+    const db = await getDb();
+    // Seeded without an organisation set (as the worker does): one attempt per post.
+    const byOrg = new Map<string, string[]>();
+    for (const o of orgs) {
+      const ids: string[] = [];
+      for (const [i, postId] of o.posts.entries()) {
+        const [a] = await db.insert(schema.publishAttempts).values({ postId, platform: "instagram", attempt: 1, idempotencyKey: `rls-${o.id}-${i}`, status: "succeeded" }).returning();
+        ids.push(a.id);
+      }
+      byOrg.set(o.id, ids);
+    }
+    for (const o of orgs) {
+      const seen = await withTenant(o.id, (t) => t.select({ id: schema.publishAttempts.id }).from(schema.publishAttempts));
+      expect(seen.map((r) => r.id).sort()).toEqual([...byOrg.get(o.id)!].sort());
+    }
+    const [a, b] = orgs;
+    const err = await withTenant(a.id, (t) => t.insert(schema.publishAttempts).values({ postId: b.posts[0], platform: "instagram", attempt: 9, idempotencyKey: "rls-intruder", status: "sending" })).then(
+      () => null,
+      (e: Error & { cause?: Error }) => e,
+    );
+    expect(String(err?.cause?.message ?? err?.message)).toMatch(/row-level security/);
+    const changed = await withTenant(a.id, (t) => t.update(schema.publishAttempts).set({ error: "tampered" }).where(sql`true`).returning({ id: schema.publishAttempts.id }));
+    expect(changed.map((r) => r.id).sort()).toEqual([...byOrg.get(a.id)!].sort());
+    const stolen = await withTenant(a.id, (t) => t.delete(schema.publishAttempts).where(sql`post_id = ${b.posts[0]}`).returning());
+    expect(stolen).toEqual([]);
+    // Deleting a post deletes its attempts (ON DELETE CASCADE), under the organisation's own policy.
+    const victim = a.posts.pop()!;
+    await withTenant(a.id, (t) => t.delete(schema.posts).where(sql`id = ${victim}`));
+    expect(await db.$count(schema.publishAttempts, sql`post_id = ${victim}`)).toBe(0);
+    expect(await db.$count(schema.publishAttempts, sql`post_id = ${b.posts[0]}`)).toBe(1);
+  });
+
   it("the setting is per transaction: it never leaks to the next query on a pooled connection", async () => {
     const { getDb, schema } = await import("./db/client");
     const { withTenant } = await import("./db/tenant");

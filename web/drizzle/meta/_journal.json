@@ -141,6 +141,13 @@
       "when": 1795439196853,
       "tag": "0019_publish_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1795446961884,
+      "tag": "0020_rls_publish_attempts",
+      "breakpoints": true
     }
   ]
 }

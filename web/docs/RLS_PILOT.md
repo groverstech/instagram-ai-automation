@@ -7,8 +7,9 @@ Postgres row-level security is a second layer under the application's own tenant
 | Part | Where |
 |---|---|
 | Policies on `brands`, `posts` and `creatives` (`ENABLE` + `FORCE`, so the table owner is covered too) | `drizzle/0016_rls_pilot.sql` |
+| The same policy on `publish_attempts` (the publish ledger): an attempt belongs to its post's brand's organisation | `drizzle/0020_rls_publish_attempts.sql` |
 | `withTenant(workspaceId, fn)`: runs `fn` in a transaction with `app.org_id` set, when `RLS_PILOT=on` | `src/server/db/tenant.ts` |
-| Used by the Content Calendar (posts and creatives) and the campaign page (posts, filtered by campaign only) | `app/(app)/calendar`, `app/(app)/campaigns/[id]` |
+| Used by the Content Calendar (posts, creatives and the publish checks), a post's publishing history, and the campaign page (posts) | `app/(app)/calendar`, `app/(app)/campaigns/[id]` |
 | Start-up check of the app's database role: superusers and `BYPASSRLS` roles ignore every policy. **In staging and production with `RLS_PILOT=on`, the app refuses to start with such a role** (`RlsNotEffectiveError`; readiness fails), and fails closed if the check can't run. Otherwise it logs `db.role_bypasses_rls` as a warning | `assertRlsEffective`, `checkRlsRole` |
 
 **Policy rule:**
@@ -27,6 +28,7 @@ Postgres row-level security is a second layer under the application's own tenant
 - **Reads:** under `withTenant`, `select` with **no** organisation filter returns exactly that organisation's brands, posts and creatives.
 - **Inserts:** inserting a post for another organisation's brand is refused by Postgres (`new row violates row-level security policy`).
 - **Bulk changes:** an `UPDATE … WHERE true` changes only the organisation's own rows. A `DELETE` of another organisation's creative removes nothing.
+- **Publish attempts:** the same checks on `publish_attempts` (reads, a refused insert against another organisation's post, bulk update, cross-organisation delete); deleting a post removes its attempts.
 - **No leaks:** the setting is per transaction, so it never leaks to the next query on a pooled connection.
 - **Flag off:** with `RLS_PILOT` off, `withTenant` is a pass-through.
 - **Role check:** the start-up check passes for an ordinary role and flags a superuser.
