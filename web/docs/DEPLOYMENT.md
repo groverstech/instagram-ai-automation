@@ -239,7 +239,8 @@ Full reference, including routing, retries, prices and the usage ledger:
 | Variable | Purpose |
 |---|---|
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_GROWTH`, `STRIPE_PRICE_AGENCY` | Billing (the webhook secret is required whenever the key is set) |
-| `META_APP_ID`/`META_APP_SECRET`, `LINKEDIN_CLIENT_ID`/`_SECRET`, `GOOGLE_CLIENT_ID`/`_SECRET`, `PINTEREST_CLIENT_ID`/`_SECRET`, `TIKTOK_CLIENT_KEY`/`_SECRET` | Social OAuth apps (each pair must be set together) |
+| `META_APP_ID`/`META_APP_SECRET`, `LINKEDIN_CLIENT_ID`/`_SECRET`, `GOOGLE_CLIENT_ID`/`_SECRET`, `PINTEREST_CLIENT_ID`/`_SECRET`, `TIKTOK_CLIENT_KEY`/`_SECRET` | Social OAuth apps (each pair must be set together). `META_APP_SECRET` also verifies Meta's data-deletion and deauthorise callbacks ([PLATFORM_READINESS.md](PLATFORM_READINESS.md)) |
+| `LEGAL_ENTITY_NAME`, `LEGAL_CONTACT_EMAIL` | Fill the company name and contact address in the public legal pages; unset shows a visible "to be confirmed" marker |
 | `META_GRAPH_VERSION`, `LINKEDIN_VERSION` | Pinned platform API versions |
 | `ANDROID_PACKAGE_NAME`, `ANDROID_CERT_SHA256` | Android TWA asset links (see `ANDROID.md`) |
 

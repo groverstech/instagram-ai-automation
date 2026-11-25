@@ -400,10 +400,35 @@ export const socialAccounts = pgTable(
     status: text("status").$type<"active" | "expired" | "revoked" | "error">().notNull().default("active"),
     meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
     connectedBy: text("connected_by"),
+    /**
+     * The platform's ID for the person who connected the account (Meta: the app-scoped user ID).
+     * Meta's data-deletion and deauthorise callbacks identify people by it. Null for accounts
+     * connected before migration 0011 until they're reconnected.
+     */
+    platformUserId: text("platform_user_id"),
+    /** Set when the platform tells us the person removed the app (deauthorise callback). */
+    deauthorizedAt: timestamp("deauthorized_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("acct_brand_platform_ext").on(t.brandId, t.platform, t.externalId)],
+  (t) => [uniqueIndex("acct_brand_platform_ext").on(t.brandId, t.platform, t.externalId), index("acct_platform_user").on(t.platform, t.platformUserId)],
 );
+
+/**
+ * Data-deletion requests received from a platform (Meta's data-deletion callback). The
+ * confirmation code is what the person can use on the public status page; nothing else about them
+ * is shown there.
+ */
+export const dataDeletionRequests = pgTable("data_deletion_requests", {
+  id: id(),
+  platform: text("platform").notNull(),
+  externalUserId: text("external_user_id").notNull(),
+  confirmationCode: text("confirmation_code").notNull().unique(),
+  status: text("status").$type<"received" | "completed" | "failed">().notNull().default("received"),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  /** Counts only (accounts, posts detached, metrics removed); never personal data. */
+  details: jsonb("details").$type<Record<string, unknown>>().notNull().default({}),
+});
 
 export type MetricSource = "platform" | "estimate";
 

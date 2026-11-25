@@ -37,6 +37,8 @@ COPY --from=build --chown=app:app /app/package.json /app/package-lock.json /app/
 COPY --from=build --chown=app:app /app/node_modules ./node_modules
 COPY --from=build --chown=app:app /app/.next ./.next
 COPY --from=build --chown=app:app /app/drizzle ./drizzle
+# Public legal pages read their editable markdown at runtime (src/server/legal.tsx).
+COPY --from=build --chown=app:app /app/content ./content
 # Server source for the tsx-run roles (worker, migrate), and the entrypoint.
 COPY --from=build --chown=app:app /app/src ./src
 COPY --from=build --chown=app:app /app/scripts/docker-entrypoint.sh ./scripts/docker-entrypoint.sh

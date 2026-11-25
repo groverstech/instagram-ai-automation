@@ -1,4 +1,12 @@
-export type Capability = "supported" | "unsupported" | "requires_app_review";
+/**
+ * What BrandPilot can do on a platform **today** (plan defect D2: never promise more than the code does).
+ *   supported            implemented, and works with standard access
+ *   requires_app_review  implemented, but the platform allows it only once the app passes its review
+ *   not_built            the platform offers it, but BrandPilot doesn't implement it yet
+ *   unsupported          the platform's API doesn't offer it
+ * `social-capabilities.test.ts` checks every claim against the provider's implemented methods.
+ */
+export type Capability = "supported" | "requires_app_review" | "not_built" | "unsupported";
 
 export type Capabilities = {
   publishImage: Capability;
@@ -15,6 +23,8 @@ export type TokenSet = {
   refreshToken?: string;
   expiresAt?: Date;
   scopes?: string;
+  /** The platform's ID for the person who signed in (Meta: app-scoped user ID). */
+  platformUserId?: string;
 };
 
 export type DiscoveredAccount = {
