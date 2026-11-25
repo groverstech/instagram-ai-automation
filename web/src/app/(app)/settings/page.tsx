@@ -8,6 +8,7 @@ import { billingStatus } from "@/server/billing";
 import { auditTrailFor } from "@/server/audit";
 import { aiOverviewFor } from "@/server/ai/overview";
 import { roleAtLeast } from "@/lib/roles";
+import { accountDeletionPlan } from "@/server/deletion";
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ billing?: string }> }) {
   const { billing } = await searchParams;
@@ -41,6 +42,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ b
       // members; aiOverviewFor re-checks on the server.
       aiOverview={!view.scoped && roleAtLeast(role, "admin") ? await aiOverviewFor(session, ws.id) : null}
       members={view.members}
+      accountPlan={await accountDeletionPlan(session.user.id)}
       brands={view.brands}
       integrations={view.scoped ? null : { ai: aiStatus(), image: imageStatus(), embeddings: process.env.VOYAGE_API_KEY ? "Voyage AI (voyage-3.5-lite)" : "Local hashing (set VOYAGE_API_KEY for semantic embeddings)", database: process.env.DATABASE_URL ? "PostgreSQL" : "Embedded PGlite (development)" }}
     />

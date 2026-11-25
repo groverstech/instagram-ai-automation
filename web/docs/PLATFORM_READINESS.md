@@ -83,8 +83,27 @@ transparency flattened onto white, because Instagram's publishing API accepts JP
 issued before this change (`.png`) still serve PNG until they expire. Serving this media from
 object storage and a CDN is part of PR 4.2.
 
+## Self-service deletion (PR 4.3b)
+
+**Settings → Delete data.** Each option is refused, deleting nothing, when its condition fails:
+
+| Option | Who | Confirmation | Refused while |
+|---|---|---|---|
+| Delete a brand | Owners and admins with access to every brand | The brand's name | An AI job is queued or running for the brand, or a post is being published |
+| Delete the organisation | Owners | Password | A paid subscription is active (cancel it in Billing first), or any brand meets the condition above |
+| Delete my account | Everyone | Password | You're the only owner of an organisation that has other members |
+
+Deleting a brand removes every row that belongs to it (through `ON DELETE CASCADE`) and its stored
+files (`brands/<id>/…`), cancels its queued publishing and metric-sync jobs, and clears it as anyone's
+active brand. Deleting an account also deletes organisations where you're the only member, leaves the
+others (recorded as `member.remove`), and signs you out. Password confirmations are rate-limited like
+sign-in.
+
+**Kept:** the AI usage ledger (billing reconciliation) and the Security log (security
+investigations). They hold the deleted internal IDs and, in `social.connect` events, the platform account IDs, but no names, text or files. The Security log records
+`brand.delete`, `workspace.delete` and `account.delete`.
+
 ## Still to come in PR 4.3
 
-- Self-service account and brand deletion.
 - A reviewer demo workspace.
 - Submission packs and screencast scripts.
