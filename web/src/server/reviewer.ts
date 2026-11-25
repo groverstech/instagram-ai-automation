@@ -3,14 +3,16 @@ import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "./db/client";
 import { hashPassword } from "./auth/password";
-import { randomToken } from "./crypto";
+import { encrypt, randomToken } from "./crypto";
+import { newRecoveryCodes, newTotpSecret } from "./auth/totp";
 import { purgeWorkspace } from "./purge";
 
 /**
  * A reviewer account for platform app reviews (PR 4.3; docs/submissions/META.md §4). Creates a user,
  * an organisation and a brand with one approved, ready-to-publish post per Meta platform and the
  * type-led creative they use, so a reviewer can connect test accounts and publish straight away.
- * Makes no AI calls. The password is returned once and only its hash is stored.
+ * Makes no AI calls. The password, the two-step setup key and the recovery codes are returned once;
+ * only the password's hash, the encrypted key and the codes' hashes are stored.
  */
 export const REVIEW_BRAND = "Kora Ceramics (review)";
 
@@ -46,7 +48,17 @@ export async function setupReviewer(input: { email: string; reset?: boolean }) {
   }
 
   const password = randomToken(15); // 20 characters
-  const [user] = await db.insert(schema.users).values({ email, name: "App reviewer", passwordHash: await hashPassword(password) }).returning();
+  // Two-step verification is required for owners and admins in staging and production (F3), and a
+  // platform reviewer can't enrol an authenticator during a review. So the account is created with
+  // it already on: the reviewer signs in with the password and one of the recovery codes, which go
+  // into the review form's test-credentials field with the password. The setup key is printed too,
+  // for an authenticator app.
+  const totpSecret = newTotpSecret();
+  const recovery = newRecoveryCodes();
+  const [user] = await db
+    .insert(schema.users)
+    .values({ email, name: "App reviewer", passwordHash: await hashPassword(password), mfaSecretEnc: encrypt(totpSecret), mfaEnabledAt: new Date(), mfaRecoveryHashes: recovery.hashes })
+    .returning();
   const [ws] = await db.insert(schema.workspaces).values({ name: "App review", type: "business", plan: "agency" }).returning();
   await db.insert(schema.workspaceMembers).values({ workspaceId: ws.id, userId: user.id, role: "owner", status: "active" });
   const [brand] = await db
@@ -86,5 +98,5 @@ export async function setupReviewer(input: { email: string; reset?: boolean }) {
       })),
     )
     .returning({ id: schema.posts.id, platform: schema.posts.platform });
-  return { email, password, userId: user.id, workspaceId: ws.id, brandId: brand.id, creativeId: creative.id, posts };
+  return { email, password, totpSecret, recoveryCodes: recovery.codes, userId: user.id, workspaceId: ws.id, brandId: brand.id, creativeId: creative.id, posts };
 }
