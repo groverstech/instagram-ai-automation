@@ -18,6 +18,11 @@ export type AuditAction =
   | "auth.login_failed"
   | "auth.signup"
   | "auth.logout"
+  | "auth.mfa_failed"
+  | "mfa.enable"
+  | "mfa.disable"
+  | "mfa.recovery_used"
+  | "mfa.recovery_regenerated"
   | "member.invite"
   | "member.role_change"
   | "member.brand_scope_change"
@@ -58,7 +63,7 @@ export type AuditEvent = {
  * NOISE_WINDOW_SEC; the next one is recorded once as a "further events not recorded" marker, and
  * the rest of the window is only counted. Flooding requests can't flood the audit table.
  */
-const NOISY = new Set<AuditAction>(["access.denied", "auth.login_failed"]);
+const NOISY = new Set<AuditAction>(["access.denied", "auth.login_failed", "auth.mfa_failed"]);
 export const NOISE_LIMIT = 20;
 export const NOISE_WINDOW_SEC = 600;
 

@@ -1,4 +1,6 @@
 import { and, eq } from "drizzle-orm";
+import { redirect } from "next/navigation";
+import { mfaRequiredFor } from "@/server/auth/mfa";
 import { requireActiveBrand, listAccessibleBrands } from "@/server/auth/guard";
 import { getDb, schema } from "@/server/db/client";
 import { aiStatus } from "@/server/ai/llm";
@@ -12,6 +14,8 @@ export const maxDuration = 300;
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const { session, brand, role } = await requireActiveBrand();
+  // Owners and admins must use two-step verification when it's required (auth/mfa.ts).
+  if (!session.mfaEnabled && (await mfaRequiredFor(session.user.id))) redirect("/account/security?required=1");
   const db = await getDb();
   const [brands, pending, history] = await Promise.all([
     listAccessibleBrands(session.user.id),

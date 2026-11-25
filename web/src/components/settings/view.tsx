@@ -45,6 +45,8 @@ export function SettingsView(props: {
   aiOverview?: AiOverview | null;
   /** What deleting your own account would do (Settings → Delete data). */
   accountPlan: AccountDeletionPlan;
+  /** Two-step verification is on for the viewer. */
+  mfaEnabled: boolean;
   integrations: { ai: { provider: string; ready: boolean; model: string }; image: { ready: boolean; provider: string }; embeddings: string; database: string } | null;
 }) {
   const isAdmin = roleAtLeast(props.role, "admin") && !props.scoped;
@@ -182,6 +184,13 @@ export function SettingsView(props: {
         </div>
 
         <div className="min-w-0 space-y-6">
+          <Card aria-label="Your account">
+            <CardHeader title="Your account" />
+            <CardBody className="flex flex-wrap items-center justify-between gap-2 text-[13px]">
+              <span>Two-step verification: <strong className="font-medium">{props.mfaEnabled ? "On" : "Off"}</strong></span>
+              <Link href="/account/security" className="font-medium text-accent hover:text-accent-ink">Manage security</Link>
+            </CardBody>
+          </Card>
           {props.usage ? (
           <Card>
             <CardHeader title="Plan & usage" action={<Badge tone="accent">{plan.label}</Badge>} />
