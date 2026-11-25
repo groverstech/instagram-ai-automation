@@ -120,6 +120,13 @@
       "when": 1795408981875,
       "tag": "0016_rls_pilot",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1795434865282,
+      "tag": "0017_beta_invites",
+      "breakpoints": true
     }
   ]
 }

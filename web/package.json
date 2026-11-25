@@ -19,6 +19,7 @@
     "ai:check-anthropic": "node --conditions=react-server --import tsx src/server/ai/anthropic-check-cli.ts",
     "reviewer:setup": "node --conditions=react-server --import tsx src/server/reviewer-cli.ts",
     "credits": "node --conditions=react-server --import tsx src/server/credits-cli.ts",
+    "beta:invite": "node --conditions=react-server --import tsx src/server/beta-invites-cli.ts",
     "ai:controls": "node --conditions=react-server --import tsx src/server/ai/controls-cli.ts",
     "secrets:rotate": "node --conditions=react-server --import tsx src/server/secrets-rotate-cli.ts"
   },
