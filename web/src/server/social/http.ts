@@ -10,13 +10,14 @@ export async function jsonFetch<T = Record<string, unknown>>(url: string, init: 
     body = text;
   }
   if (!res.ok) {
-    const b = body as { error?: { message?: string } | string; message?: string; error_description?: string } | null;
+    const b = body as { error?: { message?: string; code?: number } | string; message?: string; error_description?: string } | null;
     const msg =
       (typeof b?.error === "object" ? b.error?.message : typeof b?.error === "string" ? b.error : undefined) ??
       b?.error_description ??
       b?.message ??
       text.slice(0, 300);
-    throw new PlatformError(`${new URL(url).hostname} ${res.status}: ${msg}`, res.status);
+    const code = typeof b?.error === "object" && typeof b.error?.code === "number" ? b.error.code : undefined;
+    throw new PlatformError(`${new URL(url).hostname} ${res.status}: ${msg}`, res.status, code);
   }
   return body as T;
 }

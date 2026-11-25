@@ -20,6 +20,13 @@ export function sandboxOn(env: Record<string, string | undefined> = process.env)
   return deploy === "" || deploy === "development" || deploy === "demo" || deploy === "test";
 }
 
+/**
+ * What the sandbox "published", per account, so the publish ledger's read-back (findRecentPost,
+ * PR 4.4a) can be exercised like on Instagram and Facebook. In-process only: a restart forgets it,
+ * which reads as "not found".
+ */
+const published = new Map<string, { externalId: string; caption: string; at: number }[]>();
+
 const n = (seed: string, mod: number, min = 0) => min + (parseInt(crypto.createHash("sha256").update(seed).digest("hex").slice(0, 8), 16) % mod);
 
 export function sandboxed(real: SocialProvider): SocialProvider {
@@ -50,13 +57,23 @@ export function sandboxed(real: SocialProvider): SocialProvider {
       ];
     },
     publish: canPublish
-      ? async (_account, input) => {
+      ? async (account, input, ctx) => {
           if (!input.caption && !input.title) throw new Error("Sandbox: a post needs a caption or a title.");
           // Render the image as the real publishers do, so a broken render fails here too.
           const png = await input.image();
           if (png.length < 100) throw new Error("Sandbox: the rendered image is empty.");
+          ctx?.finalSend(); // like the real publishers: everything before this can't have published
           const id = `sandbox-post-${crypto.randomBytes(8).toString("hex")}`;
+          const list = published.get(account.id) ?? [];
+          list.push({ externalId: id, caption: input.caption, at: Date.now() });
+          published.set(account.id, list.slice(-200));
           return { externalId: id };
+        }
+      : undefined,
+    findRecentPost: canPublish
+      ? async (account, { caption, since }) => {
+          const hit = (published.get(account.id) ?? []).find((p) => p.at >= since.getTime() && p.caption.trim() === caption.trim());
+          return hit ? { externalId: hit.externalId } : null;
         }
       : undefined,
     postMetrics: real.postMetrics

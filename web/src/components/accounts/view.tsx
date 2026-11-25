@@ -9,7 +9,7 @@ import { roleAtLeast, type Role } from "@/lib/roles";
 import type { Capabilities, Capability } from "@/server/social/types";
 
 type Provider = { id: string; label: string; configured: boolean; capabilities: Capabilities; envKeys: string[] };
-type Account = { id: string; platform: string; name: string; handle: string | null; avatarUrl: string | null; status: string; expiresAt: Date | null; createdAt: Date; boards: { id: string; name: string }[] | null; boardId: string | null };
+type Account = { id: string; platform: string; name: string; handle: string | null; avatarUrl: string | null; status: string; needsReconnect: boolean; expiresAt: Date | null; createdAt: Date; boards: { id: string; name: string }[] | null; boardId: string | null };
 
 const CAP_LABELS: [keyof Omit<Capabilities, "notes">, string][] = [
   ["publishImage", "Publish images"],
@@ -111,7 +111,11 @@ export function AccountsView({ brandId, role, providers, accounts, publicUrl, ap
                             </Select>
                           ) : null}
                         </div>
-                        <Badge tone={a.status === "active" ? "success" : "danger"} className="capitalize">{a.status}</Badge>
+                        {a.needsReconnect ? (
+                          <Badge tone="danger" title="The platform no longer accepts BrandPilot's access (expired or revoked). Connect the account again; scheduled posts to it wait until you do.">Reconnect</Badge>
+                        ) : (
+                          <Badge tone={a.status === "active" ? "success" : "danger"} className="capitalize">{a.status}</Badge>
+                        )}
                         {isAdmin ? (
                           <Button size="icon" variant="ghost" loading={busy(a.id)} onClick={() => confirm(`Disconnect ${a.name}?`) && run(() => disconnectAccount(brandId, a.id), { key: a.id, success: "Disconnected" })} aria-label="Disconnect">
                             <Unplug />

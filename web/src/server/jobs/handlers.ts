@@ -2,6 +2,7 @@ import "server-only";
 import { and, eq, gte } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
 import { markPublishInterrupted, publishPost, syncMetrics } from "../social/service";
+import { isUnsettled, latestAttempt, reconcilePost } from "../social/publish-ledger";
 import { runDueJobs, enqueue, type InterruptedHook } from "./queue";
 import { log } from "../log";
 
@@ -23,9 +24,31 @@ export const interruptedHooks: Record<string, InterruptedHook> = {
   // account" message instead. If it hadn't (the worker died before starting), nothing was sent,
   // so the job runs again; publishPost's atomic claim still stops a post that already went out.
   async publish_post(payload) {
-    const post = await markPublishInterrupted(String(payload.postId));
-    log.warn("jobs.publish_interrupted", { postId: String(payload.postId), flaggedForCheck: Boolean(post) });
-    return Boolean(post);
+    const postId = String(payload.postId);
+    const post = await markPublishInterrupted(postId);
+    if (!post) {
+      log.warn("jobs.publish_interrupted", { postId, flaggedForCheck: false });
+      return false;
+    }
+    // Publish ledger (PR 4.4a): check the platform instead of leaving it to a person where possible.
+    const last = await latestAttempt(postId);
+    // No ledger rows at all: a publish from before the ledger existed (or one that never recorded
+    // its attempt) can't be told apart, so it stays flagged for a person to check the account.
+    if (!last) {
+      log.warn("jobs.publish_interrupted", { postId, flaggedForCheck: true, ledger: false });
+      return true;
+    }
+    if (!isUnsettled(last)) {
+      // Earlier attempts are all settled, and this one was interrupted after the claim but before
+      // its attempt was recorded (attempts are recorded before anything is sent): nothing was sent.
+      const db = await getDb();
+      await db.update(schema.posts).set({ publishError: "The publish was interrupted before anything was sent. You can publish it again." }).where(eq(schema.posts.id, postId));
+      log.warn("jobs.publish_interrupted", { postId, flaggedForCheck: false, sent: false });
+      return true;
+    }
+    const check = await reconcilePost(postId);
+    log.warn("jobs.publish_interrupted", { postId, flaggedForCheck: check.state !== "published" && check.state !== "not_published", check: check.state });
+    return check.state === "published" ? "resolved" : true;
   },
   // sync_metrics only reads from platforms and overwrites snapshots: safe to simply run again.
 };

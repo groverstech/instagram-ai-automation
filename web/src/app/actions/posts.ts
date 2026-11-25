@@ -14,6 +14,8 @@ import { approvePost, publishPost, syncMetrics } from "@/server/social/service";
 import { enqueue, cancelJobs } from "@/server/jobs/queue";
 import { remember } from "@/server/memory";
 import { provider } from "@/server/social/registry";
+import { reconcilePost, settleManually } from "@/server/social/publish-ledger";
+import { UserFacingError } from "@/server/jobs/engine";
 
 async function ownPost(brandId: string, postId: string) {
   const db = await getDb();
@@ -177,6 +179,35 @@ export async function deletePost(brandId: string, postId: string) {
     await cancelJobs("publish_post", (j) => j.postId === postId);
     const db = await getDb();
     await db.delete(schema.posts).where(eq(schema.posts.id, postId));
+    refresh();
+  });
+}
+
+/**
+ * Publish ledger (PR 4.4a): check the platform for a post whose last attempt may have gone out, so
+ * it's never published twice. Admins, like publishing itself.
+ */
+export async function checkPublishAction(brandId: string, postId: string) {
+  return safe(async () => {
+    await requireBrand(brandId, "admin");
+    await ownPost(brandId, postId);
+    const r = await reconcilePost(postId);
+    refresh();
+    if (r.state === "error") throw new UserFacingError(r.error);
+    if (r.state === "too_soon") throw new UserFacingError(`The platform may still be processing it. Check again in ${Math.ceil(r.retryAfterSec / 60)} minute(s).`);
+    if (r.state === "manual") throw new UserFacingError("This platform can't be checked automatically. Look on the account, then mark the post below.");
+    return r.state === "published" ? "It was published: BrandPilot found it on the platform." : r.state === "not_published" ? "It isn't on the platform. You can publish it again." : "Nothing to check.";
+  });
+}
+
+/** A person settles a post's unknown outcome after looking on the platform. Audited. */
+export async function markPublishOutcomeAction(brandId: string, postId: string, wentOut: boolean) {
+  return safe(async () => {
+    const { session, brand } = await requireBrand(brandId, "admin");
+    await ownPost(brandId, postId);
+    const done = await settleManually(postId, wentOut, session.user.name || session.user.email);
+    if (!done) throw new UserFacingError("There's nothing to settle for this post.");
+    await audit({ action: "post.publish_outcome_marked", workspaceId: brand.workspaceId, brandId, actorUserId: session.user.id, targetType: "post", targetId: postId, details: { wentOut } });
     refresh();
   });
 }
