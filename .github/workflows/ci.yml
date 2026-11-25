@@ -16,7 +16,7 @@ jobs:
   web:
     name: Typecheck, lint, test, build
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: web
@@ -59,6 +59,18 @@ jobs:
 
       - name: Client bundle secret check
         run: npm run check:secrets
+
+      # The whole customer lifecycle in one browser journey (launch-readiness Q1): sign-up → brand →
+      # strategy → calendar → content and visual → approve → schedule → publish through the cron
+      # scheduler → metrics → analytics. Social platforms are simulated (SOCIAL_SANDBOX) and AI is
+      # in demo mode: this proves the app's own path end to end, not any real integration.
+      - name: Install Playwright (Chromium)
+        run: npm install -g playwright@1.63.0 && npx -y playwright@1.63.0 install --with-deps chromium
+
+      - name: Lifecycle E2E (sandbox platform, demo AI)
+        env:
+          E2E_ADMIN_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: NODE_PATH="$(npm root -g)" npm run e2e:lifecycle
 
   container:
     name: Container image (build and role smoke test)

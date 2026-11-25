@@ -140,8 +140,13 @@ marked **pending**.
   - A crash can at worst leave a post *maybe* published, flagged for a human, never published twice
     by the system.
   - AI tasks keep their existing durable engine (claims, heartbeats, idempotent steps, recovery).
-- **Future phases:** the publish-attempt ledger with platform reconciliation (PR 4.4) replaces the
-  human check with an automatic read-back where the platform API allows it.
+- **Update (PR 4.4a):** the publish-attempt ledger (`publish_attempts`) records every attempt before
+  anything is sent. An interrupted or unanswered attempt is settled by reading the platform
+  (`findRecentPost`, Instagram and Facebook) instead of by a person: found means published, not found
+  means safe to publish again. A post with an unsettled attempt can't be published again until then.
+  Platforms without that read (LinkedIn, Pinterest and others) are settled by a person ("It went
+  out" / "It didn't go out", audited). Posts interrupted with no ledger rows stay flagged for a
+  person.
 
 ## ADR-009: AI provider layer with named routes and a per-attempt usage ledger (PR 4.1)
 

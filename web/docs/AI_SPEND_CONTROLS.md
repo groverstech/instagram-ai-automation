@@ -26,6 +26,8 @@ that would be exceeded refuses the request (recorded as `blocked` with the limit
 Each is a `(scope, period, amount, action)` rule:
 
 ### 2.1 Platform-wide emergency protection (first, always on in production)
+> **Status (F12):** the kill switch and the tripwire are built (`src/server/ai/controls.ts`, `npm run ai:controls`, runbook in DEPLOYMENT.md §9). Both are checked in `openAttempt()`'s transaction before the usage row is written. Still to come: the rolling-window global ceiling, and accounting for Voyage embeddings, which don't go through `openAttempt()`.
+
 - **Global hard ceiling** per period (e.g. per day and per month) far above normal usage, from the
   existing `AI_SPEND_CAP_*` mechanism generalised to rolling windows.
 - **Kill switch**: a row in an `ai_controls` table (and an env override) that stops all paid
@@ -53,6 +55,12 @@ Each is a `(scope, period, amount, action)` rule:
 - Optionally per route kind (e.g. a brand may use text but not image generation).
 
 ### 2.4 Subscription-based AI credits (PRs 4.5–4.6)
+> **Status:**
+> - PR 4.5 built the shadow-mode part: plans as configuration, credits from the usage ledger, organisation and brand caps, and alerts.
+> - PR 4.6 adds enforcement behind `CREDITS_MODE=enforce`, **off by default**. It is checked in `openAttempt()` under the ledger lock, using the ledger's own reserve, settle and release, plus grants and reconciliation.
+> - Credits are derived from the USD ledger rather than a separate `credit_ledger`.
+> - See `docs/CREDITS.md`.
+
 - Credits are the customer-facing unit; dollars stay internal. A `credit_ledger` (append-only:
   grants per billing period, purchases, refunds, expiries, consumption) per organisation.
 - **Reserve, then settle**, exactly like the spend ledger: `openAttempt()` reserves the attempt's
@@ -98,6 +106,23 @@ Enforcement that keeps this true:
 - The provider test suites run with the network guard installed: a provider request without a
   pending ledger row fails them.
 - Staging and paid commands install the network guard at runtime.
+
+### Voyage embeddings (review L3)
+
+**Voyage calls aren't metered by the AI ledger:** no spending cap, tripwire, credits or usage rows.
+
+**So BrandPilot calls Voyage only when `VOYAGE_API_KEY` is set and all of these hold:**
+- no hard spending cap (`AI_SPEND_CAP_USD`, `AI_SPEND_CAP_REQUIRED`);
+- no tripwire (`AI_TRIPWIRE_USD`);
+- credits aren't enforced;
+- AI isn't stopped (`AI_STOP` or the kill switch's `all` scope);
+- in staging or production, the owner has set `VOYAGE_UNMETERED_OK=true` to accept unmetered Voyage spend.
+
+**Otherwise:**
+- The local embedder is used: nothing is sent, and memory keeps working with weaker recall.
+- A key set under those conditions is a configuration error at start-up.
+
+For the beta, keep `VOYAGE_API_KEY` unset.
 
 ### Open items
 1. **Voyage in production**: route it through `execute()` as an `embedding` route kind with a

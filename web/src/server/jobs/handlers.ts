@@ -2,11 +2,20 @@ import "server-only";
 import { and, eq, gte } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
 import { markPublishInterrupted, publishPost, syncMetrics } from "../social/service";
+import { isUnsettled, latestAttempt, reconcilePost } from "../social/publish-ledger";
 import { runDueJobs, enqueue, type InterruptedHook } from "./queue";
 import { log } from "../log";
 
 export const handlers = {
   async publish_post(payload: Record<string, unknown>) {
+    // A job left over from an earlier schedule (the post was moved later, review M1) doesn't
+    // publish early: the post's own time decides. "Publish now" doesn't go through here.
+    const db = await getDb();
+    const [p] = await db.select({ status: schema.posts.status, scheduledAt: schema.posts.scheduledAt }).from(schema.posts).where(eq(schema.posts.id, String(payload.postId)));
+    if (p?.status === "scheduled" && p.scheduledAt && p.scheduledAt.getTime() > Date.now() + 60_000) {
+      log.info("jobs.publish_stale_skipped", { postId: String(payload.postId), scheduledAt: p.scheduledAt.toISOString() });
+      return { ok: false as const, skipped: "rescheduled" as const };
+    }
     const res = await publishPost(String(payload.postId));
     // A recorded platform failure is a final state for this attempt; don't retry blindly.
     return res;
@@ -23,14 +32,37 @@ export const interruptedHooks: Record<string, InterruptedHook> = {
   // account" message instead. If it hadn't (the worker died before starting), nothing was sent,
   // so the job runs again; publishPost's atomic claim still stops a post that already went out.
   async publish_post(payload) {
-    const post = await markPublishInterrupted(String(payload.postId));
-    log.warn("jobs.publish_interrupted", { postId: String(payload.postId), flaggedForCheck: Boolean(post) });
-    return Boolean(post);
+    const postId = String(payload.postId);
+    const post = await markPublishInterrupted(postId);
+    if (!post) {
+      log.warn("jobs.publish_interrupted", { postId, flaggedForCheck: false });
+      return false;
+    }
+    // Publish ledger (PR 4.4a): check the platform instead of leaving it to a person where possible.
+    const last = await latestAttempt(postId);
+    // No ledger rows at all: a publish from before the ledger existed (or one that never recorded
+    // its attempt) can't be told apart, so it stays flagged for a person to check the account.
+    if (!last) {
+      log.warn("jobs.publish_interrupted", { postId, flaggedForCheck: true, ledger: false });
+      return true;
+    }
+    if (!isUnsettled(last)) {
+      // Earlier attempts are all settled, and this one was interrupted after the claim but before
+      // its attempt was recorded (attempts are recorded before anything is sent): nothing was sent.
+      const db = await getDb();
+      await db.update(schema.posts).set({ publishError: "The publish was interrupted before anything was sent. You can publish it again." }).where(eq(schema.posts.id, postId));
+      log.warn("jobs.publish_interrupted", { postId, flaggedForCheck: false, sent: false });
+      return true;
+    }
+    const check = await reconcilePost(postId);
+    log.warn("jobs.publish_interrupted", { postId, flaggedForCheck: check.state !== "published" && check.state !== "not_published", check: check.state });
+    return check.state === "published" ? "resolved" : true;
   },
   // sync_metrics only reads from platforms and overwrites snapshots: safe to simply run again.
 };
 
 let lastSyncPlan = 0;
+let lastRetention = 0;
 
 export type TickScope = { jobs?: boolean; ai?: boolean };
 
@@ -50,6 +82,16 @@ export async function tick(scope: TickScope = { jobs: true, ai: true }) {
       .where(and(eq(schema.jobs.type, "sync_metrics"), gte(schema.jobs.createdAt, new Date(Date.now() - 6 * 3600 * 1000))));
     const planned = new Set(recent.map((r) => r.payload.brandId));
     for (const b of brands) if (!planned.has(b.brandId)) await enqueue("sync_metrics", { brandId: b.brandId });
+  }
+  // Audit-log retention, once a day per process (idempotent, so several instances are harmless).
+  if (scope.jobs && Date.now() - lastRetention > 24 * 3600 * 1000) {
+    lastRetention = Date.now();
+    await import("../audit").then((m) => m.purgeExpiredAuditEvents()).catch((e) => log.error("audit.retention_failed", { error: e instanceof Error ? e.message : String(e) }));
+  }
+  // Autonomy (docs/AUTONOMY.md): the AI's own complete drafts are scheduled within the brand's
+  // rules or sent to a person. Does nothing unless AUTONOMOUS_PUBLISHING=on.
+  if (scope.jobs) {
+    await import("../autonomy/service").then((m) => m.autonomyTick()).catch((e) => log.error("autonomy.tick_failed", { error: e instanceof Error ? e.message : String(e) }));
   }
   if (scope.ai) {
     await import("./all").then((m) => m.recoverDueTasks()).catch((e) => log.error("jobs.ai_recovery_failed", { error: e instanceof Error ? e.message : String(e) }));

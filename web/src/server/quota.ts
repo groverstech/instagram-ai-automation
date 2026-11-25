@@ -2,7 +2,7 @@ import "server-only";
 import { and, count, eq, gte, inArray } from "drizzle-orm";
 import { startOfMonth } from "date-fns";
 import { getDb, schema } from "./db/client";
-import { PLANS, type PlanId } from "@/lib/plans";
+import { evaluateCreditAlerts, getPlan } from "./credits";
 
 export class QuotaError extends Error {}
 
@@ -44,11 +44,16 @@ export function monthlyCostLimitUsd(plan: string, env: Record<string, string | u
   return null;
 }
 
+/**
+ * The enforced AI limit: the plan's monthly AI runs (and the optional USD limit below). Credits run
+ * in shadow mode alongside (credits.ts): their alerts are evaluated here, but never refuse.
+ */
 export async function assertAiQuota(brandId: string) {
   const ws = await workspaceOf(brandId);
-  const plan = PLANS[ws.plan as PlanId] ?? PLANS.starter;
+  const plan = await getPlan(ws.plan);
+  await evaluateCreditAlerts(ws.id);
   const u = await usage(ws.id);
-  if (u.aiRuns >= plan.aiRunsPerMonth) throw new QuotaError(`Your ${plan.label} plan includes ${plan.aiRunsPerMonth} AI runs per month. Upgrade in Settings to keep going.`);
+  if (u.aiRuns >= plan.limits.aiRunsPerMonth) throw new QuotaError(`Your ${plan.name} plan includes ${plan.limits.aiRunsPerMonth} AI runs per month. Upgrade in Settings to keep going.`);
   const limit = monthlyCostLimitUsd(ws.plan);
   if (limit !== null) {
     const { monthlyCostUsd } = await import("./ai/usage");
@@ -61,7 +66,7 @@ export async function assertAiQuota(brandId: string) {
 export async function assertCanAdd(workspaceId: string, what: "brands" | "seats" | "socialAccounts") {
   const db = await getDb();
   const [ws] = await db.select().from(schema.workspaces).where(eq(schema.workspaces.id, workspaceId));
-  const plan = PLANS[ws.plan as PlanId] ?? PLANS.starter;
+  const plan = await getPlan(ws.plan);
   const u = await usage(workspaceId);
-  if (u[what] >= plan[what]) throw new QuotaError(`Your ${plan.label} plan allows ${plan[what]} ${what === "socialAccounts" ? "social accounts" : what}. Upgrade in Settings.`);
+  if (u[what] >= plan.limits[what]) throw new QuotaError(`Your ${plan.name} plan allows ${plan.limits[what]} ${what === "socialAccounts" ? "social accounts" : what}. Upgrade in Settings.`);
 }

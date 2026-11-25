@@ -3,6 +3,10 @@ import { PlatformError, type SocialProvider, type TokenSet, type DiscoveredAccou
 
 const V = process.env.META_GRAPH_VERSION ?? "v23.0";
 const G = `https://graph.facebook.com/${V}`;
+
+/** Captions compared as published: platforms may trim or normalise line endings and spaces. */
+const norm = (t: string | undefined | null) => (t ?? "").replace(/\r\n?/g, "\n").replace(/[ \t]+/g, " ").trim();
+export const sameText = (a: string | undefined | null, b: string) => norm(a) !== "" && norm(a) === norm(b);
 const SCOPES = [
   "pages_show_list",
   "pages_read_engagement",
@@ -30,7 +34,10 @@ async function exchangeCode({ code, redirectUri }: { code: string; redirectUri: 
   const long = await jsonFetch<{ access_token: string; expires_in?: number }>(
     `${G}/oauth/access_token?${form({ grant_type: "fb_exchange_token", client_id: process.env.META_APP_ID!, client_secret: process.env.META_APP_SECRET!, fb_exchange_token: short.access_token })}`,
   );
-  return { accessToken: long.access_token, expiresAt: long.expires_in ? new Date(Date.now() + long.expires_in * 1000) : undefined, scopes: SCOPES };
+  // The app-scoped ID of the person who signed in: Meta's data-deletion and deauthorise callbacks
+  // identify people by it, so every account connected through this login records it.
+  const me = await jsonFetch<{ id: string }>(`${G}/me?${form({ fields: "id", access_token: long.access_token })}`);
+  return { accessToken: long.access_token, expiresAt: long.expires_in ? new Date(Date.now() + long.expires_in * 1000) : undefined, scopes: SCOPES, platformUserId: me.id };
 }
 
 type Page = {
@@ -55,12 +62,12 @@ export const facebook: SocialProvider = {
   envKeys: ["META_APP_ID", "META_APP_SECRET"],
   capabilities: {
     publishImage: "supported",
-    publishCarousel: "supported",
-    publishVideo: "supported",
-    scheduleNative: "supported",
+    publishCarousel: "not_built",
+    publishVideo: "not_built",
+    scheduleNative: "unsupported",
     postAnalytics: "supported",
     accountAnalytics: "supported",
-    notes: "Publishes to Facebook Pages you manage. Personal profiles can't be posted to via the API.",
+    notes: "Publishes single-image posts to Facebook Pages you manage; BrandPilot's scheduler times them. Multi-photo and video posts aren't in BrandPilot yet. Personal profiles can't be posted to via the API.",
   },
   configured,
   authorizeUrl,
@@ -72,17 +79,25 @@ export const facebook: SocialProvider = {
         externalId: p.id,
         name: p.name,
         avatarUrl: p.picture?.data?.url,
-        token: { accessToken: p.access_token, scopes: token.scopes },
+        token: { accessToken: p.access_token, scopes: token.scopes, platformUserId: token.platformUserId },
       }),
     );
   },
-  async publish(account, input) {
+  async publish(account, input, ctx) {
+    await ctx?.finalSend(); // one request: it either creates the post or it doesn't
     const r = await jsonFetch<{ id: string; post_id?: string }>(`${G}/${account.externalId}/photos`, {
       method: "POST",
       body: form({ url: input.imageUrl, message: input.caption, access_token: account.accessToken }),
     });
     const postId = r.post_id ?? r.id;
     return { externalId: postId, url: `https://www.facebook.com/${postId}` };
+  },
+  async findRecentPost(account, { caption, since }) {
+    const r = await jsonFetch<{ data?: { id: string; message?: string; created_time?: string; permalink_url?: string }[] }>(
+      `${G}/${account.externalId}/published_posts?${form({ fields: "id,message,created_time,permalink_url", since: String(Math.floor(since.getTime() / 1000)), limit: "50", access_token: account.accessToken })}`,
+    );
+    const hit = (r.data ?? []).find((p) => sameText(p.message, caption) && (!p.created_time || new Date(p.created_time) >= since));
+    return hit ? { externalId: hit.id, url: hit.permalink_url ?? `https://www.facebook.com/${hit.id}` } : null;
   },
   async postMetrics(account, externalId) {
     const r = await jsonFetch<{ reactions?: { summary?: { total_count?: number } }; comments?: { summary?: { total_count?: number } }; shares?: { count?: number } }>(
@@ -116,12 +131,12 @@ export const instagram: SocialProvider = {
   envKeys: ["META_APP_ID", "META_APP_SECRET"],
   capabilities: {
     publishImage: "supported",
-    publishCarousel: "supported",
-    publishVideo: "supported",
+    publishCarousel: "not_built",
+    publishVideo: "not_built",
     scheduleNative: "unsupported",
     postAnalytics: "supported",
     accountAnalytics: "supported",
-    notes: "Requires an Instagram Business or Creator account linked to a Facebook Page. Stories need the Reels/Stories publishing permission. Scheduling is handled by BrandPilot's scheduler.",
+    notes: "Publishes single-image posts to an Instagram Business or Creator account linked to a Facebook Page; BrandPilot's scheduler times them. Carousels, Reels and Stories aren't in BrandPilot yet.",
   },
   configured,
   authorizeUrl,
@@ -136,16 +151,22 @@ export const instagram: SocialProvider = {
           name: p.instagram_business_account!.name ?? p.instagram_business_account!.username ?? p.name,
           handle: p.instagram_business_account!.username,
           avatarUrl: p.instagram_business_account!.profile_picture_url,
-          token: { accessToken: p.access_token, scopes: token.scopes },
+          token: { accessToken: p.access_token, scopes: token.scopes, platformUserId: token.platformUserId },
           meta: { pageId: p.id },
         }),
       );
   },
-  async publish(account, input) {
-    const container = await jsonFetch<{ id: string }>(`${G}/${account.externalId}/media`, {
-      method: "POST",
-      body: form({ image_url: input.imageUrl, caption: input.caption, access_token: account.accessToken }),
-    });
+  async publish(account, input, ctx) {
+    // A container from an earlier attempt of this post is reused: it can't have been published
+    // (reconciliation checked), and creating another would leave two.
+    const resumed = typeof ctx?.resume.creationId === "string" ? (ctx.resume.creationId as string) : null;
+    const container = resumed
+      ? { id: resumed }
+      : await jsonFetch<{ id: string }>(`${G}/${account.externalId}/media`, {
+          method: "POST",
+          body: form({ image_url: input.imageUrl, caption: input.caption, access_token: account.accessToken }),
+        });
+    if (!resumed) await ctx?.progress({ creationId: container.id });
     // Wait for Instagram to fetch and process the image.
     for (let i = 0; i < 10; i++) {
       const s = await jsonFetch<{ status_code?: string; status?: string }>(`${G}/${container.id}?${form({ fields: "status_code,status", access_token: account.accessToken })}`);
@@ -153,12 +174,20 @@ export const instagram: SocialProvider = {
       if (s.status_code === "ERROR" || s.status_code === "EXPIRED") throw new PlatformError(`Instagram couldn't process the image: ${s.status ?? s.status_code}`);
       await new Promise((r) => setTimeout(r, 2000));
     }
+    await ctx?.finalSend();
     const pub = await jsonFetch<{ id: string }>(`${G}/${account.externalId}/media_publish`, {
       method: "POST",
       body: form({ creation_id: container.id, access_token: account.accessToken }),
     });
     const info = await jsonFetch<{ permalink?: string }>(`${G}/${pub.id}?${form({ fields: "permalink", access_token: account.accessToken })}`).catch(() => ({ permalink: undefined }));
     return { externalId: pub.id, url: info.permalink };
+  },
+  async findRecentPost(account, { caption, since }) {
+    const r = await jsonFetch<{ data?: { id: string; caption?: string; timestamp?: string; permalink?: string }[] }>(
+      `${G}/${account.externalId}/media?${form({ fields: "id,caption,timestamp,permalink", limit: "50", access_token: account.accessToken })}`,
+    );
+    const hit = (r.data ?? []).find((m) => sameText(m.caption, caption) && (!m.timestamp || new Date(m.timestamp) >= since));
+    return hit ? { externalId: hit.id, url: hit.permalink } : null;
   },
   async postMetrics(account, externalId) {
     const base = await jsonFetch<{ like_count?: number; comments_count?: number }>(`${G}/${externalId}?${form({ fields: "like_count,comments_count", access_token: account.accessToken })}`);

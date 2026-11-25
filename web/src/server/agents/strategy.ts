@@ -1,4 +1,5 @@
 import "server-only";
+import { assertAiMayDraft } from "../autonomy/service";
 import { addDays, format as fmt, parseISO } from "date-fns";
 import { getDb, schema } from "../db/client";
 import { llm } from "../ai/llm";
@@ -43,6 +44,8 @@ export async function planCalendar(
   brand: Brand,
   opts: { start: Date; days: number; platforms?: string[]; postsPerWeek?: number; note?: string },
 ) {
+  // Advisor level: the AI suggests, people create posts (docs/AUTONOMY.md). Checked before any AI call.
+  await assertAiMayDraft(brand.id, "plan the content calendar");
   const strategy = await latestStrategy(brand.id);
   const ctx = await buildContext(brand, `content calendar ${opts.note ?? ""}`);
   const platforms = opts.platforms?.length ? opts.platforms : brandPlatforms(brand);
@@ -83,6 +86,7 @@ export async function insertPlannedPosts(
         title: p.title,
         scheduledAt: toDate(p.date, p.time),
         status: "draft" as const,
+        origin: "ai",
         copy: { brief: p.brief, runId: meta.runId },
         rationale: p.rationale,
       })),

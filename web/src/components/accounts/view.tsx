@@ -1,6 +1,6 @@
 "use client";
 import { format } from "date-fns";
-import { CheckCircle2, CircleSlash, Clock, Link2, Unplug } from "lucide-react";
+import { CheckCircle2, CircleDashed, CircleSlash, Clock, Link2, Unplug } from "lucide-react";
 import { disconnectAccount, setAccountBoard } from "@/app/actions/posts";
 import { Badge, Button, Card, CardBody, Notice, PageHeader, Select } from "@/components/ui";
 import { useRun } from "@/components/hooks";
@@ -9,7 +9,7 @@ import { roleAtLeast, type Role } from "@/lib/roles";
 import type { Capabilities, Capability } from "@/server/social/types";
 
 type Provider = { id: string; label: string; configured: boolean; capabilities: Capabilities; envKeys: string[] };
-type Account = { id: string; platform: string; name: string; handle: string | null; avatarUrl: string | null; status: string; expiresAt: Date | null; createdAt: Date; boards: { id: string; name: string }[] | null; boardId: string | null };
+type Account = { id: string; platform: string; name: string; handle: string | null; avatarUrl: string | null; status: string; needsReconnect: boolean; expiresAt: Date | null; createdAt: Date; boards: { id: string; name: string }[] | null; boardId: string | null };
 
 const CAP_LABELS: [keyof Omit<Capabilities, "notes">, string][] = [
   ["publishImage", "Publish images"],
@@ -19,10 +19,19 @@ const CAP_LABELS: [keyof Omit<Capabilities, "notes">, string][] = [
   ["accountAnalytics", "Account analytics"],
 ];
 
+const CAP_STATE: Record<Capability, string> = {
+  supported: "Available",
+  requires_app_review: "Needs the platform's app review",
+  not_built: "Not in BrandPilot yet",
+  unsupported: "Not offered by the platform",
+};
+
 function Cap({ v }: { v: Capability }) {
-  if (v === "supported") return <CheckCircle2 className="size-3.5 text-success" />;
-  if (v === "requires_app_review") return <Clock className="size-3.5 text-warn" />;
-  return <CircleSlash className="size-3.5 text-faint" />;
+  const label = CAP_STATE[v];
+  if (v === "supported") return <CheckCircle2 className="size-3.5 text-success" aria-label={label} role="img" />;
+  if (v === "requires_app_review") return <Clock className="size-3.5 text-warn" aria-label={label} role="img" />;
+  if (v === "not_built") return <CircleDashed className="size-3.5 text-faint" aria-label={label} role="img" />;
+  return <CircleSlash className="size-3.5 text-faint" aria-label={label} role="img" />;
 }
 
 export function AccountsView({ brandId, role, providers, accounts, publicUrl, appUrl, connected, error }: { brandId: string; role: Role; providers: Provider[]; accounts: Account[]; publicUrl: boolean; appUrl: string; connected?: string; error?: string }) {
@@ -31,6 +40,13 @@ export function AccountsView({ brandId, role, providers, accounts, publicUrl, ap
   return (
     <div>
       <PageHeader eyebrow="Social Accounts" title="Connected accounts" description="Connect with each platform's official OAuth. BrandPilot only publishes where the platform's API allows it, and records the platform's real response." />
+      <p className="-mt-2 mb-5 flex flex-wrap gap-x-4 gap-y-1 text-[12px] text-muted" aria-label="What the icons mean">
+        {(Object.keys(CAP_STATE) as Capability[]).map((v) => (
+          <span key={v} className="flex items-center gap-1.5">
+            <Cap v={v} /> {CAP_STATE[v]}
+          </span>
+        ))}
+      </p>
 
       {connected ? <Notice tone="success" className="mb-4">Connected {connected} account{connected === "1" ? "" : "s"}.</Notice> : null}
       {error ? <Notice tone="danger" className="mb-4">{error}</Notice> : null}
@@ -65,7 +81,7 @@ export function AccountsView({ brandId, role, providers, accounts, publicUrl, ap
 
                 <div className="flex flex-wrap gap-x-4 gap-y-1.5">
                   {CAP_LABELS.map(([k, l]) => (
-                    <span key={k} className="flex items-center gap-1.5 text-[12px] text-ink-2">
+                    <span key={k} className="flex items-center gap-1.5 text-[12px] text-ink-2" title={CAP_STATE[p.capabilities[k]]}>
                       <Cap v={p.capabilities[k]} /> {l}
                     </span>
                   ))}
@@ -95,7 +111,11 @@ export function AccountsView({ brandId, role, providers, accounts, publicUrl, ap
                             </Select>
                           ) : null}
                         </div>
-                        <Badge tone={a.status === "active" ? "success" : "danger"} className="capitalize">{a.status}</Badge>
+                        {a.needsReconnect ? (
+                          <Badge tone="danger" title="The platform no longer accepts BrandPilot's access (expired or revoked). Connect the account again; scheduled posts to it wait until you do.">Reconnect</Badge>
+                        ) : (
+                          <Badge tone={a.status === "active" ? "success" : "danger"} className="capitalize">{a.status}</Badge>
+                        )}
                         {isAdmin ? (
                           <Button size="icon" variant="ghost" loading={busy(a.id)} onClick={() => confirm(`Disconnect ${a.name}?`) && run(() => disconnectAccount(brandId, a.id), { key: a.id, success: "Disconnected" })} aria-label="Disconnect">
                             <Unplug />
@@ -110,11 +130,6 @@ export function AccountsView({ brandId, role, providers, accounts, publicUrl, ap
           );
         })}
       </div>
-      <p className="mt-6 flex flex-wrap items-center gap-4 text-[12px] text-muted">
-        <span className="flex items-center gap-1.5"><CheckCircle2 className="size-3.5 text-success" /> Supported by the official API</span>
-        <span className="flex items-center gap-1.5"><Clock className="size-3.5 text-warn" /> Needs platform app review / elevated access</span>
-        <span className="flex items-center gap-1.5"><CircleSlash className="size-3.5 text-faint" /> Not offered by the API</span>
-      </p>
     </div>
   );
 }

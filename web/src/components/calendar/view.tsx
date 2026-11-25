@@ -1,11 +1,14 @@
 "use client";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { addDays, addMonths, addWeeks, endOfMonth, endOfWeek, format, isSameDay, isSameMonth, isToday, parse, startOfMonth, startOfWeek } from "date-fns";
-import { AlertTriangle, CalendarClock, Check, ChevronLeft, ChevronRight, ExternalLink, Palette, PenLine, Send, Sparkles, Trash2, Undo2, X } from "lucide-react";
+import { AlertTriangle, CalendarClock, Check, ChevronLeft, ChevronRight, ExternalLink, Palette, PenLine, SearchCheck, Send, Sparkles, Trash2, Undo2, X } from "lucide-react";
 import {
   approvePostAction,
+  checkPublishAction,
   deletePost,
+  markPublishOutcomeAction,
+  publishHistoryAction,
   movePost,
   publishNow,
   rejectPost,
@@ -16,12 +19,15 @@ import {
 } from "@/app/actions/posts";
 import { producePostAction, writeCopyAction } from "@/app/actions/ai";
 import { Badge, Button, Field, Input, Notice, PageHeader, Segmented, Select, Textarea } from "@/components/ui";
+import { PauseControl } from "./pause-control";
 import { CreativeThumb, PlatformTag, Rationale, StatusBadge } from "@/components/bits";
 import { PlanCalendarModal } from "@/components/calendar/plan-modal";
 import { useRun } from "@/components/hooks";
 import { FORMATS, OBJECTIVES, PLATFORMS, STYLES, objectiveLabel, platformColor } from "@/lib/domain";
 import { roleAtLeast, type Role } from "@/lib/roles";
 import { cn } from "@/lib/utils";
+
+const platformLabel = (id: string) => PLATFORMS.find((p) => p.id === id)?.label ?? id;
 
 type Post = {
   id: string;
@@ -39,6 +45,13 @@ type Post = {
   socialAccountId: string | null;
   externalUrl: string | null;
   publishError: string | null;
+  /** The last attempt may have gone out: check the platform ("auto") or ask a person ("manual"). */
+  check: "auto" | "manual" | null;
+  /** The approval hash of the version shown (review M-2): approving sends it back; null when not approvable. */
+  reviewHash: string | null;
+  /** "ai": planned by the AI; autoApprovedVersion: approved by the autonomy policy (rules version). */
+  origin: string;
+  autoApprovedVersion: number | null;
   rationale: string | null;
   brief: string;
   hooks: string[];
@@ -48,6 +61,9 @@ type Account = { id: string; platform: string; name: string; handle: string | nu
 
 export function CalendarView(props: {
   brandId: string;
+  brandName: string;
+  /** Emergency pause: publishing is stopped for this brand. */
+  publishingPaused: boolean;
   role: Role;
   month: string;
   platforms: string[];
@@ -105,11 +121,14 @@ export function CalendarView(props: {
         title={view === "month" ? format(monthDate, "MMMM yyyy") : `${format(weekStart, "d MMM")} – ${format(addDays(weekStart, 6), "d MMM yyyy")}`}
         description="Drag posts to reschedule. Drafts → approval → scheduled → published. Nothing goes live without an admin's approval."
         actions={
-          canEdit ? (
-            <Button variant="accent" onClick={() => setPlanOpen(true)}>
-              <Sparkles /> Plan with AI
-            </Button>
-          ) : null
+          <>
+            <PauseControl brandId={props.brandId} brandName={props.brandName} role={props.role} paused={props.publishingPaused} />
+            {canEdit ? (
+              <Button variant="accent" onClick={() => setPlanOpen(true)}>
+                <Sparkles /> Plan with AI
+              </Button>
+            ) : null}
+          </>
         }
       />
 
@@ -285,6 +304,30 @@ function PostPanel({ post, brandId, role, accounts, creatives, campaignName, onC
         {post.status === "failed" && post.publishError ? (
           <Notice tone="danger"><span className="flex gap-2"><AlertTriangle className="mt-0.5 size-4 shrink-0" />{post.publishError}</span></Notice>
         ) : null}
+        {isAdmin && post.status === "failed" && post.check === "auto" ? (
+          <Button className="w-full" variant="secondary" loading={busy("check")} onClick={() => run(() => checkPublishAction(brandId, post.id), { key: "check", success: "Checked" })}>
+            <SearchCheck /> Check {platformLabel(post.platform)}
+          </Button>
+        ) : null}
+        {isAdmin && post.status === "failed" && post.check === "manual" ? (
+          <div className="space-y-2">
+            <p className="text-[12px] text-muted">BrandPilot can&apos;t check {platformLabel(post.platform)} automatically. Look on the account, then tell BrandPilot what you found.</p>
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="secondary" loading={busy("went")} onClick={() => confirm("Mark this post as published? It won't be sent again.") && run(() => markPublishOutcomeAction(brandId, post.id, true), { key: "went", success: "Marked as published" })}>
+                It went out
+              </Button>
+              <Button variant="secondary" loading={busy("notwent")} onClick={() => confirm("Mark this post as not published? You can then publish it again.") && run(() => markPublishOutcomeAction(brandId, post.id, false), { key: "notwent", success: "Marked as not published" })}>
+                It didn&apos;t go out
+              </Button>
+            </div>
+          </div>
+        ) : null}
+        {post.autoApprovedVersion != null ? (
+          <Notice tone="info">Approved by this brand&apos;s autonomy rules (version {post.autoApprovedVersion}), not by a person. It&apos;s checked again just before publishing; see Settings → Autonomy.</Notice>
+        ) : post.origin === "ai" && post.status !== "published" ? (
+          <p className="text-[12px] text-muted">Planned by the AI.{post.status === "draft" || post.status === "pending_approval" ? " A person approves it before it can be scheduled." : ""}</p>
+        ) : null}
+        {post.status === "published" || post.status === "failed" || post.status === "publishing" ? <PublishHistory brandId={brandId} postId={post.id} status={post.status} /> : null}
         {post.status === "published" && post.externalUrl ? (
           <a href={post.externalUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 rounded-xl bg-success-soft px-3 py-2 text-[13px] font-medium text-success">
             View live post <ExternalLink className="size-3.5" />
@@ -394,8 +437,8 @@ function PostPanel({ post, brandId, role, accounts, creatives, campaignName, onC
                 <Send /> Submit for approval
               </Button>
             ) : null}
-            {!dirty && isAdmin && ["draft", "pending_approval"].includes(post.status) ? (
-              <Button className="w-full" variant="accent" loading={busy("approve")} onClick={() => run(() => approvePostAction(brandId, post.id), { key: "approve", success: "Approved" })}>
+            {!dirty && isAdmin && ["draft", "pending_approval"].includes(post.status) && post.reviewHash ? (
+              <Button className="w-full" variant="accent" loading={busy("approve")} onClick={() => run(() => approvePostAction(brandId, post.id, post.reviewHash!), { key: "approve", success: "Approved" })}>
                 <Check /> Approve
               </Button>
             ) : null}
@@ -407,7 +450,7 @@ function PostPanel({ post, brandId, role, accounts, creatives, campaignName, onC
                 </Button>
               </div>
             ) : null}
-            {!dirty && isAdmin && ["approved", "failed"].includes(post.status) ? (
+            {!dirty && isAdmin && ["approved", "failed"].includes(post.status) && !post.check ? (
               <div className="grid grid-cols-2 gap-2">
                 <Button variant="accent" loading={busy("sched")} onClick={() => run(() => schedulePost(brandId, post.id), { key: "sched", success: "Scheduled. It will publish at the set time." })}>
                   <CalendarClock /> Schedule
@@ -432,5 +475,43 @@ function PostPanel({ post, brandId, role, accounts, creatives, campaignName, onC
         <Rationale>{post.rationale}</Rationale>
       </div>
     </aside>
+  );
+}
+
+type HistoryRow = { attempt: number; status: string; externalId: string | null; error: string | null; startedAt: string; finishedAt: string | null };
+const attemptLabel: Record<string, string> = { sending: "Sending", succeeded: "Published", failed: "Failed", unknown: "Outcome unknown", reconciled: "Confirmed on the platform" };
+
+/** The publish ledger for one post: every attempt, its outcome and when (PR 4.4a). */
+function PublishHistory({ brandId, postId, status }: { brandId: string; postId: string; status: string }) {
+  const [rows, setRows] = useState<HistoryRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let live = true;
+    publishHistoryAction(brandId, postId).then((r) => {
+      if (!live) return;
+      if (r.ok) setRows(r.data);
+      else setError(r.error);
+    });
+    return () => {
+      live = false;
+    };
+  }, [brandId, postId, status]);
+  if (error) return <p className="text-[12px] text-muted">Publishing history isn&apos;t available right now.</p>;
+  if (!rows) return <p className="text-[12px] text-muted">Loading publishing history…</p>;
+  if (!rows.length) return null;
+  return (
+    <details className="rounded-xl border border-line px-3 py-2 text-[12px]" open={status === "failed"}>
+      <summary className="cursor-pointer font-medium text-ink">Publishing history ({rows.length})</summary>
+      <ol className="mt-2 space-y-1.5">
+        {rows.map((r) => (
+          <li key={r.attempt} className="flex flex-col">
+            <span>
+              <span className="font-medium">Attempt {r.attempt}</span> · {attemptLabel[r.status] ?? r.status} · <time dateTime={r.startedAt}>{format(new Date(r.startedAt), "d MMM, HH:mm")}</time>
+            </span>
+            {r.error ? <span className="text-muted">{r.error}</span> : null}
+          </li>
+        ))}
+      </ol>
+    </details>
   );
 }

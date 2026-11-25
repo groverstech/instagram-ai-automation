@@ -16,7 +16,15 @@
     "db:migrate": "node --conditions=react-server --import tsx src/server/db/migrate-cli.ts",
     "check:secrets": "node scripts/check-client-secrets.mjs",
     "ai:billing": "node --conditions=react-server --import tsx src/server/ai/billing-cli.ts",
-    "ai:check-anthropic": "node --conditions=react-server --import tsx src/server/ai/anthropic-check-cli.ts"
+    "ai:check-anthropic": "node --conditions=react-server --import tsx src/server/ai/anthropic-check-cli.ts",
+    "reviewer:setup": "node --conditions=react-server --import tsx src/server/reviewer-cli.ts",
+    "credits": "node --conditions=react-server --import tsx src/server/credits-cli.ts",
+    "beta:invite": "node --conditions=react-server --import tsx src/server/beta-invites-cli.ts",
+    "ai:controls": "node --conditions=react-server --import tsx src/server/ai/controls-cli.ts",
+    "secrets:rotate": "node --conditions=react-server --import tsx src/server/secrets-rotate-cli.ts",
+    "users": "node --conditions=react-server --import tsx src/server/users-cli.ts",
+    "publishing:stop": "node --conditions=react-server --import tsx src/server/emergency-stop-cli.ts",
+    "e2e:lifecycle": "bash e2e/lifecycle.sh"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",
@@ -31,6 +39,7 @@
     "motion": "^14.10.1",
     "next": "^15.5.29",
     "postgres": "^4.1.0",
+    "qrcode": "1.5.4",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "server-only": "^0.0.1",
@@ -44,6 +53,7 @@
     "@eslint/eslintrc": "^3.3.7",
     "@tailwindcss/postcss": "^4.3.5",
     "@types/node": "^26.6.6",
+    "@types/qrcode": "1.5.5",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "drizzle-kit": "^0.31.11",
@@ -53,5 +63,10 @@
     "tailwindcss": "^4.3.5",
     "typescript": "5.9",
     "vitest": "^5.1.0"
+  },
+  "overrides": {
+    "next": {
+      "postcss": "$postcss"
+    }
   }
 }

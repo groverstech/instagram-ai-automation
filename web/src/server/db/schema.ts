@@ -11,6 +11,7 @@ import {
   uniqueIndex,
   primaryKey,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 const id = () =>
   text("id")
@@ -25,6 +26,17 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   name: text("name").notNull(),
   passwordHash: text("password_hash").notNull(),
+  // Multi-factor authentication (F3, src/server/auth/mfa.ts). Secrets are encrypted at rest; recovery
+  // codes are stored only as keyed hashes.
+  mfaSecretEnc: text("mfa_secret_enc"),
+  /** Set during enrolment until the first code confirms the authenticator app. */
+  mfaPendingSecretEnc: text("mfa_pending_secret_enc"),
+  mfaEnabledAt: timestamp("mfa_enabled_at", { withTimezone: true }),
+  /** The last TOTP step accepted: a code can't be used twice. */
+  mfaLastStep: integer("mfa_last_step"),
+  mfaRecoveryHashes: jsonb("mfa_recovery_hashes").$type<string[]>().notNull().default([]),
+  /** When the user proved they receive mail at `email` (auth/verify-email.ts). */
+  emailVerifiedAt: timestamp("email_verified_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
 
@@ -35,6 +47,8 @@ export const sessions = pgTable("sessions", {
     .references(() => users.id, { onDelete: "cascade" }),
   activeBrandId: text("active_brand_id"),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  /** When the second factor was verified. While the user has MFA on and this is null, the session can only complete sign-in. */
+  mfaVerifiedAt: timestamp("mfa_verified_at", { withTimezone: true }),
   createdAt: createdAt(),
 });
 
@@ -77,9 +91,19 @@ export const workspaceMembers = pgTable(
      * brand ids. Enforced in requireBrandForUser / listAccessibleBrands.
      */
     brandIds: jsonb("brand_ids").$type<string[] | null>(),
+    /** Pending invitations (members.ts): a single-use link, stored only as a SHA-256, with an expiry. */
+    inviteTokenHash: text("invite_token_hash").unique(),
+    inviteExpiresAt: timestamp("invite_expires_at", { withTimezone: true }),
+    invitedBy: text("invited_by"),
     createdAt: createdAt(),
   },
-  (t) => [index("wm_user_idx").on(t.userId), index("wm_ws_idx").on(t.workspaceId)],
+  (t) => [
+    index("wm_user_idx").on(t.userId),
+    index("wm_ws_idx").on(t.workspaceId),
+    // One pending invitation per organisation and address (review L4): concurrent invitations
+    // can't both be created. Accepted rows have a user and don't count, nor do withdrawn ones (deleted).
+    uniqueIndex("wm_pending_invite_uq").on(t.workspaceId, t.invitedEmail).where(sql`${t.status} = 'invited' and ${t.userId} is null`),
+  ],
 );
 
 export const brands = pgTable(
@@ -107,6 +131,20 @@ export const brands = pgTable(
     colors: jsonb("colors").$type<string[]>().notNull().default([]),
     fonts: jsonb("fonts").$type<{ heading?: string; body?: string }>().notNull().default({}),
     onboardingComplete: boolean("onboarding_complete").notNull().default(false),
+    /** Emergency pause: while set, nothing is published or scheduled for this brand (publishing-pause.ts). */
+    publishingPausedAt: timestamp("publishing_paused_at", { withTimezone: true }),
+    publishingPausedBy: text("publishing_paused_by"),
+    publishingPauseReason: text("publishing_pause_reason"),
+    /**
+     * Autonomy (docs/plan/06-autonomous-publishing-security.md; src/server/autonomy): advisor,
+     * assisted (default) or autonomous. Rules are versioned; every decision records the version.
+     * Autonomous is suspended automatically (falls back to assisted) on token errors or failures.
+     */
+    autonomyLevel: text("autonomy_level").notNull().default("assisted"),
+    autonomyRules: jsonb("autonomy_rules").$type<Record<string, unknown>>().notNull().default({}),
+    autonomyRulesVersion: integer("autonomy_rules_version").notNull().default(1),
+    autonomySuspendedAt: timestamp("autonomy_suspended_at", { withTimezone: true }),
+    autonomySuspendedReason: text("autonomy_suspended_reason"),
     createdAt: createdAt(),
   },
   (t) => [index("brands_ws_idx").on(t.workspaceId)],
@@ -375,11 +413,22 @@ export const posts = pgTable(
     publishError: text("publish_error"),
     approvedBy: text("approved_by"),
     approvedAt: timestamp("approved_at", { withTimezone: true }),
+    /** "ai": created by an AI planner (eligible for autonomous approval); "human" otherwise. */
+    origin: text("origin").notNull().default("human"),
+    /** Set when the autonomy policy approved the post instead of a person: the rules version used. */
+    autoApprovedVersion: integer("auto_approved_version"),
+    /**
+     * Approval integrity (social/approval.ts): the hash of exactly what was approved. The publish
+     * claim refuses if the post, its creative or the brand's rendered identity no longer match.
+     */
+    approvedContentHash: text("approved_content_hash"),
     publishedAt: timestamp("published_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [index("posts_brand_sched_idx").on(t.brandId, t.scheduledAt)],
 );
+
+export type AccountHealth = { status?: "ok" | "needs_reconnect"; reason?: string; at?: string };
 
 export const socialAccounts = pgTable(
   "social_accounts",
@@ -398,12 +447,46 @@ export const socialAccounts = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true }),
     scopes: text("scopes"),
     status: text("status").$type<"active" | "expired" | "revoked" | "error">().notNull().default("active"),
+    /** Autonomy held below the brand's level for this account (null: follow the brand; never higher). */
+    autonomyLevel: text("autonomy_level"),
     meta: jsonb("meta").$type<Record<string, unknown>>().notNull().default({}),
     connectedBy: text("connected_by"),
+    /**
+     * The platform's ID for the person who connected the account (Meta: the app-scoped user ID).
+     * Meta's data-deletion and deauthorise callbacks identify people by it. Null for accounts
+     * connected before migration 0011 until they're reconnected.
+     */
+    platformUserId: text("platform_user_id"),
+    /** Set when the platform tells us the person removed the app (deauthorise callback). */
+    deauthorizedAt: timestamp("deauthorized_at", { withTimezone: true }),
+    /**
+     * Token health (PR 4.4a): set when the platform rejects the token (expired, revoked, password
+     * changed) or it expires, so the account shows "Reconnect" and publishing fails fast instead of
+     * at the scheduled time. Cleared when the account is reconnected.
+     */
+    health: jsonb("health").$type<AccountHealth>().notNull().default({}),
+    lastCheckedAt: timestamp("last_checked_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
-  (t) => [uniqueIndex("acct_brand_platform_ext").on(t.brandId, t.platform, t.externalId)],
+  (t) => [uniqueIndex("acct_brand_platform_ext").on(t.brandId, t.platform, t.externalId), index("acct_platform_user").on(t.platform, t.platformUserId)],
 );
+
+/**
+ * Data-deletion requests received from a platform (Meta's data-deletion callback). The
+ * confirmation code is what the person can use on the public status page; nothing else about them
+ * is shown there.
+ */
+export const dataDeletionRequests = pgTable("data_deletion_requests", {
+  id: id(),
+  platform: text("platform").notNull(),
+  externalUserId: text("external_user_id").notNull(),
+  confirmationCode: text("confirmation_code").notNull().unique(),
+  status: text("status").$type<"received" | "completed" | "failed">().notNull().default("received"),
+  requestedAt: timestamp("requested_at", { withTimezone: true }).notNull().defaultNow(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  /** Counts only (accounts, posts detached, metrics removed); never personal data. */
+  details: jsonb("details").$type<Record<string, unknown>>().notNull().default({}),
+});
 
 export type MetricSource = "platform" | "estimate";
 
@@ -724,3 +807,239 @@ export const aiLedgerMeta = pgTable("ai_ledger_meta", {
   key: text("key").primaryKey(),
   createdAt: createdAt(),
 });
+
+/**
+ * Plans as configuration (PR 4.5, plan defect D5): limits, display price and included monthly
+ * credits. Seeded from the values that used to be hardcoded in src/lib/plans.ts. The plan keys
+ * stay fixed (starter, growth, agency) because Stripe prices map to them (billing.ts) until PR 4.6.
+ * Changed with `npm run credits -- plan ...`; every change is audited.
+ */
+export type PlanLimits = { brands: number; seats: number; socialAccounts: number; aiRunsPerMonth: number };
+export const plans = pgTable("plans", {
+  key: text("key").$type<"starter" | "growth" | "agency">().primaryKey(),
+  name: text("name").notNull(),
+  /** Shown on the plan picker; what Stripe charges is the price object, not this. */
+  priceMonthlyUsd: real("price_monthly_usd").notNull(),
+  limits: jsonb("limits").$type<PlanLimits>().notNull(),
+  /** Credits included each month; null until the owner sets the allowance (no cap is assumed). */
+  includedCredits: integer("included_credits"),
+  features: jsonb("features").$type<Record<string, unknown>>().notNull().default({}),
+  updatedBy: text("updated_by"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Credit configuration (one row, id "default"): what a credit is worth in provider cost, whether
+ * failed and retried attempts are charged, and the alert thresholds.
+ */
+export const creditSettings = pgTable("credit_settings", {
+  id: text("id").primaryKey(),
+  creditValueUsd: real("credit_value_usd").notNull(),
+  chargeFailedAttempts: boolean("charge_failed_attempts").notNull().default(false),
+  alertThresholds: jsonb("alert_thresholds").$type<number[]>().notNull(),
+  updatedBy: text("updated_by"),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/** Monthly credit caps set by an organisation's owners and admins: brand_id "" is the organisation. */
+export const creditLimits = pgTable(
+  "credit_limits",
+  {
+    id: id(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    brandId: text("brand_id").notNull().default(""),
+    monthlyCapCredits: integer("monthly_cap_credits").notNull(),
+    updatedBy: text("updated_by"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("credit_limits_scope").on(t.workspaceId, t.brandId)],
+);
+
+/** Each threshold alert once per period and scope (brand_id "" is the organisation). */
+export const usageAlerts = pgTable(
+  "usage_alerts",
+  {
+    id: id(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    brandId: text("brand_id").notNull().default(""),
+    /** "YYYY-MM" (UTC), the credit period. */
+    period: text("period").notNull(),
+    threshold: integer("threshold").notNull(),
+    creditsUsed: real("credits_used").notNull(),
+    capCredits: integer("cap_credits").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [uniqueIndex("usage_alerts_once").on(t.workspaceId, t.brandId, t.period, t.threshold)],
+);
+
+/**
+ * AI kill switch (F12; src/server/ai/controls.ts). A row stops every paid AI request in its scope
+ * within seconds and without a deploy: "all", "provider:<anthropic|openai>" or "model:<id>".
+ * Set by an operator (`npm run ai:controls`) or by the spending tripwire; only a person clears it.
+ */
+/**
+ * Operator emergency stops of publishing (review M-3; src/server/emergency-stop.ts). Separate from a
+ * brand's own pause (brands.publishing_paused_*), which its admins control: an active stop blocks
+ * every publishing path for the brands it covers, and only the operator command clears it.
+ * `scope` is "all" or "org:<organisation id>". History is in each organisation's Security log.
+ */
+export const publishingStops = pgTable("publishing_stops", {
+  scope: text("scope").primaryKey(),
+  reason: text("reason").notNull(),
+  setBy: text("set_by").notNull(),
+  setAt: timestamp("set_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const aiControls = pgTable("ai_controls", {
+  scope: text("scope").primaryKey(),
+  reason: text("reason").notNull(),
+  source: text("source").$type<"operator" | "tripwire">().notNull(),
+  setBy: text("set_by").notNull(),
+  setAt: timestamp("set_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+/**
+ * Invitation-only sign-up for the private beta (src/server/beta-invites.ts). With SIGNUP_MODE
+ * invite_only (the default in staging and production), only an email on this list, or one with a
+ * pending organisation invitation, can create an account. Managed by operators with
+ * `npm run beta:invite`; each change is audited. Emails are stored lower-case.
+ */
+export const betaInvites = pgTable("beta_invites", {
+  email: text("email").primaryKey(),
+  invitedBy: text("invited_by").notNull(),
+  note: text("note"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+});
+
+/**
+ * Password-reset tokens (account recovery, launch gate S11; src/server/auth/recovery.ts). Only a
+ * SHA-256 of the token is stored. Single use, short-lived; issuing a new one voids older ones.
+ */
+export const passwordResets = pgTable(
+  "password_resets",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    /** "self" (forgot-password page) or "operator:<name>" (npm run users -- reset-link). */
+    issuedBy: text("issued_by").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("password_resets_user_idx").on(t.userId)],
+);
+
+/**
+ * Publish-attempt ledger (PR 4.4a; docs/plan/PHASE4_PLAN.md WS3). One row per attempt to publish a
+ * post, written as `sending` **before** anything is sent to the platform and settled afterwards:
+ *   succeeded   the platform returned the post id
+ *   failed      the platform refused it (nothing was published), or a check found it isn't there
+ *   unknown     sent, but no answer (timeout, network, 5xx): it may or may not have gone out
+ *   reconciled  an unknown or interrupted attempt that a check found on the platform
+ * A post whose latest attempt is `sending` (interrupted) or `unknown` can't be published again until
+ * a check (findRecentPost) settles it, so nothing is posted twice. No tokens are stored here.
+ */
+export type PublishAttemptStatus = "sending" | "succeeded" | "failed" | "unknown" | "reconciled";
+export const publishAttempts = pgTable(
+  "publish_attempts",
+  {
+    id: id(),
+    postId: text("post_id")
+      .notNull()
+      .references(() => posts.id, { onDelete: "cascade" }),
+    socialAccountId: text("social_account_id").references(() => socialAccounts.id, { onDelete: "set null" }),
+    platform: text("platform").notNull(),
+    attempt: integer("attempt").notNull(),
+    /** `post:<postId>:<attempt>`: unique, so two runners can't both start the same attempt. */
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    status: text("status").$type<PublishAttemptStatus>().notNull().default("sending"),
+    /** Progress the platform reported (e.g. Instagram's container id), so a retry can resume. */
+    progress: jsonb("progress").$type<Record<string, unknown>>().notNull().default({}),
+    externalId: text("external_id"),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+  },
+  (t) => [index("publish_attempts_post").on(t.postId, t.attempt)],
+);
+
+/**
+ * Autonomy decisions and actions (docs/plan/06-autonomous-publishing-security.md §6.7). Append-only
+ * by the application: every policy decision the AI acted on, and every level or rule change, with
+ * the reasons and the rules version. Owners and admins can see it.
+ */
+export const agentActions = pgTable(
+  "agent_actions",
+  {
+    id: id(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    brandId: text("brand_id")
+      .notNull()
+      .references(() => brands.id, { onDelete: "cascade" }),
+    postId: text("post_id").references(() => posts.id, { onDelete: "set null" }),
+    socialAccountId: text("social_account_id").references(() => socialAccounts.id, { onDelete: "set null" }),
+    /** "user" (a person), "agent" (the autonomy service) or "system" (automatic safeguards). */
+    actorType: text("actor_type").$type<"user" | "agent" | "system">().notNull(),
+    actorUserId: text("actor_user_id"),
+    action: text("action").notNull(),
+    decision: text("decision").$type<"allow" | "require_approval" | "deny" | "changed">().notNull(),
+    level: text("level").notNull(),
+    reasons: jsonb("reasons").$type<string[]>().notNull().default([]),
+    policyVersion: integer("policy_version").notNull(),
+    contentHash: text("content_hash"),
+    details: jsonb("details").$type<Record<string, unknown>>().notNull().default({}),
+    createdAt: createdAt(),
+  },
+  (t) => [index("agent_actions_brand").on(t.brandId, t.createdAt)],
+);
+
+/**
+ * Credits added to an organisation's monthly allowance for one period (PR 4.6): top-up packs,
+ * operator adjustments and plan grants. `reference` makes a grant idempotent (for example an invoice
+ * or checkout id), so a webhook delivered twice grants once. Negative credits correct an error.
+ */
+export const creditGrants = pgTable(
+  "credit_grants",
+  {
+    id: id(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    /** YYYY-MM: the month the credits apply to. */
+    period: text("period").notNull(),
+    credits: integer("credits").notNull(),
+    kind: text("kind").$type<"topup" | "adjustment" | "plan">().notNull(),
+    reference: text("reference").unique(),
+    reason: text("reason").notNull(),
+    createdBy: text("created_by").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("credit_grants_ws_period").on(t.workspaceId, t.period)],
+);
+
+/** Email verification links (auth/verify-email.ts): single use, hashed, expiring, for one address. */
+export const emailVerifications = pgTable(
+  "email_verifications",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index("email_verifications_user").on(t.userId)],
+);

@@ -5,18 +5,23 @@ import { format } from "date-fns";
 import { ArrowLeftRight, Building2, Check, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { switchBrand } from "@/app/actions/brand";
-import { changeRole, inviteMember, removeMember, setMemberBrands, updateWorkspace } from "@/app/actions/settings";
+import { changeRole, inviteMember,
+  resendInvite, prepareAuditExport, removeMember, setMemberBrands, updateWorkspace } from "@/app/actions/settings";
 import { openBillingPortal, startCheckout } from "@/app/actions/billing";
 import { Badge, Button, Card, CardBody, CardHeader, Field, Input, Modal, Notice, PageHeader, Select } from "@/components/ui";
 import { useRun } from "@/components/hooks";
-import { PLANS, type PlanId } from "@/lib/plans";
+import type { Plan } from "@/server/credits";
+import { CreditsCard, type CreditView } from "./credits-card";
+import { AutonomyCard, type AutonomyView } from "./autonomy-card";
 import { ROLE_DESCRIPTIONS, roleAtLeast, type Role } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
-type Member = { id: string; role: Role; brandIds: string[] | null; status: string; invitedEmail: string | null; userId: string | null; name: string | null; email: string | null };
+type Member = { id: string; role: Role; brandIds: string[] | null; status: string; invitedEmail: string | null; userId: string | null; name: string | null; email: string | null; inviteExpiresAt?: Date | string | null };
 import type { AuditRow, AuditScope } from "@/server/audit";
 import type { AiOverview } from "@/server/ai/overview";
 import { AiUsageCard } from "./ai-usage";
+import { DeleteData } from "./delete-data";
+import type { AccountDeletionPlan } from "@/server/deletion";
 type BrandRow = { id: string; name: string; createdAt: Date; active: boolean; colors: string[]; access: { all: number; scoped: number } };
 
 export function SettingsView(props: {
@@ -26,6 +31,11 @@ export function SettingsView(props: {
   brandLimit: number;
   canAddBrand: boolean;
   workspace: { id: string; name: string; type: "creator" | "business" | "agency"; plan: string };
+  /** This workspace's plan and every plan, from configuration (the plans table). */
+  plan: Plan;
+  plans: Plan[];
+  /** Settings → AI credits (owners and admins with access to every brand); null otherwise. */
+  credits?: CreditView | null;
   billing: null | {
     configured: boolean;
     prices: { growth: boolean; agency: boolean };
@@ -41,6 +51,11 @@ export function SettingsView(props: {
   /** Owners/admins with access to every brand only; null for everyone else. */
   auditLog?: { rows: AuditRow[]; scope: AuditScope } | null;
   aiOverview?: AiOverview | null;
+  /** What deleting your own account would do (Settings → Delete data). */
+  accountPlan: AccountDeletionPlan;
+  /** Two-step verification is on for the viewer. */
+  mfaEnabled: boolean;
+  autonomy: { brandId: string; brandName: string; view: AutonomyView } | null;
   integrations: { ai: { provider: string; ready: boolean; model: string }; image: { ready: boolean; provider: string }; embeddings: string; database: string } | null;
 }) {
   const isAdmin = roleAtLeast(props.role, "admin") && !props.scoped;
@@ -54,7 +69,7 @@ export function SettingsView(props: {
   const isAgency = props.workspace.type === "agency";
   const brandName = (id: string) => props.brands.find((b) => b.id === id)?.name ?? "Unknown brand";
   const { run, busy } = useRun();
-  const plan = PLANS[(props.workspace.plan as PlanId) ?? "starter"] ?? PLANS.starter;
+  const plan = props.plan;
 
   return (
     <div>
@@ -77,7 +92,7 @@ export function SettingsView(props: {
           </Card>
 
           <Card>
-            <CardHeader title="Team" description={props.usage ? `${props.usage.seats} of ${plan.seats} seats` : "Your membership"} />
+            <CardHeader title="Team" description={props.usage ? `${props.usage.seats} of ${plan.limits.seats} seats` : "Your membership"} />
             <CardBody className="space-y-4">
               {isAdmin ? (
                 <div className="flex flex-wrap gap-2">
@@ -92,7 +107,7 @@ export function SettingsView(props: {
                       <Building2 /> {scopeLabel(inviteScope, brandName, props.brands.length)}
                     </Button>
                   ) : null}
-                  <Button loading={busy("inv")} disabled={!email} onClick={() => run(() => inviteMember(props.workspace.id, email, inviteRole, inviteScope), { key: "inv", success: "Member added. Pending invites join when they sign up with this email.", onOk: () => { setEmail(""); setInviteScope(null); } })}>
+                  <Button loading={busy("inv")} disabled={!email} onClick={() => run(() => inviteMember(props.workspace.id, email, inviteRole, inviteScope), { key: "inv", success: "Invitation created. They join when they accept the link we email them (valid 7 days).", onOk: () => { setEmail(""); setInviteScope(null); } })}>
                     <Plus /> Invite
                   </Button>
                 </div>
@@ -102,7 +117,7 @@ export function SettingsView(props: {
                   <li key={m.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2.5">
                     <div className="min-w-[min(100%,14rem)] flex-1">
                       <p className="truncate text-[13px] font-medium">{m.name ?? m.invitedEmail}</p>
-                      <p className="truncate text-[11px] text-faint">{m.email ?? m.invitedEmail}{m.status === "invited" ? " · invitation pending" : ""}{m.brandIds ? ` · client access: ${m.brandIds.map(brandName).join(", ")}` : m.role === "owner" || m.role === "admin" ? " · all brands" : ""}</p>
+                      <p className="truncate text-[11px] text-faint">{m.email ?? m.invitedEmail}{m.status === "invited" ? (m.inviteExpiresAt && new Date(m.inviteExpiresAt) < new Date() ? " · invitation expired" : " · invitation pending") : ""}{m.brandIds ? ` · client access: ${m.brandIds.map(brandName).join(", ")}` : m.role === "owner" || m.role === "admin" ? " · all brands" : ""}</p>
                     </div>
                     {isAdmin && m.userId !== props.me && (m.role === "editor" || m.role === "viewer") && (props.brands.length > 1 || isAgency) ? (
                       <Button size="sm" variant="secondary" onClick={() => setScopeFor(m)} aria-label={`Brand access for ${m.name ?? m.invitedEmail}`}>
@@ -116,8 +131,13 @@ export function SettingsView(props: {
                     ) : (
                       <Badge className="capitalize">{m.role}</Badge>
                     )}
+                    {isAdmin && m.status === "invited" ? (
+                      <Button size="sm" variant="secondary" loading={busy(`re-${m.id}`)} onClick={() => run(() => resendInvite(props.workspace.id, m.id), { key: `re-${m.id}`, success: "Invitation sent again with a new link" })} aria-label={`Send the invitation to ${m.invitedEmail} again`}>
+                        Resend
+                      </Button>
+                    ) : null}
                     {isAdmin && m.userId !== props.me && m.role !== "owner" ? (
-                      <Button size="icon" variant="ghost" onClick={() => run(() => removeMember(props.workspace.id, m.id), { success: "Removed" })} aria-label="Remove member"><Trash2 /></Button>
+                      <Button size="icon" variant="ghost" onClick={() => run(() => removeMember(props.workspace.id, m.id), { success: m.status === "invited" ? "Invitation withdrawn" : "Removed" })} aria-label={m.status === "invited" ? "Withdraw invitation" : "Remove member"}><Trash2 /></Button>
                     ) : null}
                   </li>
                 ))}
@@ -170,20 +190,31 @@ export function SettingsView(props: {
             </CardBody>
           </Card>
 
+          {props.autonomy ? <AutonomyCard brandId={props.autonomy.brandId} brandName={props.autonomy.brandName} view={props.autonomy.view} canEdit={props.role === "owner"} /> : null}
+
           {props.aiOverview ? <AiUsageCard data={props.aiOverview} /> : null}
 
-          {props.auditLog ? <SecurityLog rows={props.auditLog.rows} scope={props.auditLog.scope} brandName={brandName} /> : null}
+          {props.auditLog ? <SecurityLog workspaceId={props.workspace.id} rows={props.auditLog.rows} scope={props.auditLog.scope} brandName={brandName} /> : null}
+
+          <DeleteData workspace={{ id: props.workspace.id, name: props.workspace.name }} brands={props.brands.map((b) => ({ id: b.id, name: b.name }))} canDeleteBrand={isAdmin} isOwner={props.role === "owner" && !props.scoped} plan={props.accountPlan} />
         </div>
 
         <div className="min-w-0 space-y-6">
+          <Card aria-label="Your account">
+            <CardHeader title="Your account" />
+            <CardBody className="flex flex-wrap items-center justify-between gap-2 text-[13px]">
+              <span>Two-step verification: <strong className="font-medium">{props.mfaEnabled ? "On" : "Off"}</strong></span>
+              <Link href="/account/security" className="font-medium text-accent hover:text-accent-ink">Manage security</Link>
+            </CardBody>
+          </Card>
           {props.usage ? (
           <Card>
-            <CardHeader title="Plan & usage" action={<Badge tone="accent">{plan.label}</Badge>} />
+            <CardHeader title="Plan & usage" action={<Badge tone="accent">{plan.name}</Badge>} />
             <CardBody className="space-y-3">
-              <Meter label="AI runs this month" used={props.usage!.aiRuns} max={plan.aiRunsPerMonth} />
-              <Meter label="Brands" used={props.usage!.brands} max={plan.brands} />
-              <Meter label="Seats" used={props.usage!.seats} max={plan.seats} />
-              <Meter label="Social accounts" used={props.usage!.socialAccounts} max={plan.socialAccounts} />
+              <Meter label="AI runs this month" used={props.usage!.aiRuns} max={plan.limits.aiRunsPerMonth} />
+              <Meter label="Brands" used={props.usage!.brands} max={plan.limits.brands} />
+              <Meter label="Seats" used={props.usage!.seats} max={plan.limits.seats} />
+              <Meter label="Social accounts" used={props.usage!.socialAccounts} max={plan.limits.socialAccounts} />
             </CardBody>
           </Card>
 
@@ -193,7 +224,8 @@ export function SettingsView(props: {
               <CardBody className="text-[13px] text-muted">You have access to {props.brands.length} brand{props.brands.length === 1 ? "" : "s"} in this workspace. Plan, billing and usage are managed by the workspace owner.</CardBody>
             </Card>
           )}
-          {props.billing ? <BillingCard workspaceId={props.workspace.id} currentPlan={props.workspace.plan} isOwner={props.role === "owner"} billing={props.billing} /> : null}
+          {props.credits ? <CreditsCard workspaceId={props.workspace.id} view={props.credits} /> : null}
+          {props.billing ? <BillingCard workspaceId={props.workspace.id} currentPlan={props.workspace.plan} plans={props.plans} isOwner={props.role === "owner"} billing={props.billing} /> : null}
 
           {props.integrations ? (
           <Card>
@@ -291,7 +323,7 @@ function Row({ k, v, ok }: { k: string; v: string; ok: boolean }) {
 
 const STATUS_TONE: Record<string, string> = { active: "success", trialing: "info", past_due: "warn", unpaid: "danger", canceled: "neutral", incomplete: "warn", incomplete_expired: "neutral", paused: "neutral" };
 
-function BillingCard({ workspaceId, currentPlan, isOwner, billing }: { workspaceId: string; currentPlan: string; isOwner: boolean; billing: NonNullable<Parameters<typeof SettingsView>[0]["billing"]> }) {
+function BillingCard({ workspaceId, currentPlan, plans, isOwner, billing }: { workspaceId: string; currentPlan: string; plans: Plan[]; isOwner: boolean; billing: NonNullable<Parameters<typeof SettingsView>[0]["billing"]> }) {
   const { run, busy } = useRun();
   const subscribed = ["active", "trialing", "past_due"].includes(billing.status ?? "");
   const go = (url: string) => {
@@ -318,13 +350,13 @@ function BillingCard({ workspaceId, currentPlan, isOwner, billing }: { workspace
         ) : null}
 
         <div className="grid grid-cols-3 gap-2">
-          {(Object.keys(PLANS) as PlanId[]).map((id) => {
+          {plans.map(({ key: id, name, priceMonthlyUsd }) => {
             const current = id === currentPlan;
             const purchasable = id !== "starter" && billing.configured && billing.prices[id as "growth" | "agency"];
             return (
               <div key={id} className={cn("flex flex-col rounded-xl border p-3 text-center", current ? "border-ink" : "border-line")}>
-                <p className="text-[12px] font-medium">{PLANS[id].label}</p>
-                <p className="text-[18px] font-semibold">${PLANS[id].price}</p>
+                <p className="text-[12px] font-medium">{name}</p>
+                <p className="text-[18px] font-semibold">${priceMonthlyUsd}</p>
                 <p className="text-[10px] text-faint">/ month</p>
                 <div className="mt-2 flex-1" />
                 {current ? (
@@ -357,11 +389,25 @@ const AUDIT_LABELS: Record<string, string> = {
   "auth.login_failed": "Sign-in failed",
   "auth.signup": "Created an account",
   "auth.logout": "Signed out",
+  "auth.logout_all": "Signed out of other sessions",
+  "auth.password_reset_requested": "Asked to reset the password",
+  "auth.password_reset_issued": "Password-reset link issued by support",
+  "auth.password_reset": "Reset the password",
+  "mfa.reset_by_operator": "Two-step verification turned off by support",
+  "credits.alert": "AI credit alert",
+  "credits.cap_change": "Changed an AI credit cap",
+  "auth.mfa_failed": "Wrong verification code",
+  "mfa.enable": "Turned on two-step verification",
+  "mfa.disable": "Turned off two-step verification",
+  "mfa.recovery_used": "Signed in with a recovery code",
+  "mfa.recovery_regenerated": "Made new recovery codes",
+  "mfa.step_up": "Confirmed a sensitive change",
   "member.invite": "Invited a member",
   "member.role_change": "Changed a role",
   "member.brand_scope_change": "Changed brand access",
   "member.remove": "Removed a member",
   "workspace.update": "Updated workspace details",
+  "workspace.export": "Exported the organisation's data",
   "brand.create": "Created a brand",
   "social.connect": "Connected social accounts",
   "social.disconnect": "Disconnected a social account",
@@ -370,6 +416,8 @@ const AUDIT_LABELS: Record<string, string> = {
   "creative.approve_override": "Approved a creative despite blocking issues",
   "access.denied": "Access refused",
   "audit.view": "Viewed the security log",
+  "audit.export": "Exported the security log",
+  "audit.retention_purge": "Removed expired security events",
 };
 
 function auditDetail(r: AuditRow, brandName: (id: string) => string) {
@@ -386,11 +434,28 @@ function auditDetail(r: AuditRow, brandName: (id: string) => string) {
   return parts.join(" · ");
 }
 
-function SecurityLog({ rows, scope, brandName }: { rows: AuditRow[]; scope: AuditScope; brandName: (id: string) => string }) {
+function SecurityLog({ workspaceId, rows, scope, brandName }: { workspaceId: string; rows: AuditRow[]; scope: AuditScope; brandName: (id: string) => string }) {
+  const { run, busy } = useRun();
+  const exportAs = (format: "csv" | "json") =>
+    run(() => prepareAuditExport(workspaceId), {
+      key: `export:${format}`,
+      refresh: false,
+      onOk: () => window.location.assign(`/api/audit/export?workspace=${encodeURIComponent(workspaceId)}&format=${format}&days=365`),
+    });
   return (
     <Card>
       <CardHeader
         title="Security log"
+        action={
+          <span className="flex gap-1.5">
+            <Button size="sm" variant="secondary" loading={busy("export:csv")} onClick={() => exportAs("csv")} aria-label="Export the security log as CSV">
+              CSV
+            </Button>
+            <Button size="sm" variant="secondary" loading={busy("export:json")} onClick={() => exportAs("json")} aria-label="Export the security log as JSON">
+              JSON
+            </Button>
+          </span>
+        }
         description={
           scope.brandIds
             ? "Security events for the brands you have access to. Visible to owners and admins."

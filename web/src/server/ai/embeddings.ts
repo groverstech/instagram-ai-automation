@@ -2,32 +2,62 @@ import "server-only";
 import { EMBEDDING_DIMS } from "../db/schema";
 
 /**
- * Embeddings for brand memory. Voyage AI when VOYAGE_API_KEY is set; otherwise a
- * deterministic feature-hashing embedder (word unigrams + bigrams, signed hashing,
- * L2-normalised). The local embedder captures lexical overlap only, which is enough
- * for small per-brand memory sets and keeps development fully offline.
+ * Embeddings for brand memory. Voyage AI when VOYAGE_API_KEY is set and permitted; otherwise a
+ * deterministic feature-hashing embedder (word unigrams + bigrams, signed hashing, L2-normalised).
+ * The local embedder captures lexical overlap only, which is enough for small per-brand memory sets
+ * and keeps development fully offline.
+ *
+ * Voyage calls are NOT metered by the AI ledger (no spending cap, tripwire, credits or usage rows)
+ * (review L3). So they're made only when no control depends on that metering. See voyageRefusal.
+ * When refused, the local embedder is used instead: nothing is sent, and features keep working
+ * (with weaker recall). Config validation reports the same conditions at start-up.
  */
-export async function embed(texts: string[], kind: "document" | "query" = "document"): Promise<number[][]> {
+type Env = Record<string, string | undefined>;
+
+/** Why Voyage may not be called now, or null if it may. Static part (environment). */
+export function voyageRefusal(env: Env = process.env): string | null {
+  const v = (k: string) => (env[k] ?? "").trim().toLowerCase();
+  if (!v("VOYAGE_API_KEY")) return "not configured";
+  if (v("AI_SPEND_CAP_REQUIRED") === "true" || v("AI_SPEND_CAP_USD")) return "a hard spending cap is set, and Voyage isn't metered by it";
+  if (v("AI_TRIPWIRE_USD")) return "the spending tripwire is set, and Voyage isn't metered by it";
+  if (v("CREDITS_MODE") === "enforce") return "credits are enforced, and Voyage isn't metered by them";
+  if (v("AI_STOP").split(",").map((x) => x.trim()).some((x) => x === "all" || x === "voyage")) return "AI is stopped (AI_STOP)";
+  const deploy = v("DEPLOY_ENV");
+  const strict = deploy === "staging" || deploy === "production" || (deploy !== "" && !["development", "demo", "test"].includes(deploy));
+  if (strict && v("VOYAGE_UNMETERED_OK") !== "true") return "staging and production need VOYAGE_UNMETERED_OK=true to accept unmetered Voyage spend";
+  return null;
+}
+
+let warned = "";
+export async function embed(texts: string[], kind: "document" | "query" = "document", env: Env = process.env): Promise<number[][]> {
   if (!texts.length) return [];
-  if (process.env.VOYAGE_API_KEY) {
-    // Voyage isn't covered by the spending cap's accounting: never call it while the cap is required.
-    const { spendCapRequired } = await import("./spend-cap");
-    if (spendCapRequired()) throw new Error("Voyage embeddings are disabled while a spending cap is required (they aren't covered by it). Unset VOYAGE_API_KEY.");
-    const res = await fetch("https://api.voyageai.com/v1/embeddings", {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${process.env.VOYAGE_API_KEY}` },
-      body: JSON.stringify({
-        model: "voyage-3.5-lite",
-        input: texts,
-        input_type: kind,
-        output_dimension: EMBEDDING_DIMS,
-      }),
-    });
-    if (!res.ok) throw new Error(`Embedding request failed (${res.status})`);
-    const json = (await res.json()) as { data: { embedding: number[] }[] };
-    return json.data.map((d) => d.embedding);
+  let refusal = voyageRefusal(env);
+  if (!refusal) {
+    // The kill switch's "all" scope stops Voyage too.
+    const { globalAiStopped } = await import("../autonomy/service");
+    if (await globalAiStopped(undefined, env).catch(() => true)) refusal = "AI is stopped (kill switch)";
   }
-  return texts.map(hashEmbed);
+  if (refusal) {
+    if (refusal !== "not configured" && warned !== refusal) {
+      warned = refusal;
+      const { log } = await import("../log");
+      log.warn("embeddings.voyage_refused", { reason: refusal, using: "local" });
+    }
+    return texts.map(hashEmbed);
+  }
+  const res = await fetch("https://api.voyageai.com/v1/embeddings", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${env.VOYAGE_API_KEY}` },
+    body: JSON.stringify({
+      model: "voyage-3.5-lite",
+      input: texts,
+      input_type: kind,
+      output_dimension: EMBEDDING_DIMS,
+    }),
+  });
+  if (!res.ok) throw new Error(`Embedding request failed (${res.status})`);
+  const json = (await res.json()) as { data: { embedding: number[] }[] };
+  return json.data.map((d) => d.embedding);
 }
 
 const STOP = new Set("a an the and or of to in on for with at by from is are be this that it as our your we you".split(" "));

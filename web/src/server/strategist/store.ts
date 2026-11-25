@@ -1,4 +1,5 @@
 import "server-only";
+import { assertAiMayDraft } from "../autonomy/service";
 import { and, desc, eq, inArray, max, ne, sql } from "drizzle-orm";
 import { format as fmt, parseISO } from "date-fns";
 import { getDb, schema } from "../db/client";
@@ -432,6 +433,7 @@ export async function applyCalendar(brandId: string, id: string, actor: Actor) {
   const doc = docOf(row);
   const cal = doc.sections.calendar?.data;
   if (!cal?.entries.length) throw new StrategyError("The calendar is empty.");
+  await assertAiMayDraft(brandId, "add the strategy's calendar to the content calendar");
   const db = await getDb();
   const result = await db.transaction(async (tx) => {
     const existing = await tx.select({ id: schema.posts.id, copy: schema.posts.copy, status: schema.posts.status }).from(schema.posts).where(eq(schema.posts.brandId, brandId));
@@ -461,6 +463,7 @@ export async function applyCalendar(brandId: string, id: string, actor: Actor) {
           title: e.hook.slice(0, 140),
           scheduledAt: parseISO(`${e.date}T${e.time}:00`),
           status: "draft" as const,
+          origin: "ai",
           hashtags: ((creativeFor(e.id)?.copy as { hashtags?: string[] } | null)?.hashtags ?? e.hashtags),
           creativeId: creativeFor(e.id)?.id ?? null,
           caption: ((creativeFor(e.id)?.copy as { primary?: string } | null)?.primary ?? null),

@@ -4,7 +4,7 @@ import { useActionState } from "react";
 import { logIn, signUp, type AuthFormState } from "@/app/actions/auth";
 import { Button, Field, Input, Notice, Select } from "@/components/ui";
 
-export function LoginForm() {
+export function LoginForm({ notice, next }: { notice?: string; next?: string } = {}) {
   const [state, action, pending] = useActionState(logIn, {} as AuthFormState);
   return (
     <form action={action} className="w-full max-w-sm space-y-4">
@@ -12,7 +12,9 @@ export function LoginForm() {
         <h1 className="font-display text-[34px] leading-tight">Welcome back</h1>
         <p className="mt-1 text-muted">Sign in to your workspace.</p>
       </div>
+      {notice && !state.error ? <Notice tone="success">{notice}</Notice> : null}
       {state.error ? <Notice tone="danger">{state.error}</Notice> : null}
+      {next ? <input type="hidden" name="next" value={next} /> : null}
       <Field label="Email">
         {/* React resets the form after the action; defaultValue brings back what was typed. */}
         <Input name="email" type="email" autoComplete="email" defaultValue={state.values?.email} required />
@@ -20,6 +22,11 @@ export function LoginForm() {
       <Field label="Password">
         <Input name="password" type="password" autoComplete="current-password" required />
       </Field>
+      <p className="-mt-2 text-right text-[12px]">
+        <Link href="/forgot-password" className="text-muted underline-offset-4 hover:text-ink hover:underline">
+          Forgot your password?
+        </Link>
+      </p>
       <Button className="w-full" size="lg" loading={pending}>
         Sign in
       </Button>
@@ -33,13 +40,14 @@ export function LoginForm() {
   );
 }
 
-export function SignupForm() {
+export function SignupForm({ inviteOnly = false }: { inviteOnly?: boolean }) {
   const [state, action, pending] = useActionState(signUp, {} as AuthFormState);
   return (
     <form action={action} className="w-full max-w-sm space-y-4">
       <div className="mb-8">
         <h1 className="font-display text-[34px] leading-tight">Create your workspace</h1>
         <p className="mt-1 text-muted">Brands, team and approvals live in your workspace.</p>
+        {inviteOnly ? <p className="mt-3 text-[13px] text-muted">BrandPilot is in private beta: sign up with the email address your invitation was sent to.</p> : null}
       </div>
       {state.error ? <Notice tone="danger">{state.error}</Notice> : null}
       <Field label="Your name">

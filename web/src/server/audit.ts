@@ -1,5 +1,5 @@
 import "server-only";
-import { and, desc, eq, gt, inArray, isNull, like, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gt, gte, inArray, isNull, like, lt, or, sql } from "drizzle-orm";
 import { getDb, schema } from "./db/client";
 import { keyedHash } from "./crypto";
 import { redact, log } from "./log";
@@ -17,20 +17,63 @@ export type AuditAction =
   | "auth.login"
   | "auth.login_failed"
   | "auth.signup"
+  | "beta.invite_add"
+  | "beta.invite_revoke"
   | "auth.logout"
+  | "auth.mfa_failed"
+  | "mfa.enable"
+  | "mfa.disable"
+  | "mfa.recovery_used"
+  | "mfa.recovery_regenerated"
+  | "mfa.step_up"
+  | "auth.logout_all"
+  | "auth.password_reset_requested"
+  | "auth.password_reset_issued"
+  | "auth.password_reset"
+  | "mfa.reset_by_operator"
   | "member.invite"
+  | "member.invite_resend"
+  | "member.invite_revoke"
+  | "member.invite_accept"
+  | "auth.email_verified"
+  | "auth.verification_sent"
   | "member.role_change"
   | "member.brand_scope_change"
   | "member.remove"
   | "workspace.update"
   | "brand.create"
+  | "brand.delete"
+  | "workspace.delete"
+  | "workspace.export"
+  | "account.delete"
   | "social.connect"
   | "social.disconnect"
+  | "social.data_deletion"
+  | "social.deauthorized"
+  | "publishing.pause"
+  | "publishing.resume"
+  | "post.publish_outcome_marked"
   | "billing.checkout_started"
   | "billing.plan_changed"
+  | "credits.alert"
+  | "credits.cap_change"
+  | "config.plan_update"
+  | "config.credits_update"
+  | "config.credits_grant"
+  | "config.secrets_reencrypt"
+  | "ai.stop"
+  | "autonomy.changed"
+  | "post.approved"
+  | "post.approval_invalidated"
+  | "publishing.emergency_stop"
+  | "publishing.emergency_resume"
+  | "autonomy.suspended"
+  | "ai.resume"
   | "creative.approve_override"
   | "access.denied"
-  | "audit.view";
+  | "audit.view"
+  | "audit.export"
+  | "audit.retention_purge";
 
 export type AuditEvent = {
   action: AuditAction;
@@ -51,7 +94,7 @@ export type AuditEvent = {
  * NOISE_WINDOW_SEC; the next one is recorded once as a "further events not recorded" marker, and
  * the rest of the window is only counted. Flooding requests can't flood the audit table.
  */
-const NOISY = new Set<AuditAction>(["access.denied", "auth.login_failed"]);
+const NOISY = new Set<AuditAction>(["access.denied", "auth.login_failed", "auth.mfa_failed"]);
 export const NOISE_LIMIT = 20;
 export const NOISE_WINDOW_SEC = 600;
 
@@ -116,7 +159,7 @@ export type AuditScope = { brandIds: string[] | null };
  *   hidden. Failed sign-ins for unknown emails belong to no tenant and appear in no log.
  * - **Brand scope:** only this workspace's events about those brands.
  */
-export async function auditTrail(workspaceId: string, opts: { limit?: number; before?: Date; scope?: AuditScope } = {}) {
+export async function auditTrail(workspaceId: string, opts: { limit?: number; before?: Date; since?: Date; scope?: AuditScope; max?: number } = {}) {
   const db = await getDb();
   const e = schema.auditEvents;
   const brandIds = opts.scope?.brandIds ?? null;
@@ -135,9 +178,9 @@ export async function auditTrail(workspaceId: string, opts: { limit?: number; be
   return db
     .select()
     .from(e)
-    .where(and(where, opts.before ? lt(e.createdAt, opts.before) : undefined))
-    .orderBy(desc(e.createdAt))
-    .limit(Math.min(opts.limit ?? 50, 200));
+    .where(and(where, opts.before ? lt(e.createdAt, opts.before) : undefined, opts.since ? gte(e.createdAt, opts.since) : undefined))
+    .orderBy(desc(e.createdAt), desc(e.id))
+    .limit(Math.min(opts.limit ?? 50, opts.max ?? 200));
 }
 
 export type AuditRow = {
@@ -181,7 +224,11 @@ const VIEW_AUDIT_EVERY_MS = 60 * 60 * 1000;
  * Actor names are shown only for current members of this workspace (and "System"), so the log
  * never reveals who someone outside the organisation is.
  */
-export async function auditTrailFor(session: import("./auth/session").SessionUser, workspaceId: string, limit = 50): Promise<{ rows: AuditRow[]; scope: AuditScope }> {
+/**
+ * Who may read this workspace's Security log, and what of it: an active owner or admin membership.
+ * The scope follows the membership's brand scope. Refusals are recorded as `access.denied`.
+ */
+async function securityLogAccess(session: import("./auth/session").SessionUser, workspaceId: string): Promise<AuditScope> {
   const { AccessError } = await import("./auth/guard");
   const { roleAtLeast } = await import("@/lib/roles");
   const db = await getDb();
@@ -201,16 +248,13 @@ export async function auditTrailFor(session: import("./auth/session").SessionUse
     const owned = me.brandIds.length ? await db.select({ id: schema.brands.id }).from(schema.brands).where(and(eq(schema.brands.workspaceId, workspaceId), inArray(schema.brands.id, me.brandIds))) : [];
     brandIds = owned.map((b) => b.id);
   }
-  const scope: AuditScope = { brandIds };
+  return { brandIds };
+}
 
-  const [recent] = await db
-    .select({ id: schema.auditEvents.id })
-    .from(schema.auditEvents)
-    .where(and(eq(schema.auditEvents.action, "audit.view"), eq(schema.auditEvents.workspaceId, workspaceId), eq(schema.auditEvents.actorUserId, session.user.id), gt(schema.auditEvents.createdAt, new Date(Date.now() - VIEW_AUDIT_EVERY_MS))))
-    .limit(1);
-  if (!recent) await audit({ action: "audit.view", workspaceId, actorUserId: session.user.id, targetType: "security_log", targetId: workspaceId, details: { scope: brandIds ? "brands" : "organisation" } });
-
-  const rows = await auditTrail(workspaceId, { limit, scope });
+/** Rows as the Security log shows them: allow-listed details, actor names only for current members. */
+async function present(workspaceId: string, rows: (typeof schema.auditEvents.$inferSelect)[]): Promise<AuditRow[]> {
+  const db = await getDb();
+  const wm = schema.workspaceMembers;
   const actorIds = [...new Set(rows.map((r) => r.actorUserId).filter((x): x is string => Boolean(x)))];
   const members = actorIds.length
     ? await db
@@ -220,19 +264,101 @@ export async function auditTrailFor(session: import("./auth/session").SessionUse
         .where(and(eq(wm.workspaceId, workspaceId), inArray(wm.userId, actorIds)))
     : [];
   const nameOf = new Map(members.map((u) => [u.id, u.name || u.email]));
-  return {
-    scope,
-    rows: rows.map((r) => ({
-      id: r.id,
-      action: r.action,
-      outcome: r.outcome,
-      actorType: r.actorType,
-      actorName: r.actorUserId ? (nameOf.get(r.actorUserId) ?? "Not a current member") : r.actorType === "system" ? "System" : null,
-      targetType: r.targetType,
-      targetId: r.targetId,
-      brandId: r.brandId,
-      details: shownDetails(r.details),
-      createdAt: r.createdAt,
-    })),
-  };
+  return rows.map((r) => ({
+    id: r.id,
+    action: r.action,
+    outcome: r.outcome,
+    actorType: r.actorType,
+    actorName: r.actorUserId ? (nameOf.get(r.actorUserId) ?? "Not a current member") : r.actorType === "system" ? "System" : null,
+    targetType: r.targetType,
+    targetId: r.targetId,
+    brandId: r.brandId,
+    details: shownDetails(r.details),
+    createdAt: r.createdAt,
+  }));
+}
+
+export async function auditTrailFor(session: import("./auth/session").SessionUser, workspaceId: string, limit = 50): Promise<{ rows: AuditRow[]; scope: AuditScope }> {
+  const scope = await securityLogAccess(session, workspaceId);
+  const db = await getDb();
+  const [recent] = await db
+    .select({ id: schema.auditEvents.id })
+    .from(schema.auditEvents)
+    .where(and(eq(schema.auditEvents.action, "audit.view"), eq(schema.auditEvents.workspaceId, workspaceId), eq(schema.auditEvents.actorUserId, session.user.id), gt(schema.auditEvents.createdAt, new Date(Date.now() - VIEW_AUDIT_EVERY_MS))))
+    .limit(1);
+  if (!recent) await audit({ action: "audit.view", workspaceId, actorUserId: session.user.id, targetType: "security_log", targetId: workspaceId, details: { scope: scope.brandIds ? "brands" : "organisation" } });
+  return { scope, rows: await present(workspaceId, await auditTrail(workspaceId, { limit, scope })) };
+}
+
+/** Before downloading: authorised, and a recent second factor (so the app can ask for it first). */
+export async function auditExportReadyFor(session: import("./auth/session").SessionUser, workspaceId: string) {
+  await securityLogAccess(session, workspaceId);
+  const { requireRecentSecondFactor } = await import("./auth/step-up");
+  await requireRecentSecondFactor(session);
+}
+
+/** Most rows one export holds; older events need a narrower `since`. */
+export const EXPORT_MAX_ROWS = 50_000;
+
+/**
+ * Security log export (FOLLOW_UPS F4) for the organisation's records or an auditor: the same
+ * authorisation, brand scope and detail allow-list as the Settings view, as CSV or JSON. Exporting
+ * needs a recent second factor (step-up) and is itself audited (`audit.export`).
+ */
+export async function auditExportFor(session: import("./auth/session").SessionUser, workspaceId: string, opts: { format: "csv" | "json"; sinceDays?: number }) {
+  const scope = await securityLogAccess(session, workspaceId);
+  const { requireRecentSecondFactor } = await import("./auth/step-up");
+  await requireRecentSecondFactor(session);
+  const days = Math.min(Math.max(Math.trunc(opts.sinceDays ?? 365), 1), 3650);
+  const since = new Date(Date.now() - days * 86400_000);
+  const raw = await auditTrail(workspaceId, { scope, since, limit: EXPORT_MAX_ROWS, max: EXPORT_MAX_ROWS });
+  const rows = await present(workspaceId, raw);
+  await audit({ action: "audit.export", workspaceId, actorUserId: session.user.id, targetType: "security_log", targetId: workspaceId, details: { type: opts.format, scope: scope.brandIds ? "brands" : "organisation", status: `${rows.length} rows, ${days} days` } });
+  const stamp = new Date().toISOString().slice(0, 10);
+  if (opts.format === "json") {
+    return { filename: `security-log-${stamp}.json`, contentType: "application/json; charset=utf-8", body: JSON.stringify({ workspaceId, exportedAt: new Date().toISOString(), since: since.toISOString(), scope: scope.brandIds ? "brands" : "organisation", truncated: rows.length >= EXPORT_MAX_ROWS, events: rows }, null, 2) };
+  }
+  const cols = ["time", "action", "outcome", "actor", "actorType", "targetType", "targetId", "brandId", "details"] as const;
+  const lines = [cols.join(",")];
+  for (const r of rows) {
+    lines.push([r.createdAt.toISOString(), r.action, r.outcome, r.actorName ?? "", r.actorType, r.targetType ?? "", r.targetId ?? "", r.brandId ?? "", JSON.stringify(r.details)].map(csvCell).join(","));
+  }
+  return { filename: `security-log-${stamp}.csv`, contentType: "text/csv; charset=utf-8", body: lines.join("\r\n") + "\r\n" };
+}
+
+/** RFC 4180 quoting, and a leading quote on values a spreadsheet would treat as a formula. */
+export function csvCell(v: string) {
+  const safe = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v;
+  return /[",\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+}
+
+/**
+ * Retention (FOLLOW_UPS F4): delete audit events older than AUDIT_RETENTION_DAYS (default 400:
+ * a year plus a margin for annual reviews; at least 90). Runs once a day from the scheduler tick,
+ * in batches; records how many it removed as `audit.retention_purge`.
+ */
+export function auditRetentionDays(env: Record<string, string | undefined> = process.env) {
+  const raw = (env.AUDIT_RETENTION_DAYS ?? "").trim();
+  const n = raw ? Number(raw) : 400;
+  return Number.isInteger(n) && n >= 90 ? n : 400;
+}
+
+export async function purgeExpiredAuditEvents(now = new Date(), batch = 5000) {
+  const days = auditRetentionDays();
+  const before = new Date(now.getTime() - days * 86400_000);
+  const db = await getDb();
+  const e = schema.auditEvents;
+  let deleted = 0;
+  for (;;) {
+    const ids = (await db.select({ id: e.id }).from(e).where(lt(e.createdAt, before)).limit(batch)).map((r) => r.id);
+    if (!ids.length) break;
+    await db.delete(e).where(inArray(e.id, ids));
+    deleted += ids.length;
+    if (ids.length < batch) break;
+  }
+  if (deleted) {
+    await audit({ action: "audit.retention_purge", actorType: "system", targetType: "audit_events", details: { status: `${deleted} deleted`, reason: `older than ${days} days` } });
+    log.info("audit.retention_purge", { deleted, days });
+  }
+  return { deleted, before };
 }

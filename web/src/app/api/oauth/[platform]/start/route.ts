@@ -5,6 +5,7 @@ import { pkce } from "@/server/social/providers/others";
 import { appUrl } from "@/server/social/service";
 import { assertCanAdd } from "@/server/quota";
 import { randomToken, sign } from "@/server/crypto";
+import { requireRecentSecondFactor, StepUpRequired } from "@/server/auth/step-up";
 
 export async function GET(req: Request, { params }: { params: Promise<{ platform: string }> }) {
   const { platform } = await params;
@@ -14,7 +15,13 @@ export async function GET(req: Request, { params }: { params: Promise<{ platform
   try {
     access = await requireBrand(brandId, "admin");
     await assertCanAdd(access.brand.workspaceId, "socialAccounts");
+    await requireRecentSecondFactor(access.session);
   } catch (e) {
+    // Connecting an account is sensitive: confirm a recent second factor, then come back here.
+    if (e instanceof StepUpRequired) {
+      const here = new URL(req.url);
+      return NextResponse.redirect(`${appUrl()}/account/verify?next=${encodeURIComponent(here.pathname + here.search)}`);
+    }
     return back(`error=${encodeURIComponent((e as Error).message)}`);
   }
   const p = provider(platform);

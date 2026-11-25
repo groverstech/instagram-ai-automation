@@ -3,7 +3,11 @@ import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "./ui/toast";
 
-type R<T> = { ok: true; data: T } | { ok: false; error: string; status?: number; retryAfter?: number };
+type R<T> = { ok: true; data: T } | { ok: false; error: string; status?: number; retryAfter?: number; stepUp?: boolean };
+
+/** Fired when an action needs a recent second factor; StepUpDialog asks for a code, then calls `retry`. */
+export const STEP_UP_EVENT = "bp:step-up";
+export type StepUpDetail = { retry: () => void; cancel: () => void };
 
 /** Run a server action with pending state, toasts and a refresh. */
 export function useRun() {
@@ -26,7 +30,16 @@ export function useRun() {
         if (opts.success) toast(typeof opts.success === "function" ? opts.success(r.data) : opts.success);
         opts.onOk?.(r.data);
         if (opts.refresh !== false) router.refresh();
-      } else toast(r.error, "error");
+      } else if (r.stepUp && typeof window !== "undefined") {
+        // Ask for a code, then run the same action again.
+        const detail: StepUpDetail = { retry: () => run(fn, opts), cancel: () => toast("Cancelled: a code is needed to continue.", "error") };
+        window.dispatchEvent(new CustomEvent(STEP_UP_EVENT, { detail }));
+      } else {
+        toast(r.error, "error");
+        // 409: the content changed under the user (e.g. approving a post that was edited since it
+        // was shown, review M-2). Reload it so they review what's there now.
+        if (r.status === 409) router.refresh();
+      }
       setKey(null);
     });
   }

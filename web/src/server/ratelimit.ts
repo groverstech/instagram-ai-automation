@@ -22,7 +22,7 @@ export class RateLimitError extends Error {
   }
 }
 
-export type LimitKind = "ai" | "ai_heavy" | "upload" | "render" | "login" | "cron_auth";
+export type LimitKind = "ai" | "ai_heavy" | "upload" | "render" | "login" | "cron_auth" | "export" | "email" | "invite";
 type Scope = "user" | "org" | "key";
 type Rule = { scope: Scope; limit: number; windowSec: number };
 
@@ -45,6 +45,15 @@ export const RULES: Record<LimitKind, Rule[]> = {
   login: [{ scope: "key", limit: 10, windowSec: 900 }],
   /** Failed cron authentications per client IP (successful calls are not counted). */
   cron_auth: [{ scope: "key", limit: 10, windowSec: 900 }],
+  /** Organisation data exports (heavy: every brand's data and files). */
+  export: [{ scope: "user", limit: 3, windowSec: 3600 }],
+  /** Verification emails sent again, per account (by key). */
+  email: [{ scope: "key", limit: 5, windowSec: 3600 }],
+  /** Invitations sent or re-sent, per organisation and per person. */
+  invite: [
+    { scope: "org", limit: 30, windowSec: 3600 },
+    { scope: "user", limit: 20, windowSec: 3600 },
+  ],
 };
 
 /** Simultaneously running AI tasks. */
@@ -63,6 +72,9 @@ const MESSAGES: Record<LimitKind, string> = {
   render: "Too many image renders in a short time.",
   login: "Too many sign-in attempts.",
   cron_auth: "Too many failed cron authentication attempts.",
+  export: "You've exported several times in the last hour.",
+  email: "Several verification emails were sent recently.",
+  invite: "Too many invitations in the last hour.",
 };
 
 function retryText(sec: number) {

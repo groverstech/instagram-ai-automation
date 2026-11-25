@@ -25,6 +25,12 @@ export interface StorageProvider {
   put(key: string, data: Buffer, mime: string): Promise<string>;
   get(key: string): Promise<Buffer>;
   remove(key: string): Promise<void>;
+  /**
+   * Delete every object under a folder-like prefix (e.g. `brands/<id>`), for deleting a brand or an
+   * organisation. The prefix follows the same rules as a key and must name a folder at least two
+   * levels deep, so a mistake can't empty the whole store.
+   */
+  removePrefix(prefix: string): Promise<void>;
   exists(key: string): Promise<boolean>;
   /** Cheap round-trip used by the readiness check: write, read back, delete a probe object. */
   health(): Promise<{ ok: boolean; detail?: string }>;
@@ -65,6 +71,10 @@ export function localDisk(root = process.env.STORAGE_DIR ?? path.join(process.cw
     },
     async remove(key) {
       await fs.rm(resolve(key), { force: true });
+    },
+    async removePrefix(prefix) {
+      if (prefix.split("/").length < 2) throw new StorageKeyError("A deletion prefix must be at least two levels deep");
+      await fs.rm(resolve(prefix), { recursive: true, force: true });
     },
     async exists(key) {
       try {
@@ -119,6 +129,7 @@ export const storage: StorageProvider = {
   put: (key, data, mime) => impl().put(key, data, mime),
   get: (key) => impl().get(key),
   remove: (key) => impl().remove(key),
+  removePrefix: (prefix) => impl().removePrefix(prefix),
   exists: (key) => impl().exists(key),
   health: () => impl().health(),
 };

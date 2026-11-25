@@ -90,7 +90,7 @@ describe("agent pipeline (mock provider)", () => {
     const db = await getDb();
     const [post] = await db.select().from(schema.posts).where(eq(schema.posts.brandId, brandId)).limit(1);
     await expect(publishPost(post.id)).rejects.toThrow(/approved/);
-    await approvePost(brandId, post.id, userId);
+    await approvePost(brandId, post.id, userId, await (await import("./social/approval")).currentApprovalHash(await getDb(), post));
     const r = await publishPost(post.id);
     expect(r.ok).toBe(false);
     const [after] = await db.select().from(schema.posts).where(eq(schema.posts.id, post.id));

@@ -2,8 +2,11 @@ import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { addDays, endOfMonth, endOfWeek, format, parse, startOfMonth, startOfWeek } from "date-fns";
 import { requireActiveBrand } from "@/server/auth/guard";
 import { getDb, schema } from "@/server/db/client";
+import { withTenant } from "@/server/db/tenant";
 import { CalendarView } from "@/components/calendar/view";
 import { PROVIDERS } from "@/server/social/registry";
+import { checksNeeded } from "@/server/social/publish-ledger";
+import { currentApprovalHash } from "@/server/social/approval";
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ m?: string; post?: string }> }) {
   const sp = await searchParams;
@@ -12,10 +15,15 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ m
   const from = startOfWeek(startOfMonth(month), { weekStartsOn: 1 });
   const to = addDays(endOfWeek(endOfMonth(month), { weekStartsOn: 1 }), 1);
   const db = await getDb();
-  const [posts, accounts, creatives, campaigns] = await Promise.all([
-    db.select().from(schema.posts).where(and(eq(schema.posts.brandId, brand.id), gte(schema.posts.scheduledAt, from), lte(schema.posts.scheduledAt, to))),
+  // Posts and creatives are read under the organisation's row-level security (RLS pilot, S8).
+  const [[posts, creatives], accounts, campaigns] = await Promise.all([
+    withTenant(brand.workspaceId, (t) =>
+      Promise.all([
+        t.select().from(schema.posts).where(and(eq(schema.posts.brandId, brand.id), gte(schema.posts.scheduledAt, from), lte(schema.posts.scheduledAt, to))),
+        t.select({ id: schema.creatives.id, format: schema.creatives.format, status: schema.creatives.status, concept: schema.creatives.concept }).from(schema.creatives).where(eq(schema.creatives.brandId, brand.id)).orderBy(desc(schema.creatives.createdAt)).limit(60),
+      ]),
+    ),
     db.select().from(schema.socialAccounts).where(eq(schema.socialAccounts.brandId, brand.id)),
-    db.select({ id: schema.creatives.id, format: schema.creatives.format, status: schema.creatives.status, concept: schema.creatives.concept }).from(schema.creatives).where(eq(schema.creatives.brandId, brand.id)).orderBy(desc(schema.creatives.createdAt)).limit(60),
     db.select({ id: schema.campaigns.id, name: schema.campaigns.name }).from(schema.campaigns).where(eq(schema.campaigns.brandId, brand.id)),
   ]);
   let focus = sp.post ? posts.find((p) => p.id === sp.post) : undefined;
@@ -24,10 +32,17 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ m
     if (p) focus = p;
   }
   const all = focus && !posts.some((p) => p.id === focus!.id) ? [...posts, focus] : posts;
+  // Failed posts whose last attempt may have gone out need a check before publishing again (PR 4.4a).
+  const checks = await withTenant(brand.workspaceId, (t) => checksNeeded(all.filter((p) => p.status === "failed"), t));
+  // The version each approvable post is shown at (review M-2): approving sends it back, and the
+  // approval is refused if the post, its creative or the brand's look changed since.
+  const reviewHashes = new Map(await Promise.all(all.filter((p) => ["draft", "pending_approval"].includes(p.status)).map(async (p) => [p.id, await currentApprovalHash(db, p)] as const)));
   return (
     <CalendarView
       key={format(month, "yyyy-MM")}
       brandId={brand.id}
+      brandName={brand.name}
+      publishingPaused={Boolean(brand.publishingPausedAt)}
       role={role}
       month={format(month, "yyyy-MM")}
       platforms={brand.platforms}
@@ -51,6 +66,10 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ m
         socialAccountId: p.socialAccountId,
         externalUrl: p.externalUrl,
         publishError: p.publishError,
+        check: checks[p.id] ?? null,
+        reviewHash: reviewHashes.get(p.id) ?? null,
+        origin: p.origin,
+        autoApprovedVersion: p.autoApprovedVersion,
         rationale: p.rationale,
         brief: String((p.copy as { brief?: string }).brief ?? ""),
         hooks: ((p.copy as { hooks?: string[] }).hooks ?? []) as string[],

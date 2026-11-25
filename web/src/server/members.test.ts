@@ -3,9 +3,11 @@ import { eq } from "drizzle-orm";
 
 process.env.AI_PROVIDER = "mock";
 process.env.PGLITE_DIR = "memory://";
+process.env.EMAIL_PROVIDER = "memory";
 
 const { getDb, schema } = await import("./db/client");
 const m = await import("./members");
+const { memoryOutbox } = await import("./email");
 const { AccessError, listAccessibleBrands, requireBrandForUser } = await import("./auth/guard");
 type SessionUser = import("./auth/session").SessionUser;
 
@@ -43,7 +45,13 @@ describe("Settings: multi-brand client access", () => {
     const db = await getDb();
     const inv = await m.inviteMemberFor(sess(adminId), ws, "client@x.test", "editor", [b1, b3]);
     expect(inv.brandIds?.sort()).toEqual([b1, b3].sort());
-    expect(inv.status).toBe("active"); // the user already exists
+    // Pending until accepted, even though the person already has an account: nobody is added silently.
+    expect(inv.status).toBe("invited");
+    expect(await listAccessibleBrands(clientId)).toEqual([]);
+    const mail = memoryOutbox().filter((x) => x.to === "client@x.test").at(-1)!;
+    expect(mail.subject).toMatch(/invited you to Agency/);
+    const token = new URL(mail.text.match(/https?:\/\/\S+\/invite\?token=\S+/)![0]).searchParams.get("token")!;
+    await m.acceptInviteFor({ ...sess(clientId), user: { id: clientId, email: "client@x.test", name: "client" } }, token);
     const ids = (await listAccessibleBrands(clientId)).map((x) => x.brand.id).sort();
     expect(ids).toEqual([b1, b3].sort());
     await expect(requireBrandForUser(sess(clientId), b2, "viewer")).rejects.toBeInstanceOf(AccessError);

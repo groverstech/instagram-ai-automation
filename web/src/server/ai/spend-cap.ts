@@ -4,7 +4,9 @@ import { getDb, schema, type DB } from "../db/client";
 import type { UsageOutcome } from "../db/schema";
 import { log } from "../log";
 import { aiContext } from "./context";
-import { AIAccountingError, AISpendCapConfigError, AISpendCapError } from "./errors";
+import { AIAccountingError, AICreditLimitError, AISpendCapConfigError, AISpendCapError, AIStoppedError } from "./errors";
+import { assertNotStopped, tripTripwire, tripwireExceeded } from "./controls";
+import { creditGate } from "./credit-gate";
 import type { ResolvedRoute } from "./routes";
 
 /**
@@ -111,6 +113,7 @@ export async function committedSpendUsd(
   since: Date,
   env: Env = process.env,
   db?: Executor,
+  provider?: string,
 ): Promise<{ usd: number; pricedUsd: number; reservedUsd: number; unpricedAttempts: number; pendingAttempts: number }> {
   const cfg = spendCapConfig(env);
   const e = schema.usageEvents;
@@ -118,7 +121,7 @@ export async function committedSpendUsd(
   const [priced] = await q
     .select({ usd: sql<number>`coalesce(sum(${e.costUsd}), 0)` })
     .from(e)
-    .where(and(gte(e.createdAt, since), ne(e.provider, "mock")));
+    .where(and(gte(e.createdAt, since), ne(e.provider, "mock"), provider ? eq(e.provider, provider) : undefined));
   const fallback = sql`case when ${e.kind} = 'image' then ${cfg.imageReserveUsd}::real else ${cfg.textReserveUsd}::real end`;
   const [held] = await q
     .select({
@@ -127,7 +130,7 @@ export async function committedSpendUsd(
       pending: sql<number>`count(*) filter (where ${e.outcome} = 'pending')`,
     })
     .from(e)
-    .where(and(gte(e.createdAt, since), ne(e.provider, "mock"), isNull(e.costUsd), sql`(${e.outcome} in ('pending', 'unknown') or ${e.priceSource} in ('unpriced', 'unknown'))`));
+    .where(and(gte(e.createdAt, since), ne(e.provider, "mock"), provider ? eq(e.provider, provider) : undefined, isNull(e.costUsd), sql`(${e.outcome} in ('pending', 'unknown') or ${e.priceSource} in ('unpriced', 'unknown'))`));
   const pricedUsd = Number(priced?.usd ?? 0);
   const reservedUsd = Number(held?.usd ?? 0);
   return { usd: pricedUsd + reservedUsd, pricedUsd, reservedUsd, unpricedAttempts: Number(held?.n ?? 0), pendingAttempts: Number(held?.pending ?? 0) };
@@ -225,14 +228,21 @@ export async function openAttempt(
     throw new AIAccountingError("the database is unavailable");
   }
   const ctx = aiContext();
-  let id: string;
+  let id: string | null;
+  let tripped: Awaited<ReturnType<typeof tripwireExceeded>> = null;
   try {
     id = await db.transaction(async (tx) => {
       await tx.execute(sql`select pg_advisory_xact_lock(${LEDGER_LOCK})`);
+      // Kill switch and tripwire first (controls.ts): a stopped scope is never sent.
+      await assertNotStopped(tx, route, env);
+      tripped = await tripwireExceeded(tx, route.provider, reserve, env);
+      if (tripped) return null;
       if (parsed.capUsd !== null) {
         const { usd } = await committedSpendUsd(parsed.since, env, tx);
         if (usd + reserve > parsed.capUsd + 1e-9) throw new AISpendCapError(parsed.capUsd, usd, reserve);
       }
+      // Organisation and brand credits (PR 4.6): refused in enforce mode, logged in shadow mode.
+      await creditGate(tx, ctx, route.provider, reserve, env);
       const [row] = await tx
         .insert(schema.usageEvents)
         .values({
@@ -255,9 +265,13 @@ export async function openAttempt(
       return row.id;
     });
   } catch (e) {
-    if (e instanceof AISpendCapError) throw e;
+    if (e instanceof AISpendCapError || e instanceof AIStoppedError || e instanceof AICreditLimitError || e instanceof AIAccountingError) throw e;
     log.error("ai.usage_write_failed", { route: route.key, stage: "pending", error: e instanceof Error ? e.message : String(e) });
     throw new AIAccountingError("the usage ledger couldn't be written");
+  }
+  if (tripped || !id) {
+    await tripTripwire(tripped!);
+    throw new AIStoppedError(`provider:${route.provider}`, "tripwire");
   }
   state().reservations++;
   return { id, reserveUsd: reserve };

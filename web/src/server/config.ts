@@ -68,7 +68,7 @@ export function migrateOnStart(env: Env = process.env): boolean {
 }
 
 const set = (v: string | undefined) => Boolean(v && v.trim());
-const BOOL_KEYS = ["MIGRATE_ON_START", "ALLOW_LOCAL_STORAGE_IN_PRODUCTION", "AI_ALLOW_MOCK_IN_PRODUCTION", "RUN_JOBS_IN_PROCESS", "AI_SPEND_CAP_REQUIRED", "AI_SPEND_LEDGER_SINGLE_SESSION"] as const;
+const BOOL_KEYS = ["MIGRATE_ON_START", "ALLOW_LOCAL_STORAGE_IN_PRODUCTION", "AI_ALLOW_MOCK_IN_PRODUCTION", "RUN_JOBS_IN_PROCESS", "AI_SPEND_CAP_REQUIRED", "AI_SPEND_LEDGER_SINGLE_SESSION", "MFA_REQUIRED_FOR_ADMINS"] as const;
 
 /** Validate the environment. Pure (takes the env as input) so it's easy to test. */
 export function checkConfig(env: Env = process.env): ConfigProblem[] {
@@ -77,6 +77,7 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   const warn = (key: string, message: string) => out.push({ level: "warning", key, message });
   const strict = isStrict(env);
   const prod = strict || env.NODE_ENV === "production";
+  if (strict && env.MFA_REQUIRED_FOR_ADMINS?.trim().toLowerCase() === "false") warn("MFA_REQUIRED_FOR_ADMINS", "Owners and admins can sign in without two-step verification. Remove this setting so it's required (FOLLOW_UPS F3).");
 
   const isProd = deployEnv(env) === "production";
   if (set(env.DEPLOY_ENV) && !knownEnv(norm(env.DEPLOY_ENV))) {
@@ -135,6 +136,31 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   else if (imageProvider === "openai" && !set(env.OPENAI_API_KEY)) {
     warn("OPENAI_API_KEY", "Not set: AI images are unavailable (brand-photo and type-led creatives still work).");
   }
+  for (const prev of (env.APP_SECRET_PREVIOUS ?? "").split(",").map((x) => x.trim()).filter(Boolean)) {
+    if (prev.length < 32) err("APP_SECRET_PREVIOUS", "Each previous secret must be the full old APP_SECRET (32+ characters). A shorter one is ignored, so values encrypted with it can't be read.");
+    else if (prev === env.APP_SECRET) warn("APP_SECRET_PREVIOUS", "Same as APP_SECRET: nothing to rotate from. Remove it.");
+  }
+  {
+    const a = (env.AUTONOMOUS_PUBLISHING ?? "").trim().toLowerCase();
+    if (a && a !== "on" && a !== "off") err("AUTONOMOUS_PUBLISHING", "Use on or off (default off).");
+    else if (a === "on" && strict) warn("AUTONOMOUS_PUBLISHING", "Autonomous publishing is available to owners here. For the private beta it needs the owner's explicit authorisation (decision D-28).");
+  }
+  if (strict && (env.SOCIAL_SANDBOX ?? "").trim().toLowerCase() === "true") err("SOCIAL_SANDBOX", "The social sandbox simulates every platform and is for development, demos and CI only. Remove it here: it's ignored in staging and production.");
+  const retention = (env.AUDIT_RETENTION_DAYS ?? "").trim();
+  if (retention && !(Number.isInteger(Number(retention)) && Number(retention) >= 90)) err("AUDIT_RETENTION_DAYS", "Use a whole number of days, at least 90 (default 400). Until it's fixed, 400 applies.");
+  // AI kill switch and tripwire (ai/controls.ts).
+  for (const sc of (env.AI_STOP ?? "").split(",").map((x) => x.trim()).filter(Boolean)) {
+    if (!/^(all|anthropic|openai|provider:(anthropic|openai)|model:[\w.\-:/]{1,100})$/.test(sc)) err("AI_STOP", `"${sc}" isn't a scope. Use all, anthropic, openai or model:<id>. While it's set, every AI request is refused.`);
+  }
+  if ((env.AI_TRIPWIRE_USD ?? "").trim() !== "" && !(Number(env.AI_TRIPWIRE_USD) > 0)) err("AI_TRIPWIRE_USD", "Use a dollar amount above 0, or leave it unset for no tripwire.");
+  if ((env.AI_TRIPWIRE_WINDOW_MIN ?? "").trim() !== "" && !(Number(env.AI_TRIPWIRE_WINDOW_MIN) >= 1 && Number(env.AI_TRIPWIRE_WINDOW_MIN) <= 1440)) err("AI_TRIPWIRE_WINDOW_MIN", "Use a number of minutes from 1 to 1440.");
+  if (strict && (env.AI_TRIPWIRE_USD ?? "").trim() === "") warn("AI_TRIPWIRE_USD", "No AI spending tripwire: a runaway loop or abuse isn't stopped automatically. Set it well above normal spend per window (docs/AI_SPEND_CONTROLS.md).");
+  const signup = norm(env.SIGNUP_MODE);
+  if (signup && !["invite_only", "open"].includes(signup)) err("SIGNUP_MODE", "Use `invite_only` (private beta; default in staging and production) or `open`. Until it's fixed, sign-up is invitation-only.");
+  else if (strict && signup === "open") warn("SIGNUP_MODE", "Sign-up is open to anyone: the private beta is invitation-only (`invite_only`, the default here).");
+  const creditsMode = norm(env.CREDITS_MODE);
+  if (creditsMode && !["shadow", "off", "enforce"].includes(creditsMode)) err("CREDITS_MODE", "Use `shadow` (default), `off` or `enforce`.");
+  else if (creditsMode === "enforce" && strict) warn("CREDITS_MODE", "Credit enforcement is on: AI requests over an organisation's or brand's monthly credits are refused. It needs the owner's approval after a shadow period (decision D-17).");
 
   // AI models and routing (docs/AI_PROVIDERS.md): only catalogued models, so costs are known.
   if (set(env.ANTHROPIC_MODEL) && !Object.hasOwn(TEXT_MODELS, env.ANTHROPIC_MODEL!.trim())) {
@@ -175,7 +201,15 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
     if (!set(env.AI_SPEND_CAP_USD)) err("AI_SPEND_CAP_USD", "Required with AI_SPEND_CAP_REQUIRED (and in staging): the hard spending cap in USD.");
     if (!set(env.AI_SPEND_CAP_SINCE)) err("AI_SPEND_CAP_SINCE", "Required with AI_SPEND_CAP_REQUIRED (and in staging): when the budget starts, in UTC, e.g. 2026-11-14T00:00:00Z.");
     else if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(env.AI_SPEND_CAP_SINCE!.trim())) err("AI_SPEND_CAP_SINCE", "Must be UTC in the form 2026-11-14T00:00:00Z.");
-    if (set(env.VOYAGE_API_KEY)) err("VOYAGE_API_KEY", "Voyage embeddings aren't covered by the spending cap, so they're refused while it is required. Unset it (the local embedder is used).");
+  }
+  // Voyage embeddings aren't metered by the AI ledger (review L3). The app refuses to call them
+  // whenever a control depends on that metering (ai/embeddings.ts voyageRefusal) and uses the local
+  // embedder instead; a key set under those conditions is a configuration error, so it's visible.
+  if (set(env.VOYAGE_API_KEY)) {
+    if (capRequired || set(env.AI_SPEND_CAP_USD)) err("VOYAGE_API_KEY", "Voyage embeddings aren't metered by the spending cap, so they're refused while a cap is set. Unset it (the local embedder is used).");
+    else if (set(env.AI_TRIPWIRE_USD)) err("VOYAGE_API_KEY", "Voyage embeddings aren't metered by the spending tripwire, so they're refused while it's set. Unset it (the local embedder is used).");
+    else if (norm(env.CREDITS_MODE) === "enforce") err("VOYAGE_API_KEY", "Voyage embeddings aren't metered by credits, so they're refused while credits are enforced. Unset it (the local embedder is used).");
+    else if (strict && norm(env.VOYAGE_UNMETERED_OK) !== "true") err("VOYAGE_API_KEY", "Voyage spend isn't metered by BrandPilot's AI controls. Set VOYAGE_UNMETERED_OK=true to accept that here, or unset the key (the local embedder is used).");
   }
   // Images are priced per token from reported usage; a flat per-image price is no longer used.
   for (const k of Object.keys(env)) {
@@ -205,8 +239,18 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   for (const k of ["DATABASE_POOL_MAX", "WORKER_INTERVAL_MS", "WORKER_DRAIN_MS"] as const) {
     if (set(env[k]) && !/^[1-9]\d*$/.test(env[k]!.trim())) err(k, "Must be a positive whole number.");
   }
-  if (set(env.EMAIL_PROVIDER) && norm(env.EMAIL_PROVIDER) !== "log") err("EMAIL_PROVIDER", "Unknown provider. Only `log` exists until an email provider is chosen.");
-  else if (strict) warn("EMAIL_PROVIDER", "No email provider: emails can't be sent in this environment (sending fails loudly).");
+  {
+    const p = norm(env.EMAIL_PROVIDER) || "log";
+    if (!["log", "file", "memory", "postmark", "resend"].includes(p)) err("EMAIL_PROVIDER", "Use postmark or resend (log, file or memory in development and tests).");
+    else if (p === "postmark" || p === "resend") {
+      if (!set(env.EMAIL_API_KEY)) err("EMAIL_API_KEY", `Required with EMAIL_PROVIDER=${p}.`);
+      if (!set(env.EMAIL_FROM)) err("EMAIL_FROM", `Required with EMAIL_PROVIDER=${p}, e.g. "BrandPilot <no-reply@yourdomain>".`);
+    } else if (strict && p !== "log") err("EMAIL_PROVIDER", `${p} is for development and tests only.`);
+    else if (strict) warn("EMAIL_PROVIDER", "No email provider: emails can't be sent in this environment (sending fails loudly). Email verification, invitations and password reset need one (decision D-7).");
+    const v = norm(env.EMAIL_VERIFICATION);
+    if (v && v !== "required" && v !== "optional") err("EMAIL_VERIFICATION", "Use required or optional (default: required in staging and production).");
+    else if (v === "optional" && strict) err("EMAIL_VERIFICATION", "Email verification can't be optional in staging or production.");
+  }
 
   // Paired settings: an ID without its secret (or vice versa) is a misconfiguration.
   for (const [id, secret] of [

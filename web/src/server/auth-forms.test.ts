@@ -46,8 +46,15 @@ describe("sign-in and sign-up keep what was typed after an error", () => {
 
   it("a rate-limited sign-in also keeps the email", async () => {
     ip = "198.51.100.20";
+    // The limiter counts in fixed 15-minute windows: pin the clock mid-window so the 11 attempts
+    // can't straddle a boundary (that made this test fail when CI ran it at hh:44:59).
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-01-01T00:07:00Z") });
     let r: Awaited<ReturnType<typeof logIn>> = {};
-    for (let i = 0; i < 11; i++) r = await logIn({}, form({ email: "limited@x.test", password: "pw-attempt-123" }));
+    try {
+      for (let i = 0; i < 11; i++) r = await logIn({}, form({ email: "limited@x.test", password: "pw-attempt-123" }));
+    } finally {
+      vi.useRealTimers();
+    }
     expect(r.error).toMatch(/Too many sign-in attempts/);
     expect(r.values).toEqual({ email: "limited@x.test" });
     expect(JSON.stringify(r)).not.toContain("pw-attempt-123");

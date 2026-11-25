@@ -189,7 +189,8 @@ limiter, and are never cached. Responses carry `version` from `APP_VERSION` or `
 |---|---|
 | `DEPLOY_ENV` | `staging` or `production` (§1). The image defaults to `production`. |
 | `APP_URL` | Public https URL, e.g. `https://app.example.com`. OAuth redirects, Stripe return URLs, signed media links. |
-| `APP_SECRET` | 32+ random characters (`openssl rand -base64 48`). Encrypts OAuth tokens at rest, signs links, keys the audit-log IP hashes. Rotating it invalidates stored tokens (users reconnect accounts). |
+| `APP_SECRET` | 32+ random characters (`openssl rand -base64 48`). Encrypts OAuth tokens and two-step secrets at rest, signs links, keys recovery-code and audit-log hashes. Rotate it with `APP_SECRET_PREVIOUS` (§7, "Rotating APP_SECRET"): nobody has to reconnect. |
+| `APP_SECRET_PREVIOUS` | During a rotation only: the old `APP_SECRET` (comma-separated if several). Reads accept it; writes use the new secret. Each must be the full old secret (32+ characters) |
 | `DATABASE_URL` | Postgres connection string (`postgres://…`). |
 | `BRANDPILOT_ANTHROPIC_API_KEY` | Claude API key, for every AI feature. `ANTHROPIC_API_KEY` still works as a fallback when this is unset. |
 
@@ -230,6 +231,13 @@ Full reference, including routing, retries, prices and the usage ledger:
 | `OPENAI_IMAGE_PRICE_*_PER_MTOK` | Contract rates per 1M tokens. Unset: OpenAI list prices from the catalog. Rates can also be changed without a redeploy in the `ai_prices` table ([AI_PROVIDERS.md](AI_PROVIDERS.md#how-costs-are-calculated)). `IMAGE_PRICE_USD*` is retired and ignored. |
 | `AI_TEXT_TIMEOUT_MS`, `AI_IMAGE_TIMEOUT_MS`, `AI_MAX_ATTEMPTS`, `AI_IMAGE_MAX_ATTEMPTS`, `AI_RETRY_BASE_MS`, `AI_RETRY_MAX_WAIT_MS`, `AI_CIRCUIT_THRESHOLD`, `AI_CIRCUIT_OPEN_MS` | Timeouts, retries and the circuit breaker (defaults in AI_PROVIDERS.md) |
 | `AI_MONTHLY_COST_LIMIT_USD`, `AI_MONTHLY_COST_LIMIT_USD_<PLAN>` | Optional monthly AI spending limit per organisation, from estimated cost; unset means none |
+| `SOCIAL_SANDBOX` | `true` simulates every social platform (connect, publish, metrics) for development, demos and the CI lifecycle journey. **A configuration error in staging and production**, where it's ignored |
+| `RLS_PILOT` | `on` runs the pilot's reads under row-level security (docs/RLS_PILOT.md). The app's database role must be an ordinary role, not a superuser and without `BYPASSRLS`; otherwise start-up refuses (staging and production with the pilot on) or logs `db.role_bypasses_rls` |
+| `AUDIT_RETENTION_DAYS` | Security log retention (default 400, minimum 90); older events are deleted once a day by the scheduler tick |
+| `AI_STOP` | Kill switch from the environment: `all`, `anthropic`, `openai`, `model:<id>` (comma-separated). Normally use `npm run ai:controls` instead, which needs no restart |
+| `AI_TRIPWIRE_USD`, `AI_TRIPWIRE_WINDOW_MIN` | Spending tripwire: estimated spend per provider in the window (default 15 minutes) above which that provider is stopped until a person resumes it. Unset means no tripwire; staging and production warn |
+| `SIGNUP_MODE` | `invite_only` (default in staging and production) or `open` (default elsewhere). Invite-only: an account can be created only for an email on the beta list (`npm run beta:invite -- add <email> --by <name>`; `list`, `revoke`) or with a pending organisation invitation. No email is sent yet: tell invitees yourself. Uninvited emails all get the same refusal, before any account lookup |
+| `CREDITS_MODE` | `shadow` (default) or `off`. Plans and credits are configured with `npm run credits` (docs/CREDITS.md); credits are not enforced until PR 4.6 |
 | `LIVE_REPORT_DIR` | Where `npm run test:live` writes its report; Settings shows the result |
 | `CREATIVE_BRAND_CHECK` | `off` skips the Claude vision review (deterministic checks still run) |
 | `AI_PROVIDER=mock` | **Demo mode.** Never in production: boot refuses it there. Elsewhere with `NODE_ENV=production` it needs `AI_ALLOW_MOCK_IN_PRODUCTION=true` (demos and E2E only). |
@@ -239,7 +247,8 @@ Full reference, including routing, retries, prices and the usage ledger:
 | Variable | Purpose |
 |---|---|
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_GROWTH`, `STRIPE_PRICE_AGENCY` | Billing (the webhook secret is required whenever the key is set) |
-| `META_APP_ID`/`META_APP_SECRET`, `LINKEDIN_CLIENT_ID`/`_SECRET`, `GOOGLE_CLIENT_ID`/`_SECRET`, `PINTEREST_CLIENT_ID`/`_SECRET`, `TIKTOK_CLIENT_KEY`/`_SECRET` | Social OAuth apps (each pair must be set together) |
+| `META_APP_ID`/`META_APP_SECRET`, `LINKEDIN_CLIENT_ID`/`_SECRET`, `GOOGLE_CLIENT_ID`/`_SECRET`, `PINTEREST_CLIENT_ID`/`_SECRET`, `TIKTOK_CLIENT_KEY`/`_SECRET` | Social OAuth apps (each pair must be set together). `META_APP_SECRET` also verifies Meta's data-deletion and deauthorise callbacks ([PLATFORM_READINESS.md](PLATFORM_READINESS.md)) |
+| `LEGAL_ENTITY_NAME`, `LEGAL_CONTACT_EMAIL` | Fill the company name and contact address in the public legal pages; unset shows a visible "to be confirmed" marker |
 | `META_GRAPH_VERSION`, `LINKEDIN_VERSION` | Pinned platform API versions |
 | `ANDROID_PACKAGE_NAME`, `ANDROID_CERT_SHA256` | Android TWA asset links (see `ANDROID.md`) |
 
@@ -262,6 +271,25 @@ never runs in CI. It refuses demo mode and reports a provider without a key as `
 - **OAuth tokens:** AES-256-GCM encrypted at rest with `APP_SECRET`.
 - **Separate secrets per environment** (staging never shares production keys). Rotate after
   personnel changes and after any test campaign that shared keys.
+
+### Rotating APP_SECRET
+
+Nobody is signed out of their social accounts or two-step verification (`src/server/crypto.ts`, `src/server/secrets-rotate.ts`). Encrypted values carry the id of the key that wrote them, and only key ids and counts are printed.
+
+1. Generate a new secret (`openssl rand -base64 48`). Set it as `APP_SECRET`, set the old one as `APP_SECRET_PREVIOUS`, and deploy.
+   - Reads accept both secrets; writes use the new one.
+   - OAuth state and media links signed with the old secret stay valid until they expire.
+2. Run `npm run secrets:rotate -- reencrypt --by "<you>"`.
+   - Add `--dry-run` first if you like.
+   - It re-encrypts social-account tokens and two-step secrets under the new key, row by row, with compare-and-set.
+   - It's audited as `config.secrets_reencrypt`.
+   - Any value no configured key can read is listed and the exit code is 1.
+3. Run `npm run secrets:rotate -- status`. It shows what still depends on the old key.
+   - **Encrypted values** should all be under the current key now.
+   - **Recovery codes** can't be re-hashed without the codes themselves. A person's codes stay under the old key until they make new ones, and keep working while the old key is in `APP_SECRET_PREVIOUS`.
+4. Remove `APP_SECRET_PREVIOUS` when you're ready. Recovery codes still under the old key then stop working; those people can still sign in with their authenticator app and make new codes. Removing it also ends signed links from before the rotation.
+
+Audit-log IP and email hashes made before the rotation no longer match new ones. That only affects the per-source noise limit, which restarts.
 
 ## 8. Network security (required)
 
@@ -319,8 +347,15 @@ For large deployments, also put a CDN or WAF rate limit in front.
   2–3 minutes after a crash, idempotent steps, and retries with backoff for temporary provider
   errors.
 - **Publishing:** the claim is atomic, so a post is published once even when "publish now" and the
-  scheduler race. A publish interrupted mid-flight is **not** retried automatically; the post is
-  flagged for a human to check the platform first.
+  scheduler race. Every attempt is recorded in `publish_attempts` before anything is sent (PR 4.4a).
+  An attempt that got no answer, or whose worker stopped, is **never re-sent blindly**: on Instagram
+  and Facebook the worker or "Check Instagram/Facebook" (post panel, admins) reads the account and
+  either marks the post published or confirms it's safe to publish again (a check waits 2 minutes
+  after the attempt); on other platforms a person marks the outcome. Logs: `publish.outcome_unknown`,
+  `publish.reconciled`.
+- **Token health:** when a platform rejects an account's token (or it expires), the account shows
+  "Reconnect" in Social Accounts, its publishes fail at once with that message, and metric syncs
+  skip it (`social.needs_reconnect`). Connecting the account again clears it.
 - **Jobs queue** (`jobs`: publishing, metric syncs): any number of workers, the in-process
   scheduler and the cron route can run at once; each due job is claimed by one runner with a single
   conditional update, oldest first. A failed job is retried with backoff (1 minute × attempt, 3
@@ -328,6 +363,101 @@ For large deployments, also put a CDN or WAF rate limit in front.
   runner stopped is recovered after 10 minutes; a runner that outlives that window can't overwrite
   the outcome the new owner records (`jobs.claim_lost`). A failed tick is logged
   (`jobs.tick_failed`, `worker.tick_failed`) and the cron route answers 500 with a reference.
+
+### Account recovery (support)
+
+Use this when someone can't sign in. **Confirm their identity out of band first**: a call to a known number, or confirmation from their organisation's owner. Then:
+
+- **Forgotten password:**
+  - Until an email provider is configured, `/forgot-password` can't deliver the link.
+  - Run `npm run users -- reset-link --email <email> --by "<you>" --reason "<how you confirmed>"` and give the printed link (valid 24 hours, single use) only to that person.
+- **Lost authenticator and recovery codes:**
+  - Run `npm run users -- reset-mfa --email <email> --by "<you>" --reason "<how you confirmed>"`.
+  - It turns two-step verification off and signs the account out everywhere.
+  - Owners and admins must enrol again at their next sign-in.
+
+Every use appears in the organisation's Security log.
+
+### Emergency stop of all publishing (reviews M4, M-3)
+
+**Break-glass only.** For an incident that needs publishing stopped for every organisation (or one) at once:
+
+```
+npm run publishing:stop -- stop   --by "<your name>" --reason "<what happened>" [--org <organisation id>]
+npm run publishing:stop -- status
+npm run publishing:stop -- resume --by "<your name>" --reason "<why it's safe again>" [--org <organisation id>]
+```
+
+**What the stop does:**
+- Records an operator stop (`publishing_stops`, scope `all` or `org:<id>`). It's separate from each brand's own pause.
+- Every publishing path refuses while it's in force:
+  - the publish claim;
+  - the check immediately before the request that makes a post public (Instagram, Facebook);
+  - "Publish now", scheduling and the autonomy policy.
+- It covers every brand in scope: brands their admins had already paused, and brands created during the stop.
+- Cancels the covered brands' queued publish jobs.
+- Writes `publishing.emergency_stop` (who, why, scope) to each covered organisation's Security log.
+- Shows "Publishing stopped" with the reason on every covered brand.
+- A second stop with the same scope is refused; `status` shows the one in force.
+
+**What it can't do:**
+- Recall a post a platform has already received.
+- Stop a post that is already past its final request. A publish claimed earlier is checked again immediately before that request and stops there if it hasn't been sent.
+- On LinkedIn and Pinterest there's no separate final-request check: the claim is the last check.
+
+**Who can lift it: only an operator, with `resume`.**
+- **Brand admins can't.** "Resume publishing" in the app clears only the brand's own pause. While a stop is in force, it queues nothing and says the BrandPilot team's stop is still in force (audited as `publishing.resume` with `operatorStopInForce`).
+- **`resume` with the same scope as the stop:**
+  - removes the stop;
+  - re-queues scheduled posts still due in the future (once);
+  - returns posts whose time passed to "approved", so nothing goes out late on its own;
+  - writes `publishing.emergency_resume` (who, why, who stopped it, what was re-queued) to each organisation's Security log.
+- **Brands that stay paused after `resume`:**
+  - brands their own admins paused (they resume in the app);
+  - organisations still covered by another stop. For example, lifting `--org` while an `all` stop is in force queues nothing until `all` is lifted too.
+- **Never lift a stop by deleting the row:** scheduled posts would be left without jobs and would never publish.
+
+**Who may run it:** only named operators with production CLI or database access. Running it needs the production `DATABASE_URL`; the web app has no path to it. Before the first beta invitation, the owner records the operators here (at most two people):
+
+| Operator | Role | Since |
+|---|---|---|
+| _to be named by the owner_ | | |
+
+**Before beta invitations:**
+1. Rehearse a stop, an in-app resume attempt (it must not lift the stop) and an operator `resume` once on staging.
+2. Record the date here.
+
+**Raw SQL fallback (only if the CLI can't run):**
+
+```sql
+INSERT INTO publishing_stops (scope, reason, set_by) VALUES ('all', '<what happened>', '<your name>');
+```
+
+- Use `'org:<organisation id>'` for one organisation.
+- This blocks every publishing path at once.
+- It doesn't cancel queued jobs (they're refused when they run) or write the Security-log events: record what you did there.
+- Lift the stop only with the CLI's `resume`, once it can run.
+
+**Database privileges (migration 0025):**
+- The stop lives in the `publishing_stops` table.
+- The app's database role needs `SELECT` on it; the operator's role needs `SELECT`, `INSERT` and `DELETE`.
+- If the app can't read it, publishing refuses (fails closed) and only the banner is hidden. Grant the privileges when you apply the migration if your roles don't get them by default.
+
+**Upgrading from an earlier build of this PR:** brands paused by the first version of the stop command show the reason "Emergency stop by the BrandPilot team: …". They're ordinary brand pauses that their admins can resume. To hold them, run `stop` again with the new command.
+
+### Stopping AI spend (kill switch and tripwire)
+
+- **Stop:** `npm run ai:controls -- stop <all|anthropic|openai|model:<id>> --reason "<why>" --by "<you>"`.
+  - The next request in every process is refused before it's sent. Requests already in flight finish.
+  - Users see "AI features are paused by the BrandPilot team". The reason stays internal.
+  - The refused attempts appear in the usage ledger as `blocked` / `stopped`.
+- **Status:** `npm run ai:controls -- status`.
+- **Resume:** `npm run ai:controls -- resume <scope> --by "<you>"`. Both stop and resume are recorded as `ai.stop` / `ai.resume`.
+- **Tripwire:**
+  - It trips when a provider's estimated spend in the last `AI_TRIPWIRE_WINDOW_MIN` minutes would pass `AI_TRIPWIRE_USD`.
+  - It stops that provider with a `tripwire` stop and reports `AI spending tripwire: …` to the error monitor. Page on it.
+  - It never clears itself. Look at `npm run ai:billing -- log --since <window start>`, fix the cause, then resume.
+- **Without the database:** set `AI_STOP=all` and restart. An unreadable `AI_STOP` refuses every request.
 
 ### Logging, errors and monitoring
 
@@ -344,6 +474,9 @@ For large deployments, also put a CDN or WAF rate limit in front.
   - `config.refused`;
   - `db.migrate.failed`;
   - `jobs.publish_interrupted`;
+  - `jobs.dead`: a job out of retries, or interrupted with an unknown outcome. It's also reported through `captureError` (`where: "jobs.dead"`), so an error tracker pages on it;
+  - **`GET /api/health/jobs`** with `Authorization: Bearer $CRON_SECRET` failing: 503 when queued work is more than 15 minutes overdue or a job has made no progress for 15 minutes, i.e. the worker or the cron caller has stopped. It returns counts only (`overdue`, `stuck`, `dead24h`). Poll it every few minutes from the uptime monitor;
+  - `audit.retention_failed` and `ai.tripwire`;
   - `worker.stopped` with `drained: false`;
   - `ratelimit.*` spikes;
   - Anthropic and OpenAI spend.
@@ -408,7 +541,8 @@ None is implemented yet.
 - [ ] Egress firewall blocks private ranges and metadata endpoints.
 - [ ] `TRUSTED_PROXY_HOPS` / `CLIENT_IP_HEADER` match the real proxy chain (check one login's audit
       entry is attributed correctly).
-- [ ] Logs shipped; the alerts in §9 configured; Anthropic and Stripe spend alerts set.
+- [ ] Logs shipped; the alerts in §9 configured (including the `AI spending tripwire` error); Anthropic and Stripe spend alerts set.
+- [ ] `AI_TRIPWIRE_USD` set well above normal spend per window; `npm run ai:controls -- stop all` and `resume all` rehearsed once.
 - [ ] Real-provider validation run (`npm run test:live` plus the manual checks) with production
       keys.
 - [ ] One live brand analysed, and one strategy generated, end to end with real keys.

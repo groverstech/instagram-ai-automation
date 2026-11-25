@@ -8,6 +8,9 @@ import { billingStatus } from "@/server/billing";
 import { auditTrailFor } from "@/server/audit";
 import { aiOverviewFor } from "@/server/ai/overview";
 import { roleAtLeast } from "@/lib/roles";
+import { accountDeletionPlan } from "@/server/deletion";
+import { creditStatusFor } from "@/server/credit-caps";
+import { autonomyView } from "@/server/autonomy/service";
 
 export default async function Page({ searchParams }: { searchParams: Promise<{ billing?: string }> }) {
   const { billing } = await searchParams;
@@ -25,6 +28,10 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ b
       brandLimit={view.brandLimit}
       canAddBrand={view.canAddBrand}
       workspace={{ id: ws.id, name: ws.name, type: ws.type, plan: ws.plan }}
+      plan={view.plan}
+      plans={view.plans}
+      // AI credits: organisation-wide, so owners and admins with access to every brand only.
+      credits={!view.scoped && roleAtLeast(role, "admin") ? await creditStatusFor(session, ws.id) : null}
       // Organisation-wide data (usage across all brands, billing, infrastructure) is never sent to
       // brand-scoped client users: it would reveal brands and activity outside their access.
       billing={view.scoped ? null : {
@@ -40,7 +47,11 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ b
       // AI providers and usage: organisation-wide (all brands' spend), so never for brand-scoped
       // members; aiOverviewFor re-checks on the server.
       aiOverview={!view.scoped && roleAtLeast(role, "admin") ? await aiOverviewFor(session, ws.id) : null}
+      // Autonomy for the active brand: owners and admins see it; only owners change it.
+      autonomy={roleAtLeast(role, "admin") ? { brandId: brand.id, brandName: brand.name, view: await autonomyView(brand.id) } : null}
       members={view.members}
+      accountPlan={await accountDeletionPlan(session.user.id)}
+      mfaEnabled={Boolean(session.mfaEnabled)}
       brands={view.brands}
       integrations={view.scoped ? null : { ai: aiStatus(), image: imageStatus(), embeddings: process.env.VOYAGE_API_KEY ? "Voyage AI (voyage-3.5-lite)" : "Local hashing (set VOYAGE_API_KEY for semantic embeddings)", database: process.env.DATABASE_URL ? "PostgreSQL" : "Embedded PGlite (development)" }}
     />
