@@ -31,6 +31,8 @@ export type AuditAction =
   | "social.disconnect"
   | "social.data_deletion"
   | "social.deauthorized"
+  | "publishing.pause"
+  | "publishing.resume"
   | "billing.checkout_started"
   | "billing.plan_changed"
   | "creative.approve_override"

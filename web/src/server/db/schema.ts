@@ -107,6 +107,10 @@ export const brands = pgTable(
     colors: jsonb("colors").$type<string[]>().notNull().default([]),
     fonts: jsonb("fonts").$type<{ heading?: string; body?: string }>().notNull().default({}),
     onboardingComplete: boolean("onboarding_complete").notNull().default(false),
+    /** Emergency pause: while set, nothing is published or scheduled for this brand (publishing-pause.ts). */
+    publishingPausedAt: timestamp("publishing_paused_at", { withTimezone: true }),
+    publishingPausedBy: text("publishing_paused_by"),
+    publishingPauseReason: text("publishing_pause_reason"),
     createdAt: createdAt(),
   },
   (t) => [index("brands_ws_idx").on(t.workspaceId)],

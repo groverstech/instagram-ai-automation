@@ -16,6 +16,7 @@ import {
 } from "@/app/actions/posts";
 import { producePostAction, writeCopyAction } from "@/app/actions/ai";
 import { Badge, Button, Field, Input, Notice, PageHeader, Segmented, Select, Textarea } from "@/components/ui";
+import { PauseControl } from "./pause-control";
 import { CreativeThumb, PlatformTag, Rationale, StatusBadge } from "@/components/bits";
 import { PlanCalendarModal } from "@/components/calendar/plan-modal";
 import { useRun } from "@/components/hooks";
@@ -48,6 +49,9 @@ type Account = { id: string; platform: string; name: string; handle: string | nu
 
 export function CalendarView(props: {
   brandId: string;
+  brandName: string;
+  /** Emergency pause: publishing is stopped for this brand. */
+  publishingPaused: boolean;
   role: Role;
   month: string;
   platforms: string[];
@@ -105,11 +109,14 @@ export function CalendarView(props: {
         title={view === "month" ? format(monthDate, "MMMM yyyy") : `${format(weekStart, "d MMM")} – ${format(addDays(weekStart, 6), "d MMM yyyy")}`}
         description="Drag posts to reschedule. Drafts → approval → scheduled → published. Nothing goes live without an admin's approval."
         actions={
-          canEdit ? (
-            <Button variant="accent" onClick={() => setPlanOpen(true)}>
-              <Sparkles /> Plan with AI
-            </Button>
-          ) : null
+          <>
+            <PauseControl brandId={props.brandId} brandName={props.brandName} role={props.role} paused={props.publishingPaused} />
+            {canEdit ? (
+              <Button variant="accent" onClick={() => setPlanOpen(true)}>
+                <Sparkles /> Plan with AI
+              </Button>
+            ) : null}
+          </>
         }
       />
 

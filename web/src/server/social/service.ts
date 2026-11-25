@@ -6,6 +6,7 @@ import { provider } from "./registry";
 import { PublishNotSupported, type AccountForUse, type DiscoveredAccount } from "./types";
 import { renderCreativePng } from "../creative/render";
 import { remember } from "../memory";
+import { pausedMessage } from "../publishing-paused";
 
 export function appUrl() {
   return (process.env.APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
@@ -72,6 +73,9 @@ export async function publishPost(postId: string) {
   if (!post) throw new Error("Post not found");
   if (!["approved", "scheduled", "failed"].includes(post.status)) throw new Error(`Post must be approved before publishing (current status: ${post.status}).`);
   if (!post.approvedAt) throw new Error("Post has no recorded approval.");
+  // Emergency pause: refuse without changing the post, so resuming can pick it up again.
+  const [owner] = await db.select({ name: schema.brands.name, publishingPausedAt: schema.brands.publishingPausedAt }).from(schema.brands).where(eq(schema.brands.id, post.brandId));
+  if (owner?.publishingPausedAt) return { ok: false as const, error: pausedMessage(owner), paused: true as const };
 
   const fail = async (msg: string) => {
     await db.update(schema.posts).set({ status: "failed", publishError: msg }).where(eq(schema.posts.id, postId));
