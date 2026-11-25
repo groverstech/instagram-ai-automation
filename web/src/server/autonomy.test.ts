@@ -96,6 +96,7 @@ describe("autonomy on the simulated platform", () => {
     // A person's own approved post still publishes under Advisor (publishing stays a human decision).
     const db = await getDb();
     await db.update(schema.posts).set({ status: "approved", approvedAt: new Date(), approvedBy: ownerId }).where(eq(schema.posts.id, p.id));
+    await (await import("./social/approval")).recordApprovedContent(db, p.id);
     const r = await publishPost(p.id);
     expect(r.ok).toBe(true);
     expect((await get(p.id)).status).toBe("published");

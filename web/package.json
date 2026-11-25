@@ -23,6 +23,7 @@
     "ai:controls": "node --conditions=react-server --import tsx src/server/ai/controls-cli.ts",
     "secrets:rotate": "node --conditions=react-server --import tsx src/server/secrets-rotate-cli.ts",
     "users": "node --conditions=react-server --import tsx src/server/users-cli.ts",
+    "publishing:stop": "node --conditions=react-server --import tsx src/server/emergency-stop-cli.ts",
     "e2e:lifecycle": "bash e2e/lifecycle.sh"
   },
   "dependencies": {

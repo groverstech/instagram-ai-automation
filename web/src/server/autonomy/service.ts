@@ -1,4 +1,5 @@
 import "server-only";
+import { operatorStopFor } from "../publishing-paused";
 import crypto from "node:crypto";
 import { and, desc, eq, gte, inArray, isNotNull, lt, ne, sql } from "drizzle-orm";
 import { getDb, schema, type DB } from "../db/client";
@@ -83,7 +84,8 @@ export async function contextFor(db: Pick<DB, "select">, brand: Brand, post: Pos
     accountLevel: account?.autonomyLevel ?? null,
     planMax: await planMax(db, brand.workspaceId),
     suspended: Boolean(brand.autonomySuspendedAt),
-    paused: Boolean(brand.publishingPausedAt),
+    // The brand's own pause or an operator emergency stop (review M-3).
+    paused: Boolean(brand.publishingPausedAt) || Boolean(await operatorStopFor(db, brand.workspaceId)),
     aiStopped: await globalAiStopped(db, env),
     rules,
     rulesVersion: brand.autonomyRulesVersion,
@@ -176,7 +178,10 @@ export async function autonomyTick(now = new Date(), env: Env = process.env) {
         if (!fresh) return null;
         const d = decide("auto_approve", await contextFor(tx as unknown as DB, brand, fresh, acct ?? null, {}, env));
         if (d.result === "allow") {
-          await tx.update(schema.posts).set({ status: "scheduled", approvedAt: now, approvedBy: null, autoApprovedVersion: d.policyVersion }).where(eq(schema.posts.id, fresh.id));
+          // The policy approves exactly this version, like a person would (social/approval.ts).
+          const { currentApprovalHash } = await import("../social/approval");
+          const hash = await currentApprovalHash(tx as unknown as DB, fresh);
+          await tx.update(schema.posts).set({ status: "scheduled", approvedAt: now, approvedBy: null, autoApprovedVersion: d.policyVersion, approvedContentHash: hash }).where(eq(schema.posts.id, fresh.id));
         } else {
           await tx.update(schema.posts).set({ status: "pending_approval", rationale: [fresh.rationale, `Needs a person: ${d.reasons.join("; ")}`].filter(Boolean).join("\n") }).where(eq(schema.posts.id, fresh.id));
         }
@@ -208,7 +213,7 @@ export async function suspendAutonomy(brandId: string, reason: string) {
   if (!brand) return false;
   const back = await db
     .update(schema.posts)
-    .set({ status: "pending_approval", approvedAt: null, autoApprovedVersion: null })
+    .set({ status: "pending_approval", approvedAt: null, approvedBy: null, approvedContentHash: null, autoApprovedVersion: null })
     .where(and(eq(schema.posts.brandId, brandId), eq(schema.posts.status, "scheduled"), isNotNull(schema.posts.autoApprovedVersion)))
     .returning({ id: schema.posts.id });
   if (back.length) {
@@ -300,7 +305,7 @@ export async function updateAutonomy(brandId: string, actor: { userId: string },
     if (b.autonomyLevel !== "autonomous" || patch.autonomyRulesVersion) {
       const back = await tx
         .update(schema.posts)
-        .set({ status: "pending_approval", approvedAt: null, autoApprovedVersion: null })
+        .set({ status: "pending_approval", approvedAt: null, approvedBy: null, approvedContentHash: null, autoApprovedVersion: null })
         .where(and(eq(schema.posts.brandId, brandId), eq(schema.posts.status, "scheduled"), isNotNull(schema.posts.autoApprovedVersion)))
         .returning({ id: schema.posts.id });
       returned = back.length;

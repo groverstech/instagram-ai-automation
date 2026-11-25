@@ -190,6 +190,43 @@ An append-only `audit_events` table records:
   3 times.
 - **Interrupted publishes** are never re-sent automatically: the post is flagged so a person checks
   the platform first.
+- **Approval integrity (reviews H1, H-1, M-1, M-2):**
+  - **What the approval covers.** An approval records a hash of exactly what will be published:
+    - the post's caption, hashtags, title, platform, format, creative and target account;
+    - the creative's content and image;
+    - the brand name, colours, fonts and logos drawn on it.
+  - **The version the approver saw.** The Content Calendar sends the hash of the version it showed. If the post, its creative or the brand's look changed since, nothing is approved and the approver gets a 409 conflict and a reload. The check and the write happen in one transaction with the post row locked, so a concurrent edit either lands first (and the approval is refused) or is refused itself.
+  - **Edits after approval.** Editing any covered field withdraws the approval:
+    - the post goes back to "awaiting approval";
+    - queued jobs are cancelled;
+    - `post.approval_invalidated` is audited with the fields and the previous approver.
+  - **At publish.** The claim recomputes the hash and refuses on any difference, so changes made elsewhere (the Creative Studio, the brand profile) are caught too. Nothing is sent.
+    - The rows hashed at the claim are the ones published: there's no second read.
+    - Edits are refused while a post is publishing.
+  - **The image a platform fetches (M-1).** It's bound to the approval: the signed media link names the post and its approval hash.
+    - The link serves the image only while the post still carries that approval and its content still hashes to it, checked before and after rendering.
+    - Otherwise it answers 409 and serves nothing, so a change made while Instagram or Facebook is fetching can't reach them.
+    - The same check guards in-process renders (LinkedIn, Pinterest, the sandbox). A change caught there sends the post back to a person, unsent.
+    - Links without the binding are refused; responses are never cached.
+  - **Retries (H-1).** Each publish attempt records the approval hash it carried and the exact text it sent.
+    - An Instagram container from an earlier attempt is reused only for the same approval. After an edit and a new approval, a fresh container is created from the new version, and the old container is never published.
+    - A check after an uncertain attempt looks for the text that attempt sent.
+    - Content edits are refused until that check is done.
+  - **Legacy posts.** Posts approved before hashes existed need a fresh approval.
+  - **Not covered:** the scheduled time.
+  - **Limits:**
+    - The hash covers what the renderer reads today; a renderer change that reads more must extend it.
+    - A creative or brand change made after an approval but before publish isn't flagged until the publish claim. It's caught there, and nothing is sent.
+- **Schedule consistency (review M1):**
+  - Changing a scheduled post's time replaces its queued job.
+  - A job left over from an earlier time refuses to publish before the post's time.
+  - The publish claim prevents a double publish.
+- **Emergency pause and operator stop (reviews M4, M-3):**
+  - A brand's own pause is checked at the claim, and again immediately before the request that makes a post public (Instagram after image processing, Facebook before its single request).
+  - The operator emergency stop is a separate record (`publishing_stops`) that brand admins can't lift. Every publishing path checks it at the same points, and only the operator command `publishing:stop -- resume` lifts it. Both directions are audited.
+  - **A request already sent can't be recalled.** The runbook is in DEPLOYMENT §9.
+  - **Residual:** anyone with the production database credentials can delete the stop row (the same limit as the decision log below).
+- **The autonomy decision log (`agent_actions`) is append-only for the application (review L6):** a database trigger refuses direct `UPDATE` and `DELETE`. Deleting a post, brand or organisation still works through foreign keys. **It isn't tamper-proof against the database owner or a superuser,** who can disable the trigger. Tamper evidence against them needs a separate, restricted application role, or log shipping to external storage (an infrastructure decision).
 
 ## Public platform callbacks (PR 4.3)
 

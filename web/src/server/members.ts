@@ -1,6 +1,6 @@
 import "server-only";
 import { requireRecentSecondFactor } from "./auth/step-up";
-import { and, count, eq, gt, inArray, isNull, or } from "drizzle-orm";
+import { and, count, eq, gt, inArray, isNull, ne, or } from "drizzle-orm";
 import { z } from "zod";
 import { getDb, schema } from "./db/client";
 import { AccessError, inBrandScope, requireBrandForUser, requireWorkspaceRoleForUser } from "./auth/guard";
@@ -89,12 +89,24 @@ export async function inviteMemberFor(session: SessionUser, workspaceId: string,
   await enforce("invite", { workspaceId, userId: session.user.id });
   const db = await getDb();
   const [user] = await db.select().from(schema.users).where(eq(schema.users.email, e));
-  const [exists] = await db
-    .select({ id: schema.workspaceMembers.id })
+  const existing = await db
+    .select({ id: schema.workspaceMembers.id, status: schema.workspaceMembers.status, userId: schema.workspaceMembers.userId, expires: schema.workspaceMembers.inviteExpiresAt })
     .from(schema.workspaceMembers)
     .where(and(eq(schema.workspaceMembers.workspaceId, workspaceId), user ? or(eq(schema.workspaceMembers.userId, user.id), eq(schema.workspaceMembers.invitedEmail, e)) : eq(schema.workspaceMembers.invitedEmail, e)));
-  if (exists) throw new MemberError("That person is already a member or has a pending invitation. You can send the invitation again from the list.");
-  const [row] = await db.insert(schema.workspaceMembers).values({ workspaceId, invitedEmail: e, role, status: "invited", brandIds: scope, invitedBy: session.user.id }).returning();
+  // An expired invitation doesn't block inviting the person again (review L4): it's replaced.
+  const expired = existing.filter((x) => x.status === "invited" && !x.userId && x.expires && x.expires <= new Date());
+  if (existing.length > expired.length) throw new MemberError("That person is already a member or has a pending invitation. You can send the invitation again from the list.");
+  if (expired.length) await db.delete(schema.workspaceMembers).where(inArray(schema.workspaceMembers.id, expired.map((x) => x.id)));
+  let row: typeof schema.workspaceMembers.$inferSelect;
+  try {
+    [row] = await db.insert(schema.workspaceMembers).values({ workspaceId, invitedEmail: e, role, status: "invited", brandIds: scope, invitedBy: session.user.id }).returning();
+  } catch (err) {
+    // Two invitations at once: the unique index on pending invitations lets only one through.
+    if (/wm_pending_invite_uq|unique/i.test(String((err as { cause?: Error }).cause?.message ?? (err as Error).message))) {
+      throw new MemberError("That person is already a member or has a pending invitation. You can send the invitation again from the list.");
+    }
+    throw err;
+  }
   const { member, delivered } = await issueInvite(row.id, { id: session.user.id, name: session.user.name });
   await audit({ action: "member.invite", workspaceId, actorUserId: session.user.id, targetType: "member", targetId: row.id, details: { role, scopedBrands: scope?.length ?? null, existingUser: Boolean(user), emailed: delivered } });
   return { ...member, delivered };
@@ -137,9 +149,16 @@ export async function acceptInviteFor(session: SessionUser, token: string) {
   const [m] = await db.select().from(schema.workspaceMembers).where(and(eq(schema.workspaceMembers.inviteTokenHash, sha256(token)), pendingFor(now)));
   if (!m) throw new MemberError(INVITE_INVALID);
   if ((m.invitedEmail ?? "").toLowerCase() !== session.user.email.toLowerCase()) throw new MemberError(`This invitation is for a different email address. Sign in with that address to accept it.`);
-  const [already] = await db.select({ id: schema.workspaceMembers.id }).from(schema.workspaceMembers).where(and(eq(schema.workspaceMembers.workspaceId, m.workspaceId), eq(schema.workspaceMembers.userId, session.user.id)));
+  // Already a member through another row: the invitation is withdrawn. The check excludes this
+  // invitation's own row, and the delete only removes it while still pending: a concurrent
+  // acceptance that just turned it into the membership must not be deleted (found by the
+  // concurrent-acceptance test).
+  const [already] = await db
+    .select({ id: schema.workspaceMembers.id })
+    .from(schema.workspaceMembers)
+    .where(and(eq(schema.workspaceMembers.workspaceId, m.workspaceId), eq(schema.workspaceMembers.userId, session.user.id), ne(schema.workspaceMembers.id, m.id)));
   if (already) {
-    await db.delete(schema.workspaceMembers).where(eq(schema.workspaceMembers.id, m.id));
+    await db.delete(schema.workspaceMembers).where(and(eq(schema.workspaceMembers.id, m.id), eq(schema.workspaceMembers.status, "invited"), isNull(schema.workspaceMembers.userId)));
     return { workspaceId: m.workspaceId, alreadyMember: true };
   }
   const [ok] = await db
@@ -160,7 +179,7 @@ export async function acceptInvitesForVerifiedEmail(userId: string, email: strin
   const pending = await db.select().from(schema.workspaceMembers).where(and(eq(schema.workspaceMembers.invitedEmail, e), pendingFor(new Date())));
   let n = 0;
   for (const m of pending) {
-    const [already] = await db.select({ id: schema.workspaceMembers.id }).from(schema.workspaceMembers).where(and(eq(schema.workspaceMembers.workspaceId, m.workspaceId), eq(schema.workspaceMembers.userId, userId)));
+    const [already] = await db.select({ id: schema.workspaceMembers.id }).from(schema.workspaceMembers).where(and(eq(schema.workspaceMembers.workspaceId, m.workspaceId), eq(schema.workspaceMembers.userId, userId), ne(schema.workspaceMembers.id, m.id)));
     if (already) continue;
     const [ok] = await db
       .update(schema.workspaceMembers)

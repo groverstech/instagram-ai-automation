@@ -378,6 +378,73 @@ Use this when someone can't sign in. **Confirm their identity out of band first*
 
 Every use appears in the organisation's Security log.
 
+### Emergency stop of all publishing (reviews M4, M-3)
+
+**Break-glass only.** For an incident that needs publishing stopped for every organisation (or one) at once:
+
+```
+npm run publishing:stop -- stop   --by "<your name>" --reason "<what happened>" [--org <organisation id>]
+npm run publishing:stop -- status
+npm run publishing:stop -- resume --by "<your name>" --reason "<why it's safe again>" [--org <organisation id>]
+```
+
+**What the stop does:**
+- Records an operator stop (`publishing_stops`, scope `all` or `org:<id>`). It's separate from each brand's own pause.
+- Every publishing path refuses while it's in force:
+  - the publish claim;
+  - the check immediately before the request that makes a post public (Instagram, Facebook);
+  - "Publish now", scheduling and the autonomy policy.
+- It covers every brand in scope: brands their admins had already paused, and brands created during the stop.
+- Cancels the covered brands' queued publish jobs.
+- Writes `publishing.emergency_stop` (who, why, scope) to each covered organisation's Security log.
+- Shows "Publishing stopped" with the reason on every covered brand.
+- A second stop with the same scope is refused; `status` shows the one in force.
+
+**What it can't do:**
+- Recall a post a platform has already received.
+- Stop a post that is already past its final request. A publish claimed earlier is checked again immediately before that request and stops there if it hasn't been sent.
+- On LinkedIn and Pinterest there's no separate final-request check: the claim is the last check.
+
+**Who can lift it: only an operator, with `resume`.**
+- **Brand admins can't.** "Resume publishing" in the app clears only the brand's own pause. While a stop is in force, it queues nothing and says the BrandPilot team's stop is still in force (audited as `publishing.resume` with `operatorStopInForce`).
+- **`resume` with the same scope as the stop:**
+  - removes the stop;
+  - re-queues scheduled posts still due in the future (once);
+  - returns posts whose time passed to "approved", so nothing goes out late on its own;
+  - writes `publishing.emergency_resume` (who, why, who stopped it, what was re-queued) to each organisation's Security log.
+- **Brands that stay paused after `resume`:**
+  - brands their own admins paused (they resume in the app);
+  - organisations still covered by another stop. For example, lifting `--org` while an `all` stop is in force queues nothing until `all` is lifted too.
+- **Never lift a stop by deleting the row:** scheduled posts would be left without jobs and would never publish.
+
+**Who may run it:** only named operators with production CLI or database access. Running it needs the production `DATABASE_URL`; the web app has no path to it. Before the first beta invitation, the owner records the operators here (at most two people):
+
+| Operator | Role | Since |
+|---|---|---|
+| _to be named by the owner_ | | |
+
+**Before beta invitations:**
+1. Rehearse a stop, an in-app resume attempt (it must not lift the stop) and an operator `resume` once on staging.
+2. Record the date here.
+
+**Raw SQL fallback (only if the CLI can't run):**
+
+```sql
+INSERT INTO publishing_stops (scope, reason, set_by) VALUES ('all', '<what happened>', '<your name>');
+```
+
+- Use `'org:<organisation id>'` for one organisation.
+- This blocks every publishing path at once.
+- It doesn't cancel queued jobs (they're refused when they run) or write the Security-log events: record what you did there.
+- Lift the stop only with the CLI's `resume`, once it can run.
+
+**Database privileges (migration 0025):**
+- The stop lives in the `publishing_stops` table.
+- The app's database role needs `SELECT` on it; the operator's role needs `SELECT`, `INSERT` and `DELETE`.
+- If the app can't read it, publishing refuses (fails closed) and only the banner is hidden. Grant the privileges when you apply the migration if your roles don't get them by default.
+
+**Upgrading from an earlier build of this PR:** brands paused by the first version of the stop command show the reason "Emergency stop by the BrandPilot team: …". They're ordinary brand pauses that their admins can resume. To hold them, run `stop` again with the new command.
+
 ### Stopping AI spend (kill switch and tripwire)
 
 - **Stop:** `npm run ai:controls -- stop <all|anthropic|openai|model:<id>> --reason "<why>" --by "<you>"`.

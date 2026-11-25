@@ -8,6 +8,14 @@ import { log } from "../log";
 
 export const handlers = {
   async publish_post(payload: Record<string, unknown>) {
+    // A job left over from an earlier schedule (the post was moved later, review M1) doesn't
+    // publish early: the post's own time decides. "Publish now" doesn't go through here.
+    const db = await getDb();
+    const [p] = await db.select({ status: schema.posts.status, scheduledAt: schema.posts.scheduledAt }).from(schema.posts).where(eq(schema.posts.id, String(payload.postId)));
+    if (p?.status === "scheduled" && p.scheduledAt && p.scheduledAt.getTime() > Date.now() + 60_000) {
+      log.info("jobs.publish_stale_skipped", { postId: String(payload.postId), scheduledAt: p.scheduledAt.toISOString() });
+      return { ok: false as const, skipped: "rescheduled" as const };
+    }
     const res = await publishPost(String(payload.postId));
     // A recorded platform failure is a final state for this attempt; don't retry blindly.
     return res;

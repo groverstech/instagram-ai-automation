@@ -15,7 +15,7 @@ import { log } from "./log";
  * factor; rate-limited; audited as `workspace.export`. A ZIP with:
  *   data.json   the organisation, its members and every brand's data (profiles, memory, strategies,
  *               campaigns, creatives, posts, publishing history and metrics, competitors, assistant history, AI tasks
- *               and usage, credit caps and alerts)
+ *               and usage, credit caps, alerts and grants, the autonomy decision log)
  *   files/…     uploaded brand assets and AI-generated images, at their storage paths
  *   README.txt  what's included and what isn't
  * Never included: passwords, two-step secrets, session ids, social-account tokens, embeddings and
@@ -109,13 +109,16 @@ async function buildExport(workspaceId: string, actorUserId: string, budget: num
   ]);
   const postIds = posts.map((p) => String(p.id));
   const accountIds = accounts.map((a) => String(a.id));
-  const [postMetrics, publishAttempts, accountMetrics, usage, creditLimits, usageAlerts] = await Promise.all([
+  const [postMetrics, publishAttempts, accountMetrics, usage, creditLimits, usageAlerts, agentActions, creditGrants] = await Promise.all([
     postIds.length ? db.select().from(s.postMetrics).where(inArray(s.postMetrics.postId, postIds)) : [],
     postIds.length ? db.select().from(s.publishAttempts).where(inArray(s.publishAttempts.postId, postIds)) : [],
     accountIds.length ? db.select().from(s.accountMetrics).where(inArray(s.accountMetrics.socialAccountId, accountIds)) : [],
     db.select().from(s.usageEvents).where(eq(s.usageEvents.workspaceId, workspaceId)),
     db.select().from(s.creditLimits).where(eq(s.creditLimits.workspaceId, workspaceId)),
     db.select().from(s.usageAlerts).where(eq(s.usageAlerts.workspaceId, workspaceId)),
+    // The autonomy decision log and credit grants belong to the organisation too (review L1).
+    db.select().from(s.agentActions).where(eq(s.agentActions.workspaceId, workspaceId)),
+    db.select().from(s.creditGrants).where(eq(s.creditGrants.workspaceId, workspaceId)),
   ]);
 
   // Files: uploaded brand assets and AI-generated creative images (slides included).
@@ -171,6 +174,8 @@ async function buildExport(workspaceId: string, actorUserId: string, budget: num
     aiUsage: usage.map((r) => stripSecrets(r)),
     creditLimits: creditLimits.map((r) => stripSecrets(r)),
     creditAlerts: usageAlerts.map((r) => stripSecrets(r)),
+    creditGrants: creditGrants.map((r) => stripSecrets(r)),
+    autonomyDecisions: agentActions.map((r) => stripSecrets(r)),
     files,
   };
   zip.file("data.json", JSON.stringify(data, null, 2));

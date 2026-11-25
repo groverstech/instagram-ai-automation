@@ -216,8 +216,17 @@ describe("Meta login records the person's app-scoped ID on every connected accou
 describe("publish media is JPEG (Instagram accepts JPEG only)", () => {
   const call = (token: string) => mediaGET(new Request(`https://app.example.com/api/public/media/${token}`), { params: Promise.resolve({ token }) });
 
+  /** Publish media is bound to an approved post (review M-1): a post approved as it is now. */
+  async function approvedPost(format = "instagram_post") {
+    const db = await getDb();
+    const [p] = await db.insert(schema.posts).values({ brandId, platform: "instagram", format, caption: "Media", creativeId, status: "approved", approvedAt: new Date(), approvedBy: userId }).returning();
+    const hash = (await (await import("./social/approval")).recordApprovedContent(db, p.id))!;
+    return { id: p.id, hash };
+  }
+
   it("publish URLs end in .jpg and serve baseline sRGB JPEG at the format's size", async () => {
-    const url = publicMediaUrl(creativeId, "instagram_post");
+    const p = await approvedPost();
+    const url = publicMediaUrl(p.id, p.hash);
     expect(url).toMatch(/^https:\/\/app\.example\.com\/api\/public\/media\/[^/]+\.jpg$/);
     const res = await call(url.split("/").pop()!);
     expect(res.status).toBe(200);
@@ -230,12 +239,15 @@ describe("publish media is JPEG (Instagram accepts JPEG only)", () => {
     expect(m.icc).toBeTruthy();
   });
 
-  it("links issued before the switch (.png) still serve PNG; bad or expired tokens are refused", async () => {
-    const token = sign({ c: creativeId, f: null, exp: Date.now() + 60_000 });
+  it("the .png form serves PNG; bad, expired and unbound (pre-binding) tokens are refused", async () => {
+    const p = await approvedPost();
+    const token = sign({ p: p.id, h: p.hash, exp: Date.now() + 60_000 });
     const png = await call(`${token}.png`);
     expect(png.headers.get("content-type")).toBe("image/png");
     expect((await call("not-a-token.jpg")).status).toBe(403);
-    expect((await call(`${sign({ c: creativeId, f: null, exp: Date.now() - 1000 })}.jpg`)).status).toBe(403);
+    expect((await call(`${sign({ p: p.id, h: p.hash, exp: Date.now() - 1000 })}.jpg`)).status).toBe(403);
+    // Links issued before media was bound to an approval name only a creative: refused.
+    expect((await call(`${sign({ c: creativeId, f: null, exp: Date.now() + 60_000 })}.jpg`)).status).toBe(403);
   });
 });
 

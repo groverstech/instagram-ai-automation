@@ -124,6 +124,8 @@ describe.skipIf(!ADMIN_URL)("background jobs on real Postgres (F13)", async () =
       .insert(schema.posts)
       .values({ brandId, platform: "linkedin", format: "linkedin_post", status: "scheduled", scheduledAt: new Date(Date.now() - minutesAgo * 60_000), approvedAt: new Date(), approvedBy: userId, creativeId, socialAccountId: accountId, caption: "Hello from Postgres" })
       .returning();
+    // An approval is for this exact content (social/approval.ts).
+    await (await import("./social/approval")).recordApprovedContent(db, p.id);
     return p;
   }
 

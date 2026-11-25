@@ -79,6 +79,8 @@ async function post(platform: "instagram" | "facebook" | "linkedin", status = "a
     .insert(schema.posts)
     .values({ brandId, platform, format: "ig_feed_square", status: status as "approved", approvedAt: new Date(), approvedBy: userId, creativeId, socialAccountId: acct[platform], caption: `Post ${n++}: made to last`, hashtags: ["stoneware"] })
     .returning();
+  // An approval is for this exact content (social/approval.ts).
+  await (await import("./social/approval")).recordApprovedContent(db, p.id);
   return p;
 }
 const attempts = async (postId: string) => (await getDb()).select().from(schema.publishAttempts).where(eq(schema.publishAttempts.postId, postId)).orderBy(desc(schema.publishAttempts.attempt));
@@ -115,6 +117,32 @@ describe("the attempt ledger", () => {
     expect(results.filter((r) => r.ok)).toHaveLength(1);
     expect(count("POST", "/photos")).toBe(1);
     expect(await attempts(p.id)).toHaveLength(1);
+  });
+
+  it("a pause that arrives after the claim but before the final request stops it: nothing is sent, the post keeps its approval and waits for resume (review M4)", async () => {
+    instagram();
+    const p = await post("instagram", "scheduled");
+    const db = await getDb();
+    const wrapped = globalThis.fetch;
+    // While Instagram is "processing the image" (after the claim, before media_publish), an admin pauses.
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/container-1") && (init?.method ?? "GET") === "GET") await db.update(schema.brands).set({ publishingPausedAt: new Date() }).where(eq(schema.brands.id, brandId));
+      return wrapped(input, init);
+    }) as typeof fetch;
+    try {
+      expect(await publishPost(p.id)).toMatchObject({ ok: false, paused: true });
+    } finally {
+      globalThis.fetch = wrapped;
+      await db.update(schema.brands).set({ publishingPausedAt: null }).where(eq(schema.brands.id, brandId));
+    }
+    expect(count("POST", "/media_publish")).toBe(0); // the request that makes it public was never sent
+    expect((await attempts(p.id))[0]).toMatchObject({ status: "failed" });
+    expect((await attempts(p.id))[0].error).toMatch(/emergency pause before sending/);
+    const [after] = await db.select().from(schema.posts).where(eq(schema.posts.id, p.id));
+    expect(after.status).toBe("scheduled"); // still approved and scheduled: resuming publishes it
+    expect(after.approvedContentHash).not.toBeNull();
+    expect(await checksNeeded([{ id: p.id, platform: "instagram" }])).toEqual({}); // definite: no check needed
   });
 
   it("a refusal before the final request is a definite failure: retrying is allowed straight away", async () => {
@@ -174,6 +202,91 @@ describe("unknown outcomes and reconciliation", () => {
     expect(await publishPost(p.id)).toMatchObject({ ok: true });
     expect(count("POST", "/ig-1/media")).toBe(0); // the existing container was reused
     expect(count("POST", "/media_publish")).toBe(1);
+  });
+
+  it("H-1: after an edit and a new approval, a checked-absent attempt's container isn't reused: a fresh one carries the new version, the withdrawn one is never published", async () => {
+    const { approvePost } = await import("./social/service");
+    const { currentApprovalHash, recordApprovedContent } = await import("./social/approval");
+    const { verify } = await import("./crypto");
+    const { GET: mediaGET } = await import("@/app/api/public/media/[token]/route");
+    const db = await getDb();
+    // A fake Instagram that hands out a new container per request and remembers what each holds.
+    const containers = new Map<string, { caption: string; imageUrl: string }>();
+    let publishBehaviour: () => unknown = timeout;
+    graph = (c) => {
+      if (c.method === "POST" && c.path === "/ig-1/media") {
+        const id = `container-h1-${containers.size + 1}`;
+        containers.set(id, { caption: c.body!.get("caption")!, imageUrl: c.body!.get("image_url")! });
+        return { id };
+      }
+      if (c.method === "GET" && c.path.startsWith("/container-h1-")) return { status_code: "FINISHED" };
+      if (c.method === "POST" && c.path === "/ig-1/media_publish") return publishBehaviour();
+      if (c.method === "GET" && c.path === "/ig-1/media") return { data: [] };
+      if (c.method === "GET" && c.path.startsWith("/ig-media")) return { permalink: "https://instagram.com/p/h1" };
+      return {};
+    };
+    const p = await post("instagram");
+    const oldHash = (await postRow(p.id)).approvedContentHash!;
+    // 1-2. The first attempt creates a container, then the answer to the final request never comes.
+    expect(await publishPost(p.id)).toMatchObject({ ok: false, error: expect.stringMatching(/may have gone out/) });
+    expect(containers.size).toBe(1);
+    expect((await attempts(p.id))[0]).toMatchObject({ status: "unknown", progress: { creationId: "container-h1-1", approvalHash: oldHash } });
+    // A check finds it isn't on Instagram.
+    expect(await reconcilePost(p.id, Date.now() + RECONCILE_DELAY_MS + 1000)).toEqual({ state: "not_published" });
+    // 3. A person fixes the caption; the post is approved again (a new version).
+    await db.update(schema.posts).set({ caption: "Corrected caption", status: "pending_approval", approvedAt: null, approvedBy: null, approvedContentHash: null }).where(eq(schema.posts.id, p.id));
+    await approvePost(brandId, p.id, userId, await currentApprovalHash(db, await postRow(p.id)));
+    const newHash = (await postRow(p.id)).approvedContentHash!;
+    expect(newHash).not.toBe(oldHash);
+    // 4. Retry.
+    calls = [];
+    publishBehaviour = () => ({ id: "ig-media-h1" });
+    expect(await publishPost(p.id)).toMatchObject({ ok: true, externalId: "ig-media-h1" });
+    // 5. A new container, with the new text and a media link bound to the new approval.
+    expect(count("POST", "/ig-1/media")).toBe(1);
+    const published = calls.filter((c) => c.path === "/ig-1/media_publish").map((c) => c.body!.get("creation_id"));
+    expect(published).toEqual(["container-h1-2"]);
+    expect(containers.get("container-h1-2")!.caption).toBe(captionOf({ caption: "Corrected caption", hashtags: ["stoneware"] }));
+    const claims = (u: string) => verify<{ p: string; h: string }>(u.split("/").pop()!.replace(/\.jpg$/, ""))!;
+    expect(claims(containers.get("container-h1-2")!.imageUrl)).toMatchObject({ p: p.id, h: newHash });
+    // The withdrawn container was never published, and its image link no longer serves anything.
+    expect(calls.some((c) => c.body?.get("creation_id") === "container-h1-1")).toBe(false);
+    const oldToken = containers.get("container-h1-1")!.imageUrl.split("/").pop()!;
+    expect((await mediaGET(new Request("https://app.example.com/x"), { params: Promise.resolve({ token: oldToken }) })).status).toBe(409);
+    // The ledger shows which approval each attempt carried.
+    const [second, first] = await attempts(p.id);
+    expect(first.progress).toMatchObject({ approvalHash: oldHash, creationId: "container-h1-1" });
+    expect(second).toMatchObject({ status: "succeeded", progress: { approvalHash: newHash, creationId: "container-h1-2" } });
+    void recordApprovedContent;
+  });
+
+  it("H-1: a checked-absent attempt recorded before approvals were attached (no hash) is never reused", async () => {
+    instagram({ publish: timeout });
+    const p = await post("instagram");
+    await publishPost(p.id);
+    instagram({ media: () => ({ data: [] }) });
+    await reconcilePost(p.id, Date.now() + RECONCILE_DELAY_MS + 1000);
+    const db = await getDb();
+    const [a] = await attempts(p.id);
+    await db.update(schema.publishAttempts).set({ progress: { creationId: "container-1" } }).where(eq(schema.publishAttempts.id, a.id));
+    calls = [];
+    instagram();
+    expect(await publishPost(p.id)).toMatchObject({ ok: true });
+    expect(count("POST", "/ig-1/media")).toBe(1); // a fresh container
+  });
+
+  it("H-1: a check looks for the text the attempt sent, so an edit made while it was unsettled can't hide a post that went out", async () => {
+    instagram({ publish: timeout });
+    const p = await post("instagram");
+    const sentText = captionOf(p);
+    await publishPost(p.id);
+    // The post (now "failed", outcome unknown) is edited before anyone checks.
+    const db = await getDb();
+    await db.update(schema.posts).set({ caption: "Edited afterwards" }).where(eq(schema.posts.id, p.id));
+    // Instagram has the original text: the check finds it, so it's never sent again.
+    instagram({ media: () => ({ data: [{ id: "ig-went-out", caption: sentText, timestamp: new Date().toISOString(), permalink: "https://instagram.com/p/went" }] }) });
+    expect(await reconcilePost(p.id, Date.now() + RECONCILE_DELAY_MS + 1000)).toMatchObject({ state: "published", externalId: "ig-went-out" });
+    expect((await postRow(p.id)).status).toBe("published");
   });
 
   it("a worker that died mid-publish: recovery checks the platform and settles the job", async () => {

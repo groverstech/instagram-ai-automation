@@ -11,6 +11,7 @@ import {
   uniqueIndex,
   primaryKey,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 const id = () =>
   text("id")
@@ -96,7 +97,13 @@ export const workspaceMembers = pgTable(
     invitedBy: text("invited_by"),
     createdAt: createdAt(),
   },
-  (t) => [index("wm_user_idx").on(t.userId), index("wm_ws_idx").on(t.workspaceId)],
+  (t) => [
+    index("wm_user_idx").on(t.userId),
+    index("wm_ws_idx").on(t.workspaceId),
+    // One pending invitation per organisation and address (review L4): concurrent invitations
+    // can't both be created. Accepted rows have a user and don't count, nor do withdrawn ones (deleted).
+    uniqueIndex("wm_pending_invite_uq").on(t.workspaceId, t.invitedEmail).where(sql`${t.status} = 'invited' and ${t.userId} is null`),
+  ],
 );
 
 export const brands = pgTable(
@@ -410,6 +417,11 @@ export const posts = pgTable(
     origin: text("origin").notNull().default("human"),
     /** Set when the autonomy policy approved the post instead of a person: the rules version used. */
     autoApprovedVersion: integer("auto_approved_version"),
+    /**
+     * Approval integrity (social/approval.ts): the hash of exactly what was approved. The publish
+     * claim refuses if the post, its creative or the brand's rendered identity no longer match.
+     */
+    approvedContentHash: text("approved_content_hash"),
     publishedAt: timestamp("published_at", { withTimezone: true }),
     createdAt: createdAt(),
   },
@@ -869,6 +881,19 @@ export const usageAlerts = pgTable(
  * within seconds and without a deploy: "all", "provider:<anthropic|openai>" or "model:<id>".
  * Set by an operator (`npm run ai:controls`) or by the spending tripwire; only a person clears it.
  */
+/**
+ * Operator emergency stops of publishing (review M-3; src/server/emergency-stop.ts). Separate from a
+ * brand's own pause (brands.publishing_paused_*), which its admins control: an active stop blocks
+ * every publishing path for the brands it covers, and only the operator command clears it.
+ * `scope` is "all" or "org:<organisation id>". History is in each organisation's Security log.
+ */
+export const publishingStops = pgTable("publishing_stops", {
+  scope: text("scope").primaryKey(),
+  reason: text("reason").notNull(),
+  setBy: text("set_by").notNull(),
+  setAt: timestamp("set_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const aiControls = pgTable("ai_controls", {
   scope: text("scope").primaryKey(),
   reason: text("reason").notNull(),

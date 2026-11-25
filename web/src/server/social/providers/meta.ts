@@ -84,7 +84,7 @@ export const facebook: SocialProvider = {
     );
   },
   async publish(account, input, ctx) {
-    ctx?.finalSend(); // one request: it either creates the post or it doesn't
+    await ctx?.finalSend(); // one request: it either creates the post or it doesn't
     const r = await jsonFetch<{ id: string; post_id?: string }>(`${G}/${account.externalId}/photos`, {
       method: "POST",
       body: form({ url: input.imageUrl, message: input.caption, access_token: account.accessToken }),
@@ -174,7 +174,7 @@ export const instagram: SocialProvider = {
       if (s.status_code === "ERROR" || s.status_code === "EXPIRED") throw new PlatformError(`Instagram couldn't process the image: ${s.status ?? s.status_code}`);
       await new Promise((r) => setTimeout(r, 2000));
     }
-    ctx?.finalSend();
+    await ctx?.finalSend();
     const pub = await jsonFetch<{ id: string }>(`${G}/${account.externalId}/media_publish`, {
       method: "POST",
       body: form({ creation_id: container.id, access_token: account.accessToken }),

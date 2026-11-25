@@ -40,6 +40,19 @@ const mailLink = async (to, pathPart) => {
   global.__page = p;
   const errs = [];
   p.on("pageerror", (e) => errs.push(e.message));
+  // Browser "Failed to load resource" console lines say nothing about which request failed, so they're
+  // ignored here; instead every response from the app itself is checked (review L8): a 4xx or 5xx from
+  // BrandPilot fails the journey with its method, status and path. Third-party requests are not ours.
+  const httpErrs = [];
+  const EXPECTED_HTTP = []; // [status, path regex] pairs the journey deliberately causes; none today
+  const watchHttp = (page, who) =>
+    page.on("response", (r) => {
+      const u = new URL(r.url());
+      if (u.origin !== new URL(B).origin || r.status() < 400) return;
+      if (EXPECTED_HTTP.some(([s, re]) => s === r.status() && re.test(u.pathname))) return;
+      httpErrs.push(`${who}: ${r.status()} ${r.request().method()} ${u.pathname}`);
+    });
+  watchHttp(p, "owner");
   p.on("console", (m) => m.type() === "error" && !/Failed to load resource/.test(m.text()) && errs.push("console: " + m.text()));
   p.on("dialog", (d) => d.accept());
   const shot = async (n, full = true) => { await p.waitForTimeout(500); await p.screenshot({ path: `${S}/${n}.png`, fullPage: full }); };
@@ -81,6 +94,10 @@ const mailLink = async (to, pathPart) => {
   await p.goto(B + "/brand");
   await p.getByRole("button", { name: /Approve v1/ }).click();
   await p.locator("text=Approved").first().waitFor();
+  // Wait for the approval to be committed, not just for any "Approved" text on the page: the next
+  // step (the strategist) reads it (a race seen once in CI).
+  for (let i = 0; i < 40 && sql("select count(*) from brand_profiles where status='approved'") !== "1"; i++) await p.waitForTimeout(250);
+  if (sql("select count(*) from brand_profiles where status='approved'") !== "1") fail("brand profile approval wasn't recorded");
   log("brand profile approved");
 
   // --- Wizard (steps 1-4) and generation
@@ -156,11 +173,22 @@ const mailLink = async (to, pathPart) => {
   await p.waitForFunction(() => !document.body.innerText.includes("Save changes"), null, { timeout: 15000 });
   await p.getByRole("button", { name: /Submit for approval/ }).click();
   await p.getByRole("button", { name: /^Approve/ }).first().click();
+  await p.getByRole("button", { name: /^Schedule/ }).first().waitFor();
+  // Approval integrity (review H1): editing the hashtags of the approved post withdraws the approval
+  // (the approver can't appear to have approved text they never saw); it's approved again below.
+  if (!sql(`select approved_content_hash from posts where id='${postId}'`)) fail("approval recorded no content hash");
+  await p.locator('input[placeholder="slowmade ceramics"]').fill("stoneware edited_after_approval");
+  await p.getByRole("button", { name: "Save changes" }).click();
+  await p.waitForFunction(() => !document.body.innerText.includes("Save changes"), null, { timeout: 15000 });
+  const withdrawn = sql(`select status || '|' || coalesce(approved_by,'') || '|' || coalesce(approved_content_hash,'') from posts where id='${postId}'`);
+  if (withdrawn !== "pending_approval||") fail(`editing after approval didn't withdraw it: ${withdrawn}`);
+  if (sql(`select count(*) from audit_events where action='post.approval_invalidated' and target_id='${postId}'`) !== "1") fail("withdrawal not audited");
+  await p.getByRole("button", { name: /^Approve/ }).first().click();
   await p.getByRole("button", { name: /^Schedule/ }).first().click();
   await p.getByText(/Scheduled\. It will publish/).first().waitFor();
   if (sql(`select status from posts where id='${postId}'`) !== "scheduled") fail("not scheduled");
   await shot("02-scheduled", false);
-  log("post saved with the account and time, submitted, approved and scheduled");
+  log("post saved with the account and time, submitted, approved; editing its hashtags withdrew the approval (audited); approved again and scheduled");
 
   // The scheduler publishes it when due: the external cron endpoint runs the job.
   while (Date.now() < when.getTime() + 2000) await p.waitForTimeout(2000);
@@ -226,6 +254,7 @@ const mailLink = async (to, pathPart) => {
   const ctx2 = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const q = await ctx2.newPage();
   q.on("pageerror", (e) => errs.push("teammate: " + e.message));
+  watchHttp(q, "teammate");
   await q.goto(inv.link);
   await q.getByRole("heading", { name: "Join Kora Studio" }).waitFor();
   await q.screenshot({ path: `${S}/06-invite.png` });
@@ -245,6 +274,7 @@ const mailLink = async (to, pathPart) => {
   await ctx2.close();
 
   if (errs.length) { console.log("ERRORS:", errs); process.exitCode = 1; } else log("no page errors");
+  if (httpErrs.length) { console.log("HTTP ERRORS from the app:", httpErrs); process.exitCode = 1; } else log("no 4xx or 5xx responses from the app");
   await browser.close();
 })().catch(async (e) => {
   console.error("FAILED:", e.message);

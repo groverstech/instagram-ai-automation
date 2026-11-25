@@ -110,7 +110,11 @@ export async function reconcilePost(postId: string, now = Date.now()): Promise<C
   const { toUsable, captionOf } = await import("./service");
   let found: Awaited<ReturnType<NonNullable<typeof p.findRecentPost>>>;
   try {
-    found = await p.findRecentPost(toUsable(acct) as AccountForUse, { caption: captionOf(post), since: new Date(a.startedAt.getTime() - 60_000) });
+    // Look for the text this attempt actually sent (recorded with it), not the post's current text:
+    // the post may have been edited since (review H-1). Attempts from before that was recorded use
+    // the post's text.
+    const sent = typeof (a.progress as { caption?: unknown } | null)?.caption === "string" ? String((a.progress as { caption: string }).caption) : captionOf(post);
+    found = await p.findRecentPost(toUsable(acct) as AccountForUse, { caption: sent, since: new Date(a.startedAt.getTime() - 60_000) });
   } catch (e) {
     if (isTokenError(e)) {
       await markNeedsReconnect(acct.id, e instanceof Error ? e.message : String(e));

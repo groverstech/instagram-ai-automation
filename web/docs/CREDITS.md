@@ -59,6 +59,8 @@ npm run credits -- shadow 2026-12      # per organisation: AI runs vs credits, a
 | **Reconciliation:** what Settings shows (charged + reserved) must equal what the gate enforces. It also lists stale reservations (pending for over an hour) and unpriced attempts; the exit code is 1 on a mismatch | `reconcileCredits`, `npm run credits -- reconcile [YYYY-MM]` |
 | **Settings → AI credits** shows the mode ("Enforced"), credits left, open reservations and grants | `credits-card.tsx` |
 
+**Cost when no cap applies (review L2):** the gate first checks whether any cap applies: the organisation's own cap, the plan's included credits, or a brand cap. That takes two small reads. Only when a cap exists does it read the usage sums. Both happen inside the same locked transaction, so correctness and concurrency are unchanged; most requests (no cap) do two reads instead of six. Tested by counting reads.
+
 **Not attributable:** requests without an organisation (platform CLIs, connectivity checks) are allowed and logged as `credits.unattributed_request` in enforce mode. Every customer AI action runs through the agent orchestrator, which sets the organisation and brand.
 
 **Tests:** `credit-enforcement.test.ts`, on Postgres 16 and on PGlite:
