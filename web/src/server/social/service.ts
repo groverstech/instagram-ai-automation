@@ -3,6 +3,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import { getDb, schema } from "../db/client";
 import { decrypt, encrypt, sign } from "../crypto";
 import { provider } from "./registry";
+import { sandboxOn } from "./sandbox";
 import { PublishNotSupported, type AccountForUse, type DiscoveredAccount } from "./types";
 import { renderCreativePng } from "../creative/render";
 import { remember } from "../memory";
@@ -92,7 +93,7 @@ export async function publishPost(postId: string) {
   if (acct.platform !== post.platform) return fail("The selected account is on a different platform than the post.");
   const p = provider(acct.platform);
   if (!p.publish || p.capabilities.publishImage === "unsupported") return fail(`${p.label} doesn't support publishing image posts through its API.`);
-  if (["instagram", "pinterest", "facebook", "tiktok"].includes(p.id) && !isPublicAppUrl()) {
+  if (["instagram", "pinterest", "facebook", "tiktok"].includes(p.id) && !isPublicAppUrl() && !sandboxOn()) {
     return fail(`${p.label} downloads the image from a public URL. Set APP_URL to your public https domain before publishing.`);
   }
 
