@@ -21,6 +21,11 @@ export function LoginForm({ notice }: { notice?: string } = {}) {
       <Field label="Password">
         <Input name="password" type="password" autoComplete="current-password" required />
       </Field>
+      <p className="-mt-2 text-right text-[12px]">
+        <Link href="/forgot-password" className="text-muted underline-offset-4 hover:text-ink hover:underline">
+          Forgot your password?
+        </Link>
+      </p>
       <Button className="w-full" size="lg" loading={pending}>
         Sign in
       </Button>

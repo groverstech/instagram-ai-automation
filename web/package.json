@@ -21,7 +21,8 @@
     "credits": "node --conditions=react-server --import tsx src/server/credits-cli.ts",
     "beta:invite": "node --conditions=react-server --import tsx src/server/beta-invites-cli.ts",
     "ai:controls": "node --conditions=react-server --import tsx src/server/ai/controls-cli.ts",
-    "secrets:rotate": "node --conditions=react-server --import tsx src/server/secrets-rotate-cli.ts"
+    "secrets:rotate": "node --conditions=react-server --import tsx src/server/secrets-rotate-cli.ts",
+    "users": "node --conditions=react-server --import tsx src/server/users-cli.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",

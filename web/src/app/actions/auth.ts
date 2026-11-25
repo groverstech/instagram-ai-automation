@@ -114,3 +114,28 @@ export async function logOut() {
   await destroySession();
   redirect("/login");
 }
+
+export type RecoveryFormState = { error?: string; sent?: boolean; email?: string };
+
+/** Forgot password: always the same answer, whether or not the email has an account. */
+export async function requestPasswordResetAction(_: unknown, fd: FormData): Promise<RecoveryFormState> {
+  const email = echo(fd.get("email"));
+  const { requestPasswordReset } = await import("@/server/auth/recovery");
+  const r = await requestPasswordReset(email, await clientIp());
+  return r.ok ? { sent: true, email } : { error: r.error, email };
+}
+
+/** Set a new password from a reset link, then sign in again. */
+export async function resetPasswordAction(_: unknown, fd: FormData): Promise<RecoveryFormState> {
+  const token = String(fd.get("token") ?? "");
+  const password = String(fd.get("password") ?? "");
+  if (password !== String(fd.get("confirm") ?? "")) return { error: "The two passwords don't match." };
+  const { resetPassword, RecoveryError } = await import("@/server/auth/recovery");
+  try {
+    await resetPassword(token, password, await clientIp());
+  } catch (e) {
+    if (e instanceof RecoveryError) return { error: e.message };
+    throw e;
+  }
+  redirect("/login?reset=1");
+}

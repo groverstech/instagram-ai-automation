@@ -356,6 +356,20 @@ For large deployments, also put a CDN or WAF rate limit in front.
   the outcome the new owner records (`jobs.claim_lost`). A failed tick is logged
   (`jobs.tick_failed`, `worker.tick_failed`) and the cron route answers 500 with a reference.
 
+### Account recovery (support)
+
+Use this when someone can't sign in. **Confirm their identity out of band first**: a call to a known number, or confirmation from their organisation's owner. Then:
+
+- **Forgotten password:**
+  - Until an email provider is configured, `/forgot-password` can't deliver the link.
+  - Run `npm run users -- reset-link --email <email> --by "<you>" --reason "<how you confirmed>"` and give the printed link (valid 24 hours, single use) only to that person.
+- **Lost authenticator and recovery codes:**
+  - Run `npm run users -- reset-mfa --email <email> --by "<you>" --reason "<how you confirmed>"`.
+  - It turns two-step verification off and signs the account out everywhere.
+  - Owners and admins must enrol again at their next sign-in.
+
+Every use appears in the organisation's Security log.
+
 ### Stopping AI spend (kill switch and tripwire)
 
 - **Stop:** `npm run ai:controls -- stop <all|anthropic|openai|model:<id>> --reason "<why>" --by "<you>"`.

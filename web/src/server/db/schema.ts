@@ -859,3 +859,24 @@ export const betaInvites = pgTable("beta_invites", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   usedAt: timestamp("used_at", { withTimezone: true }),
 });
+
+/**
+ * Password-reset tokens (account recovery, launch gate S11; src/server/auth/recovery.ts). Only a
+ * SHA-256 of the token is stored. Single use, short-lived; issuing a new one voids older ones.
+ */
+export const passwordResets = pgTable(
+  "password_resets",
+  {
+    id: id(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    usedAt: timestamp("used_at", { withTimezone: true }),
+    /** "self" (forgot-password page) or "operator:<name>" (npm run users -- reset-link). */
+    issuedBy: text("issued_by").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("password_resets_user_idx").on(t.userId)],
+);
