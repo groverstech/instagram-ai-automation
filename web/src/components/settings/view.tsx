@@ -393,6 +393,7 @@ const AUDIT_LABELS: Record<string, string> = {
   "member.brand_scope_change": "Changed brand access",
   "member.remove": "Removed a member",
   "workspace.update": "Updated workspace details",
+  "workspace.export": "Exported the organisation's data",
   "brand.create": "Created a brand",
   "social.connect": "Connected social accounts",
   "social.disconnect": "Disconnected a social account",

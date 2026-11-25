@@ -86,3 +86,11 @@ export async function prepareAuditExport(workspaceId: string) {
     await auditExportReadyFor(await me(), workspaceId);
   });
 }
+
+/** Organisation data export: owner and step-up checks first, then the client downloads /api/workspace/export. */
+export async function prepareWorkspaceExport(workspaceId: string) {
+  return safe(async () => {
+    const { exportReadyFor } = await import("@/server/tenant-export");
+    await exportReadyFor(await me(), workspaceId);
+  });
+}
