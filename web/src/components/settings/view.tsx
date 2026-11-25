@@ -5,7 +5,7 @@ import { format } from "date-fns";
 import { ArrowLeftRight, Building2, Check, Plus, ShieldCheck, Trash2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { switchBrand } from "@/app/actions/brand";
-import { changeRole, inviteMember, removeMember, setMemberBrands, updateWorkspace } from "@/app/actions/settings";
+import { changeRole, inviteMember, prepareAuditExport, removeMember, setMemberBrands, updateWorkspace } from "@/app/actions/settings";
 import { openBillingPortal, startCheckout } from "@/app/actions/billing";
 import { Badge, Button, Card, CardBody, CardHeader, Field, Input, Modal, Notice, PageHeader, Select } from "@/components/ui";
 import { useRun } from "@/components/hooks";
@@ -184,7 +184,7 @@ export function SettingsView(props: {
 
           {props.aiOverview ? <AiUsageCard data={props.aiOverview} /> : null}
 
-          {props.auditLog ? <SecurityLog rows={props.auditLog.rows} scope={props.auditLog.scope} brandName={brandName} /> : null}
+          {props.auditLog ? <SecurityLog workspaceId={props.workspace.id} rows={props.auditLog.rows} scope={props.auditLog.scope} brandName={brandName} /> : null}
 
           <DeleteData workspace={{ id: props.workspace.id, name: props.workspace.name }} brands={props.brands.map((b) => ({ id: b.id, name: b.name }))} canDeleteBrand={isAdmin} isOwner={props.role === "owner" && !props.scoped} plan={props.accountPlan} />
         </div>
@@ -401,6 +401,8 @@ const AUDIT_LABELS: Record<string, string> = {
   "creative.approve_override": "Approved a creative despite blocking issues",
   "access.denied": "Access refused",
   "audit.view": "Viewed the security log",
+  "audit.export": "Exported the security log",
+  "audit.retention_purge": "Removed expired security events",
 };
 
 function auditDetail(r: AuditRow, brandName: (id: string) => string) {
@@ -417,11 +419,28 @@ function auditDetail(r: AuditRow, brandName: (id: string) => string) {
   return parts.join(" · ");
 }
 
-function SecurityLog({ rows, scope, brandName }: { rows: AuditRow[]; scope: AuditScope; brandName: (id: string) => string }) {
+function SecurityLog({ workspaceId, rows, scope, brandName }: { workspaceId: string; rows: AuditRow[]; scope: AuditScope; brandName: (id: string) => string }) {
+  const { run, busy } = useRun();
+  const exportAs = (format: "csv" | "json") =>
+    run(() => prepareAuditExport(workspaceId), {
+      key: `export:${format}`,
+      refresh: false,
+      onOk: () => window.location.assign(`/api/audit/export?workspace=${encodeURIComponent(workspaceId)}&format=${format}&days=365`),
+    });
   return (
     <Card>
       <CardHeader
         title="Security log"
+        action={
+          <span className="flex gap-1.5">
+            <Button size="sm" variant="secondary" loading={busy("export:csv")} onClick={() => exportAs("csv")} aria-label="Export the security log as CSV">
+              CSV
+            </Button>
+            <Button size="sm" variant="secondary" loading={busy("export:json")} onClick={() => exportAs("json")} aria-label="Export the security log as JSON">
+              JSON
+            </Button>
+          </span>
+        }
         description={
           scope.brandIds
             ? "Security events for the brands you have access to. Visible to owners and admins."

@@ -133,6 +133,8 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   }
   const imageProvider = norm(env.IMAGE_PROVIDER) || "openai";
   if (!["openai", "none"].includes(imageProvider)) err("IMAGE_PROVIDER", "Use `openai`, or `none` to turn AI images off.");
+  const retention = (env.AUDIT_RETENTION_DAYS ?? "").trim();
+  if (retention && !(Number.isInteger(Number(retention)) && Number(retention) >= 90)) err("AUDIT_RETENTION_DAYS", "Use a whole number of days, at least 90 (default 400). Until it's fixed, 400 applies.");
   // AI kill switch and tripwire (ai/controls.ts).
   for (const sc of (env.AI_STOP ?? "").split(",").map((x) => x.trim()).filter(Boolean)) {
     if (!/^(all|anthropic|openai|provider:(anthropic|openai)|model:[\w.\-:/]{1,100})$/.test(sc)) err("AI_STOP", `"${sc}" isn't a scope. Use all, anthropic, openai or model:<id>. While it's set, every AI request is refused.`);

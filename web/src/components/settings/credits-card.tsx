@@ -10,7 +10,7 @@ import type { CreditStatus } from "@/server/credits";
 export type CreditView = CreditStatus & { brandNames: Record<string, string> };
 
 const KIND: Record<string, string> = { text: "Text", image: "Images", research: "Web research", video: "Video" };
-const n = (x: number) => (x < 10 ? x.toFixed(1) : Math.round(x).toLocaleString("en"));
+const n = (x: number) => (x === 0 ? "0" : x < 10 ? x.toFixed(1) : Math.round(x).toLocaleString("en"));
 
 /**
  * Settings → AI credits (PR 4.5, shadow mode): this month's credits by kind, brand and route, the

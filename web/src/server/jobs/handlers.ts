@@ -31,6 +31,7 @@ export const interruptedHooks: Record<string, InterruptedHook> = {
 };
 
 let lastSyncPlan = 0;
+let lastRetention = 0;
 
 export type TickScope = { jobs?: boolean; ai?: boolean };
 
@@ -50,6 +51,11 @@ export async function tick(scope: TickScope = { jobs: true, ai: true }) {
       .where(and(eq(schema.jobs.type, "sync_metrics"), gte(schema.jobs.createdAt, new Date(Date.now() - 6 * 3600 * 1000))));
     const planned = new Set(recent.map((r) => r.payload.brandId));
     for (const b of brands) if (!planned.has(b.brandId)) await enqueue("sync_metrics", { brandId: b.brandId });
+  }
+  // Audit-log retention, once a day per process (idempotent, so several instances are harmless).
+  if (scope.jobs && Date.now() - lastRetention > 24 * 3600 * 1000) {
+    lastRetention = Date.now();
+    await import("../audit").then((m) => m.purgeExpiredAuditEvents()).catch((e) => log.error("audit.retention_failed", { error: e instanceof Error ? e.message : String(e) }));
   }
   if (scope.ai) {
     await import("./all").then((m) => m.recoverDueTasks()).catch((e) => log.error("jobs.ai_recovery_failed", { error: e instanceof Error ? e.message : String(e) }));
