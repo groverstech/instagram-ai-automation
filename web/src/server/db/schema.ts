@@ -832,3 +832,16 @@ export const usageAlerts = pgTable(
   },
   (t) => [uniqueIndex("usage_alerts_once").on(t.workspaceId, t.brandId, t.period, t.threshold)],
 );
+
+/**
+ * AI kill switch (F12; src/server/ai/controls.ts). A row stops every paid AI request in its scope
+ * within seconds and without a deploy: "all", "provider:<anthropic|openai>" or "model:<id>".
+ * Set by an operator (`npm run ai:controls`) or by the spending tripwire; only a person clears it.
+ */
+export const aiControls = pgTable("ai_controls", {
+  scope: text("scope").primaryKey(),
+  reason: text("reason").notNull(),
+  source: text("source").$type<"operator" | "tripwire">().notNull(),
+  setBy: text("set_by").notNull(),
+  setAt: timestamp("set_at", { withTimezone: true }).notNull().defaultNow(),
+});

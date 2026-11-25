@@ -26,6 +26,8 @@ that would be exceeded refuses the request (recorded as `blocked` with the limit
 Each is a `(scope, period, amount, action)` rule:
 
 ### 2.1 Platform-wide emergency protection (first, always on in production)
+> **Status (F12):** the kill switch and the tripwire are built (`src/server/ai/controls.ts`, `npm run ai:controls`, runbook in DEPLOYMENT.md §9). Both are checked in `openAttempt()`'s transaction before the usage row is written. Still to come: the rolling-window global ceiling, and accounting for Voyage embeddings, which don't go through `openAttempt()`.
+
 - **Global hard ceiling** per period (e.g. per day and per month) far above normal usage, from the
   existing `AI_SPEND_CAP_*` mechanism generalised to rolling windows.
 - **Kill switch**: a row in an `ai_controls` table (and an env override) that stops all paid

@@ -18,7 +18,8 @@
     "ai:billing": "node --conditions=react-server --import tsx src/server/ai/billing-cli.ts",
     "ai:check-anthropic": "node --conditions=react-server --import tsx src/server/ai/anthropic-check-cli.ts",
     "reviewer:setup": "node --conditions=react-server --import tsx src/server/reviewer-cli.ts",
-    "credits": "node --conditions=react-server --import tsx src/server/credits-cli.ts"
+    "credits": "node --conditions=react-server --import tsx src/server/credits-cli.ts",
+    "ai:controls": "node --conditions=react-server --import tsx src/server/ai/controls-cli.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",
