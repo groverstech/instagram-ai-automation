@@ -49,7 +49,7 @@ export function HistoryView({ revisions, versions, currentId, editable }: { revi
   );
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1.1fr_1fr]">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1.1fr_1fr]">
       <Card>
         <CardHeader title="Change history" description="Every AI generation, edit, status change and restore, newest first." />
         <CardBody>

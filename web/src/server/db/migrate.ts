@@ -31,14 +31,19 @@ type Queryable = { execute: (q: ReturnType<typeof sql>) => Promise<unknown> };
 export async function migrationStatus(db: Queryable, dir = MIGRATIONS_DIR) {
   const expected = expectedMigrations(dir).length;
   let applied = 0;
+  let unreadable: string | undefined;
   try {
     const res = (await db.execute(sql`select count(*)::int as n from drizzle.__drizzle_migrations`)) as { rows?: { n: number }[] } | { n: number }[];
     const rows = Array.isArray(res) ? res : (res.rows ?? []);
     applied = Number(rows[0]?.n ?? 0);
-  } catch {
-    applied = 0; // table doesn't exist yet: nothing applied
+  } catch (e) {
+    applied = 0; // the journal doesn't exist yet: nothing applied
+    // A separate app role without access to the journal would otherwise look like an un-migrated
+    // database forever (readiness 503). Say what's wrong instead.
+    const code = (e as { code?: string; cause?: { code?: string } }).code ?? (e as { cause?: { code?: string } }).cause?.code;
+    if (code === "42501") unreadable = "the app's database role can't read the migration journal (drizzle.__drizzle_migrations): run deploy/app-role-grants.sql";
   }
-  return { applied, expected, pending: Math.max(0, expected - applied), upToDate: applied >= expected };
+  return { applied, expected, pending: Math.max(0, expected - applied), upToDate: applied >= expected, unreadable };
 }
 
 /**

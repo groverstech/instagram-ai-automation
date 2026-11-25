@@ -6,6 +6,7 @@ export async function register() {
     // Configuration problems are logged; in staging/production (DEPLOY_ENV) errors stop the process.
     const { enforceConfig } = await import("./server/config");
     enforceConfig("web");
+    (await import("./server/monitoring")).installConfiguredReporters();
     // Staging (or AI_SPEND_CAP_REQUIRED=true): block any provider request that doesn't hold a
     // spend-cap reservation, i.e. that didn't go through the executor's accounting (paid-run-guard.ts).
     const { spendCapRequired } = await import("./server/ai/spend-cap");

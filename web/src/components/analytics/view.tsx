@@ -82,7 +82,7 @@ export function AnalyticsView(props: {
               ))}
             </div>
             {canEdit && props.accounts.length ? (
-              <Button variant="secondary" loading={busy("sync")} onClick={() => run(() => syncMetricsAction(props.brandId), { key: "sync", success: (r) => `Synced ${r.posts} posts and ${r.accounts} accounts${r.errors.length ? ` · ${r.errors.length} errors` : ""}` })}>
+              <Button variant="secondary" loading={busy("sync")} onClick={() => run(() => syncMetricsAction(props.brandId), { key: "sync", success: (r) => `Synced ${plural(r.posts, "post")} and ${plural(r.accounts, "account")}${r.errors.length ? ` · ${plural(r.errors.length, "error")}` : ""}` })}>
                 <RefreshCw /> Sync metrics
               </Button>
             ) : null}
@@ -108,7 +108,7 @@ export function AnalyticsView(props: {
           <Card key={t.label} className="p-4">
             <p className="text-[12px] text-muted">{t.label}</p>
             <p className="mt-1 text-[26px] font-semibold tracking-tight">{t.value ?? <span className="text-faint">—</span>}</p>
-            <p className="mt-0.5 text-[11px] text-faint">{t.value ? `${d.length} posts · ${props.days}d` : "Not available"}</p>
+            <p className="mt-0.5 text-[11px] text-faint">{t.value ? `${plural(d.length, "post")} · ${props.days}d` : "Not available"}</p>
           </Card>
         ))}
       </div>
@@ -193,7 +193,7 @@ function Breakdown({ title, groups, label = (k) => k }: { title: string; groups:
       <CardBody className="space-y-2.5">
         {groups.length ? (
           groups.slice(0, 8).map((g) => (
-            <div key={g.key} className="group grid grid-cols-[140px_1fr_64px] items-center gap-3 text-[12px]" title={`${label(g.key)} · ${g.posts} posts · avg reach ${compact(g.avgReach)} · ER ${pct(g.avgEngagementRate)}`}>
+            <div key={g.key} className="group grid grid-cols-[140px_1fr_64px] items-center gap-3 text-[12px]" title={`${label(g.key)} · ${plural(g.posts, "post")} · avg reach ${compact(g.avgReach)} · ER ${pct(g.avgEngagementRate)}`}>
               <span className="truncate text-ink-2">{label(g.key)}</span>
               <div className="h-2.5 rounded-r bg-sunken">
                 <div className="h-full rounded-r bg-accent transition-opacity group-hover:opacity-80" style={{ width: `${((g.avgEngagementRate ?? 0) / max) * 100}%`, minWidth: 2 }} />
@@ -218,11 +218,11 @@ function InsightsCard({ data, posts }: { data: Insights; posts: number }) {
       <div className="ai-gradient p-5">
         <div className="flex items-center gap-2">
           <SourceTag source="ai" />
-          <span className="text-[12px] text-ink-2">Based on {posts} posts with platform metrics</span>
+          <span className="text-[12px] text-ink-2">Based on {plural(posts, "post")} with platform metrics</span>
         </div>
         <p className="mt-2 font-display text-[24px] leading-snug">{data.summary}</p>
       </div>
-      <CardBody className="grid gap-6 lg:grid-cols-3">
+      <CardBody className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div>
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-faint">Findings</p>
           <div className="space-y-3">
@@ -266,4 +266,8 @@ function InsightsCard({ data, posts }: { data: Insights; posts: number }) {
       </CardBody>
     </Card>
   );
+}
+
+function plural(n: number, word: string) {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
 }

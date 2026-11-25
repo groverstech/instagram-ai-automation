@@ -9,6 +9,7 @@ import { log } from "../log";
  */
 const TEXT: Record<string, { subject: string; body: string }> = {
   password_reset: { subject: "Your BrandPilot password was changed", body: "The password for your BrandPilot account was just changed, and every session was signed out." },
+  password_changed: { subject: "Your BrandPilot password was changed", body: "The password for your BrandPilot account was just changed from inside the app, and your other sessions were signed out." },
   mfa_enabled: { subject: "Two-step verification is on", body: "Two-step verification was turned on for your BrandPilot account." },
   mfa_disabled: { subject: "Two-step verification was turned off", body: "Two-step verification was turned off for your BrandPilot account." },
   recovery_used: { subject: "A recovery code was used to sign in", body: "Someone signed in to your BrandPilot account with one of your recovery codes." },

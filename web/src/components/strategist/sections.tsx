@@ -462,7 +462,7 @@ export function ObjectivesView({ env }: { env?: Envelope<ObjectivesSection> }) {
   return (
     <SectionFrame section="objectives" title="Business & marketing objectives" env={env} description="What the business needs (2) and what marketing will deliver toward it (3)." editor={(close) => <ObjectivesEditor o={o!} saving={saving} onCancel={close} onSave={(d) => save(d, close)} />}>
       {o ? (
-        <div className="grid gap-6 lg:grid-cols-[1fr_1.6fr]">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_1.6fr]">
           <div>
             <Kicker>Business objectives</Kicker>
             <ol className="space-y-2.5">

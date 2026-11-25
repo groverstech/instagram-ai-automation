@@ -54,6 +54,33 @@ export async function sendVerification(userId: string): Promise<{ delivered: boo
   }
 }
 
+/**
+ * Someone tried to create an account with an address that already has one (S5): tell the owner,
+ * without creating anything. Rate-limited per account, so sign-up can't be used to flood an inbox.
+ */
+export async function notifyExistingAccount(userId: string): Promise<{ delivered: boolean }> {
+  const db = await getDb();
+  const [u] = await db.select({ email: schema.users.email, name: schema.users.name }).from(schema.users).where(eq(schema.users.id, userId));
+  if (!u) return { delivered: false };
+  try {
+    await enforce("email", { key: sha256(`signup-existing:${userId}`) });
+  } catch {
+    return { delivered: false };
+  }
+  try {
+    const r = await sendEmail({
+      to: u.email,
+      subject: "Someone tried to create a BrandPilot account with your email",
+      text: `Hi ${u.name || "there"},\n\nSomeone just tried to create a new BrandPilot account with this email address, which already has an account. Nothing was changed.\n\nIf it was you, sign in instead: ${appUrl()}/login\nForgot your password? Reset it here: ${appUrl()}/forgot-password\n\nIf it wasn't you, you can ignore this email.`,
+      tag: "auth.signup_existing",
+    });
+    return { delivered: r.delivered };
+  } catch (e) {
+    log.warn("auth.signup_existing_send_failed", { error: e instanceof Error ? e.message : String(e) });
+    return { delivered: false };
+  }
+}
+
 /** "Send it again", rate-limited per account. */
 export async function resendVerification(userId: string) {
   await enforce("email", { key: sha256(`verify:${userId}`) });

@@ -72,6 +72,14 @@ jobs:
           E2E_ADMIN_URL: postgres://postgres:postgres@localhost:5432/postgres
         run: NODE_PATH="$(npm root -g)" npm run e2e:lifecycle
 
+      # Strict staging mode (DEPLOY_ENV=staging) as an ordinary database role under row-level
+      # security, with no email, sandbox or AI provider: readiness, invite-only sign-up, required
+      # two-step verification, onboarding, the operator emergency-stop drill and the reviewer account.
+      - name: Staging rehearsal (strict mode, ordinary role, RLS)
+        env:
+          E2E_ADMIN_URL: postgres://postgres:postgres@localhost:5432/postgres
+        run: NODE_PATH="$(npm root -g)" npm run e2e:staging
+
   container:
     name: Container image (build and role smoke test)
     runs-on: ubuntu-latest

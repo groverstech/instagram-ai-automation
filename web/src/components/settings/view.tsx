@@ -1,4 +1,5 @@
 "use client";
+import type { AuditAction } from "@/server/audit";
 import Link from "next/link";
 import { useState } from "react";
 import { format } from "date-fns";
@@ -74,7 +75,7 @@ export function SettingsView(props: {
   return (
     <div>
       <PageHeader eyebrow="Settings" title="Workspace" description="Team, roles, brands, plan and integrations." />
-      <div className="grid gap-6 lg:grid-cols-[1.4fr_1fr]">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1.4fr_1fr]">
         <div className="min-w-0 space-y-6">
           <Card>
             <CardHeader title="Workspace details" />
@@ -384,35 +385,66 @@ function BillingCard({ workspaceId, currentPlan, plans, isOwner, billing }: { wo
   );
 }
 
-const AUDIT_LABELS: Record<string, string> = {
+// Every audit action has a label: the type makes a new action without one a compile error.
+const AUDIT_LABELS: Record<AuditAction, string> = {
   "auth.login": "Signed in",
   "auth.login_failed": "Sign-in failed",
   "auth.signup": "Created an account",
+  "auth.signup_existing_email": "Someone tried to sign up with an existing account's email",
   "auth.logout": "Signed out",
   "auth.logout_all": "Signed out of other sessions",
   "auth.password_reset_requested": "Asked to reset the password",
   "auth.password_reset_issued": "Password-reset link issued by support",
   "auth.password_reset": "Reset the password",
-  "mfa.reset_by_operator": "Two-step verification turned off by support",
-  "credits.alert": "AI credit alert",
-  "credits.cap_change": "Changed an AI credit cap",
+  "auth.password_changed": "Changed the password",
+  "auth.password_change_failed": "Password change refused (wrong current password)",
+  "auth.email_verified": "Confirmed their email address",
+  "auth.verification_sent": "Confirmation email sent",
   "auth.mfa_failed": "Wrong verification code",
+  "beta.invite_add": "Added to the beta list",
+  "beta.invite_revoke": "Removed from the beta list",
+  "mfa.reset_by_operator": "Two-step verification turned off by support",
   "mfa.enable": "Turned on two-step verification",
   "mfa.disable": "Turned off two-step verification",
   "mfa.recovery_used": "Signed in with a recovery code",
   "mfa.recovery_regenerated": "Made new recovery codes",
   "mfa.step_up": "Confirmed a sensitive change",
   "member.invite": "Invited a member",
+  "member.invite_resend": "Sent an invitation again",
+  "member.invite_revoke": "Withdrew an invitation",
+  "member.invite_accept": "Accepted an invitation",
   "member.role_change": "Changed a role",
   "member.brand_scope_change": "Changed brand access",
   "member.remove": "Removed a member",
   "workspace.update": "Updated workspace details",
   "workspace.export": "Exported the organisation's data",
+  "workspace.delete": "Deleted the organisation",
+  "account.delete": "Deleted an account",
   "brand.create": "Created a brand",
+  "brand.delete": "Deleted a brand",
   "social.connect": "Connected social accounts",
   "social.disconnect": "Disconnected a social account",
+  "social.data_deletion": "Platform data-deletion request",
+  "social.deauthorized": "Platform access removed by the account owner",
+  "publishing.pause": "Paused publishing",
+  "publishing.resume": "Resumed publishing",
+  "publishing.emergency_stop": "Publishing stopped by the BrandPilot team",
+  "publishing.emergency_resume": "Publishing stop lifted by the BrandPilot team",
+  "post.approved": "Approved a post",
+  "post.approval_invalidated": "A post's approval was withdrawn (it changed)",
+  "post.publish_outcome_marked": "Marked whether a post went out",
   "billing.checkout_started": "Started a plan checkout",
   "billing.plan_changed": "Plan changed",
+  "credits.alert": "AI credit alert",
+  "credits.cap_change": "Changed an AI credit cap",
+  "config.plan_update": "Plan settings changed by the BrandPilot team",
+  "config.credits_update": "Credit settings changed by the BrandPilot team",
+  "config.credits_grant": "AI credits granted",
+  "config.secrets_reencrypt": "Stored secrets re-encrypted",
+  "ai.stop": "AI stopped by the BrandPilot team",
+  "ai.resume": "AI resumed by the BrandPilot team",
+  "autonomy.changed": "Changed autonomy settings",
+  "autonomy.suspended": "Autonomy suspended automatically",
   "creative.approve_override": "Approved a creative despite blocking issues",
   "access.denied": "Access refused",
   "audit.view": "Viewed the security log",
@@ -469,7 +501,7 @@ function SecurityLog({ workspaceId, rows, scope, brandName }: { workspaceId: str
               <li key={r.id} className="flex flex-wrap items-start gap-x-3 gap-y-1 py-2.5 text-[13px]">
                 <ShieldCheck className={cn("mt-0.5 size-4 shrink-0", r.outcome === "success" ? "text-success" : "text-danger")} />
                 <span className="min-w-0 flex-1">
-                  <span className="block font-medium">{AUDIT_LABELS[r.action] ?? r.action}</span>
+                  <span className="block font-medium">{(AUDIT_LABELS as Record<string, string>)[r.action] ?? r.action}</span>
                   <span className="block text-[11px] text-faint">
                     {r.actorName ?? "Unknown"}
                     {auditDetail(r, brandName) ? ` · ${auditDetail(r, brandName)}` : ""}

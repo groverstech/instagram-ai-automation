@@ -1,5 +1,7 @@
 # Private-beta readiness tracker
 
+> **Snapshot, superseded (25 Nov 2026):** every PR named here is merged to `main`. Current state: [PRIVATE_BETA_PROGRESS.md](PRIVATE_BETA_PROGRESS.md) and [PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md](PRIVATE_BETA_ACCEPTANCE_CHECKLIST.md); what only the owner can do: [PRIVATE_BETA_OWNER_ACTIONS.md](PRIVATE_BETA_OWNER_ACTIONS.md).
+
 **The index for BrandPilot's private-beta readiness.** The beta definition is here; everything else is in the five documents listed in §3. Every PR that
 changes a gate updates this file in the same PR, with evidence. Status is changed only when the
 work is merged **and** its evidence exists; a plan, a PR in review or demo-mode output is not

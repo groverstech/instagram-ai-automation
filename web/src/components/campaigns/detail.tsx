@@ -49,7 +49,7 @@ export function CampaignDetail({ brandId, role, campaign, posts }: { brandId: st
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="overflow-hidden lg:col-span-2">
           <div className="ai-gradient p-6">
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-2/70">Big idea · {b.theme}</p>

@@ -22,3 +22,12 @@ E2E_ADMIN_URL=postgres://user:pass@127.0.0.1:5432/postgres npm run e2e:lifecycle
 - **Duration:** about 3 minutes, of which 2 are waiting for the scheduled time.
 - **Port:** it refuses to start if the port (default 3100) is already in use. The server runs in its own process group, and the whole group is stopped at the end, so no server is left behind to answer the next run.
 - **On failure:** it saves `failure.png` in the screenshots directory.
+
+## Staging rehearsal
+
+`npm run e2e:staging` boots the production build in strict staging mode (`DEPLOY_ENV=staging`) as an
+ordinary database role with the RLS pilot on, set up with `deploy/app-role-grants.sql`, and checks:
+readiness; invitation-only sign-up with no account enumeration; required two-step verification for
+owners; onboarding under RLS; the operator emergency-stop drill (a brand admin can't lift the stop;
+the operator resume does; every step audited); and the Meta reviewer account's sign-in. It needs the
+same `E2E_ADMIN_URL` (a role that may create databases and roles). See DEPLOYMENT §4.

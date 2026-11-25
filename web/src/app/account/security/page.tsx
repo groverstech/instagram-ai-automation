@@ -4,6 +4,7 @@ import { ArrowLeft } from "lucide-react";
 import { requireUser } from "@/server/auth/guard";
 import { mfaStatus } from "@/server/auth/mfa";
 import { MfaSettings } from "@/components/account/mfa-settings";
+import { ChangePassword } from "@/components/account/change-password";
 import { logOut } from "@/app/actions/auth";
 
 export const metadata: Metadata = { title: "Account security · BrandPilot" };
@@ -33,6 +34,7 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ r
           <button className="text-[13px] text-muted underline-offset-4 hover:text-ink hover:underline">Sign out</button>
         </form>
         <MfaSettings status={{ enabled: status.enabled, recoveryCodesLeft: status.recoveryCodesLeft, required: status.required }} requiredNotice={required === "1" || status.required} />
+        <ChangePassword />
       </main>
     </div>
   );

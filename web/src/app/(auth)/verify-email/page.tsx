@@ -8,8 +8,8 @@ import { Button, Notice } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Confirm your email · BrandPilot", referrer: "no-referrer" };
 
-export default async function Page({ searchParams }: { searchParams: Promise<{ token?: string }> }) {
-  const { token } = await searchParams;
+export default async function Page({ searchParams }: { searchParams: Promise<{ token?: string; sent?: string }> }) {
+  const { token, sent } = await searchParams;
   if (token) {
     return (
       <div className="w-full max-w-sm space-y-4">
@@ -20,6 +20,23 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ t
     );
   }
   const s = await getSession();
+  if (!s && sent === "1") {
+    // Straight after sign-up. The same page whether the address was new or already had an account
+    // (S5): nothing here says which.
+    return (
+      <div className="w-full max-w-sm space-y-4">
+        <h1 className="font-display text-[34px] leading-tight">Check your inbox</h1>
+        <p className="text-muted">We&apos;ve sent an email to the address you entered. Open the link in it to confirm the address, then sign in. The link works for 24 hours.</p>
+        <Notice tone="info">Invitations to join an organisation are accepted as soon as your address is confirmed.</Notice>
+        <p className="text-[13px] text-muted">
+          Nothing arrived? Check your spam folder, or <Link href="/login" className="underline underline-offset-4">sign in</Link> to send the link again.
+        </p>
+        <p className="text-center text-[12px] text-faint">
+          <Link href="/privacy" className="underline-offset-4 hover:underline">Privacy</Link>
+        </p>
+      </div>
+    );
+  }
   if (!s) redirect("/login");
   if (s.emailVerified) redirect("/dashboard");
   return (

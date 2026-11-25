@@ -83,3 +83,11 @@ export async function verifyAndContinue(_: unknown, fd: FormData): Promise<MfaFo
   // redirects on to the platform's own site, so a client-side router transition can't follow it.
   return { next: safeNext(next) };
 }
+
+/** Account → Security: change the password (current one required); other sessions are signed out. */
+export async function changePasswordAction(current: string, next: string) {
+  return safe(async () => {
+    const { changePassword } = await import("@/server/auth/password-change");
+    return changePassword(await me(), String(current ?? "").slice(0, 300), String(next ?? "").slice(0, 300), clientIp(await headers()));
+  });
+}
