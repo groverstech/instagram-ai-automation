@@ -971,3 +971,27 @@ export const agentActions = pgTable(
   },
   (t) => [index("agent_actions_brand").on(t.brandId, t.createdAt)],
 );
+
+/**
+ * Credits added to an organisation's monthly allowance for one period (PR 4.6): top-up packs,
+ * operator adjustments and plan grants. `reference` makes a grant idempotent (for example an invoice
+ * or checkout id), so a webhook delivered twice grants once. Negative credits correct an error.
+ */
+export const creditGrants = pgTable(
+  "credit_grants",
+  {
+    id: id(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    /** YYYY-MM: the month the credits apply to. */
+    period: text("period").notNull(),
+    credits: integer("credits").notNull(),
+    kind: text("kind").$type<"topup" | "adjustment" | "plan">().notNull(),
+    reference: text("reference").unique(),
+    reason: text("reason").notNull(),
+    createdBy: text("created_by").notNull(),
+    createdAt: createdAt(),
+  },
+  (t) => [index("credit_grants_ws_period").on(t.workspaceId, t.period)],
+);

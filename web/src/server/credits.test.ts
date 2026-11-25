@@ -152,7 +152,7 @@ describe("credits (shadow mode)", () => {
     expect((await credits.creditStatus(o.ws, next)).alerts).toEqual([]);
   });
 
-  it("CREDITS_MODE=off records no alerts; `enforce` is rejected until PR 4.6", async () => {
+  it("CREDITS_MODE=off records no alerts; `enforce` is accepted (warned in strict environments); anything else is an error", async () => {
     const o = await org();
     await setCreditCapFor(o.owner, o.ws, null, 1);
     const db = await getDb();
@@ -161,7 +161,10 @@ describe("credits (shadow mode)", () => {
     process.env.CREDITS_MODE = "off";
     expect(await credits.evaluateCreditAlerts(o.ws)).toEqual([]);
     const errs = (v: string) => checkConfig({ CREDITS_MODE: v }).filter((p) => p.key === "CREDITS_MODE" && p.level === "error");
-    expect(errs("enforce")[0]?.message).toMatch(/PR 4.6/);
+    expect(errs("enforce")).toEqual([]);
+    expect(errs("on")[0]?.message).toMatch(/shadow/);
+    const warns = checkConfig({ CREDITS_MODE: "enforce", DEPLOY_ENV: "production" }).filter((p) => p.key === "CREDITS_MODE" && p.level === "warning");
+    expect(warns[0]?.message).toMatch(/D-17/);
     expect(errs("shadow")).toEqual([]);
     expect(errs("off")).toEqual([]);
   });

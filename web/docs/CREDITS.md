@@ -43,14 +43,43 @@ npm run credits -- shadow 2026-12      # per organisation: AI runs vs credits, a
 - The failed-attempt policy.
 - Top-up packs and their Stripe prices.
 
-## Deferred to PR 4.6, by design
+## Enforcement (PR 4.6): built, off by default
 
-These parts of document 5 need Stripe or enforcement. They are left out of shadow mode on purpose:
+`CREDITS_MODE=enforce` turns it on. It stays **off** (shadow is the default) until you approve it after a shadow period: **decision D-17**.
 
-- the credit ledger (grants on `invoice.paid`, top-ups, reserve, settle and release on every call);
-- credit packs and Stripe price IDs in the plans table;
-- the USD hard cap per organisation;
-- pausing AI-dependent autonomous publishing at 100%;
-- the platform admin cost dashboard.
+| Part | Where |
+|---|---|
+| **Gate** in `openAttempt()`'s transaction, under the usage-ledger lock, so concurrent requests are checked one at a time and each sees the others' reservations | `ai/credit-gate.ts` |
+| **Used** = charged credits this month + every open reservation (pending attempts at their worst case). **Cap** = the organisation's own cap, else the plan's included credits, plus this month's grants. A brand cap applies to that brand as well | `creditPositions` |
+| **Reserve, settle, release:** the ledger's pending row holds the worst case; settlement replaces it with the real cost, or nothing for an uncharged failure | `spend-cap.ts` (unchanged) |
+| **Refusal:** nothing is sent or charged. The attempt is recorded as `blocked` with `errorKind = credits`. The message says how many credits are left and points to Settings → AI credits | `AICreditLimitError` |
+| **Shadow mode:** the same check logs `credits.shadow_would_refuse` and allows the request, so the shadow period shows exactly what enforcement would have refused | `creditGate` |
+| **Fail closed in enforce mode:** if the balance can't be computed, the request isn't sent (`AIAccountingError`) | `creditGate` |
+| **Grants:** top-ups and adjustments per month, idempotent per `reference` (an invoice or checkout id), audited as `config.credits_grant` | `credit_grants` (migration 0022, RLS pilot policy), `grantCredits`, `npm run credits -- grant` |
+| **Reconciliation:** what Settings shows (charged + reserved) must equal what the gate enforces. It also lists stale reservations (pending for over an hour) and unpriced attempts; the exit code is 1 on a mismatch | `reconcileCredits`, `npm run credits -- reconcile [YYYY-MM]` |
+| **Settings → AI credits** shows the mode ("Enforced"), credits left, open reservations and grants | `credits-card.tsx` |
+
+**Not attributable:** requests without an organisation (platform CLIs, connectivity checks) are allowed and logged as `credits.unattributed_request` in enforce mode. Every customer AI action runs through the agent orchestrator, which sets the organisation and brand.
+
+**Tests:** `credit-enforcement.test.ts`, on Postgres 16 and on PGlite:
+- the exact boundary, with charged and reserved credits both counting;
+- the failed-attempt policy, demo calls and last month;
+- grants, including idempotency and negative adjustments;
+- brand caps and plan allowances;
+- shadow and off modes, and unattributed requests;
+- through the real request path with a stub provider:
+  - a refused request is never sent;
+  - reservation, then settlement and release;
+  - a provider failure releases the reservation;
+  - six parallel requests against room for two, so exactly two are sent;
+- reconciliation.
+
+## Still open (owner decisions or Stripe)
+
+- **Activation:** `CREDITS_MODE=enforce` after a shadow period (D-17), plus the plans' included credits, the credit value and the failed-attempt policy.
+- **Top-up packs as Stripe products:** the grant mechanism is ready. The checkout and webhook need your prices, and Stripe live configuration is owner-controlled.
+- **Grants on `invoice.paid`:** not needed while allowances are per calendar month from the plan. Revisit if allowances should follow billing periods.
+- **Pausing AI-dependent autonomous publishing at 100%:** the autonomy policy already requires a person whenever AI is stopped. A credit-based pause is a follow-up.
+- **The platform admin cost dashboard:** `npm run ai:billing` and `npm run credits -- shadow | reconcile` cover operators today.
 
 Plan keys stay fixed (`starter`, `growth`, `agency`) until Stripe prices move into configuration.

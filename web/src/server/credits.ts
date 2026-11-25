@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq, gte, inArray, isNotNull, ne, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, lt, ne, sql } from "drizzle-orm";
 import { format, startOfMonth } from "date-fns";
 import { getDb, schema } from "./db/client";
 import type { PlanLimits } from "./db/schema";
@@ -21,7 +21,9 @@ import { log } from "./log";
  * (default off: the platform absorbs them, and they still appear in the admin cost views).
  * Demo (mock) calls and unpriced attempts are never charged.
  *
- * CREDITS_MODE: "shadow" (default) or "off" (no alerts; the numbers are still shown).
+ * CREDITS_MODE: "shadow" (default), "off" (no alerts; the numbers are still shown) or "enforce" (PR 4.6:
+ * requests that would exceed a cap are refused before they're sent; ai/credit-gate.ts). Enforce
+ * stays off until the owner approves it after a shadow period (decision D-17).
  */
 
 export type PlanKey = "starter" | "growth" | "agency";
@@ -33,8 +35,9 @@ export type CreditSettings = { creditValueUsd: number; chargeFailedAttempts: boo
 const FALLBACK_PLAN: Plan = { key: "starter", name: "Starter", priceMonthlyUsd: 0, limits: { brands: 1, seats: 2, socialAccounts: 3, aiRunsPerMonth: 200 }, includedCredits: null };
 const DEFAULT_SETTINGS: CreditSettings = { creditValueUsd: 0.01, chargeFailedAttempts: false, alertThresholds: [70, 90, 100] };
 
-export function creditsMode(env: Record<string, string | undefined> = process.env): "shadow" | "off" {
-  return (env.CREDITS_MODE ?? "").trim().toLowerCase() === "off" ? "off" : "shadow";
+export function creditsMode(env: Record<string, string | undefined> = process.env): "shadow" | "off" | "enforce" {
+  const v = (env.CREDITS_MODE ?? "").trim().toLowerCase();
+  return v === "off" ? "off" : v === "enforce" ? "enforce" : "shadow";
 }
 
 export async function listPlans(): Promise<Plan[]> {
@@ -70,7 +73,11 @@ export const periodKey = (now: Date) => format(startOfMonth(now), "yyyy-MM");
 
 export type CapStatus = { cap: number; used: number; percent: number; source: "plan" | "organisation" | "brand" };
 export type CreditStatus = {
-  mode: "shadow" | "off";
+  mode: "shadow" | "off" | "enforce";
+  /** Credits added this period (top-ups and adjustments), included in the organisation cap. */
+  granted: number;
+  /** Open reservations: requests in flight, counted at their worst case until settled. */
+  reserved: number;
   period: string;
   since: Date;
   settings: CreditSettings;
@@ -102,7 +109,7 @@ export async function creditStatus(workspaceId: string, now = new Date()): Promi
   const usd = sql<number>`coalesce(sum(${e.costUsd}), 0)`;
   const base = and(eq(e.workspaceId, workspaceId), gte(e.createdAt, since), ne(e.provider, "mock"), isNotNull(e.costUsd));
   const where = and(base, inArray(e.outcome, [...charged]));
-  const [byKind, byBrand, byRoute, absorbed, limits, alerts] = await Promise.all([
+  const [byKind, byBrand, byRoute, absorbed, limits, alerts, grants, pending] = await Promise.all([
     db.select({ kind: e.kind, usd }).from(e).where(where).groupBy(e.kind),
     db.select({ brandId: e.brandId, usd }).from(e).where(where).groupBy(e.brandId),
     db.select({ route: e.route, usd }).from(e).where(where).groupBy(e.route),
@@ -111,14 +118,20 @@ export async function creditStatus(workspaceId: string, now = new Date()): Promi
       : db.select({ usd }).from(e).where(and(base, inArray(e.outcome, ["failed", "retried"]))),
     db.select().from(schema.creditLimits).where(eq(schema.creditLimits.workspaceId, workspaceId)),
     db.select().from(schema.usageAlerts).where(and(eq(schema.usageAlerts.workspaceId, workspaceId), eq(schema.usageAlerts.period, periodKey(now)))),
+    db.select({ n: sql<number>`coalesce(sum(${schema.creditGrants.credits}), 0)` }).from(schema.creditGrants).where(and(eq(schema.creditGrants.workspaceId, workspaceId), eq(schema.creditGrants.period, periodKey(now)))),
+    db.select({ usd: sql<number>`coalesce(sum(${e.reserveUsd}), 0)` }).from(e).where(and(eq(e.workspaceId, workspaceId), gte(e.createdAt, since), ne(e.provider, "mock"), eq(e.outcome, "pending"))),
   ]);
   const c = (x: number) => toCredits(Number(x), settings);
   const used = byKind.reduce((a, r) => a + c(r.usd), 0);
   const orgLimit = limits.find((l) => l.brandId === "");
-  const orgCap = orgLimit?.monthlyCapCredits ?? plan.includedCredits;
+  const granted = Number(grants[0]?.n ?? 0);
+  const baseCap = orgLimit?.monthlyCapCredits ?? plan.includedCredits;
+  const orgCap = baseCap == null ? null : baseCap + granted;
   const brandCredits = new Map(byBrand.map((r) => [r.brandId ?? "", c(r.usd)]));
   return {
     mode: creditsMode(),
+    granted,
+    reserved: c(pending[0]?.usd ?? 0),
     period: periodKey(now),
     since,
     settings,
@@ -163,7 +176,7 @@ export async function evaluateCreditAlerts(workspaceId: string, now = new Date()
           .returning({ id: schema.usageAlerts.id });
         if (ins.length) fresh.push({ threshold: t, brandId: s.brandId });
       }
-      if (s.percent >= 100) log.warn("credits.shadow_would_block", { workspaceId, brandId: s.brandId || null, period: st.period, used: Math.round(s.used), cap: s.cap });
+      if (s.percent >= 100 && st.mode !== "enforce") log.warn("credits.shadow_would_block", { workspaceId, brandId: s.brandId || null, period: st.period, used: Math.round(s.used), cap: s.cap });
     }
     for (const f of fresh) await notify(workspaceId, f, st);
     return fresh;
@@ -198,7 +211,9 @@ async function notify(workspaceId: string, f: { threshold: number; brandId: stri
     `${Math.round(scope.used)} of ${scope.cap} credits used this month (${st.period}).`,
     st.mode === "shadow"
       ? "Credits are shown for information while they're introduced: nothing is stopped on credits yet, and your plan's monthly AI-run limit still applies."
-      : "",
+      : st.mode === "enforce" && f.threshold >= 100
+        ? "AI requests that would go over the cap are now refused until next month or until more credits are added."
+        : "",
     "Details: Settings → AI credits.",
   ]
     .filter(Boolean)
@@ -245,4 +260,57 @@ export async function updateCreditSettings(patch: Partial<CreditSettings>, by: s
     .onConflictDoUpdate({ target: schema.creditSettings.id, set: { ...next, updatedBy: by, updatedAt: new Date() } });
   await audit({ action: "config.credits_update", actorType: "system", targetType: "credit_settings", targetId: "default", details: { by, before: cur, after: next } });
   return next;
+}
+
+/**
+ * Add (or, with a negative number, remove) credits for one month: top-up packs, adjustments and
+ * plan grants. `reference` makes it idempotent: the same reference grants once (for a webhook or a
+ * re-run CLI). Audited as config.credits_grant. The caller authorises (operator CLI only today).
+ */
+export async function grantCredits(input: { workspaceId: string; credits: number; period?: string; kind: "topup" | "adjustment" | "plan"; reason: string; by: string; reference?: string | null }, now = new Date()) {
+  if (!Number.isInteger(input.credits) || input.credits === 0 || Math.abs(input.credits) > 10_000_000) throw new Error("Credits must be a whole number other than 0.");
+  if (!input.reason.trim()) throw new Error("A reason is required.");
+  const period = input.period ?? periodKey(now);
+  if (!/^\d{4}-\d{2}$/.test(period)) throw new Error("Period must look like 2026-11.");
+  const db = await getDb();
+  const [ws] = await db.select({ id: schema.workspaces.id }).from(schema.workspaces).where(eq(schema.workspaces.id, input.workspaceId));
+  if (!ws) throw new Error("Organisation not found.");
+  const [row] = await db
+    .insert(schema.creditGrants)
+    .values({ workspaceId: input.workspaceId, period, credits: input.credits, kind: input.kind, reason: input.reason.trim().slice(0, 500), createdBy: input.by, reference: input.reference ?? null })
+    .onConflictDoNothing()
+    .returning();
+  if (!row) return { granted: false as const, period };
+  await audit({ action: "config.credits_grant", workspaceId: input.workspaceId, actorType: "system", targetType: "workspace", targetId: input.workspaceId, details: { credits: input.credits, period, kind: input.kind, by: input.by, reason: row.reason } });
+  return { granted: true as const, period, id: row.id };
+}
+
+/**
+ * Accounting reconciliation for one organisation and month: what Settings shows (charged + open
+ * reservations) must equal what the credit gate enforces; stale reservations (pending for over an
+ * hour: a process that died mid-request) and unpriced attempts are listed for an operator.
+ */
+export async function reconcileCredits(workspaceId: string, now = new Date()) {
+  const st = await creditStatus(workspaceId, now);
+  const { creditPositions } = await import("./ai/credit-gate");
+  const db = await getDb();
+  const { positions } = await creditPositions(db, workspaceId, null, now);
+  const e = schema.usageEvents;
+  const since = startOfMonth(now);
+  const [stale] = await db.select({ n: sql<number>`count(*)::int` }).from(e).where(and(eq(e.workspaceId, workspaceId), gte(e.createdAt, since), eq(e.outcome, "pending"), lt(e.createdAt, new Date(now.getTime() - 3600_000))));
+  const [unpriced] = await db.select({ n: sql<number>`count(*)::int` }).from(e).where(and(eq(e.workspaceId, workspaceId), gte(e.createdAt, since), ne(e.provider, "mock"), inArray(e.outcome, ["success", "failed", "retried"]), sql`${e.costUsd} is null`));
+  const gateUsed = positions[0].used;
+  const shown = st.used + st.reserved;
+  return {
+    period: st.period,
+    mode: st.mode,
+    charged: st.used,
+    reserved: st.reserved,
+    granted: st.granted,
+    cap: st.org?.cap ?? null,
+    gateUsed,
+    consistent: Math.abs(gateUsed - shown) < 1e-6,
+    stalePending: Number(stale.n),
+    unpriced: Number(unpriced.n),
+  };
 }

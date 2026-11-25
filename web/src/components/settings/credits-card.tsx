@@ -70,12 +70,25 @@ export function CreditsCard({ workspaceId, view }: { workspaceId: string; view: 
       <CardHeader
         title="AI credits"
         description={`${format(view.since, "MMMM yyyy")} · 1 credit = $${view.settings.creditValueUsd} of estimated provider cost`}
-        action={view.mode === "shadow" ? <Badge tone="info">Preview</Badge> : <Badge>Not tracked</Badge>}
+        action={view.mode === "enforce" ? <Badge tone="warn">Enforced</Badge> : view.mode === "shadow" ? <Badge tone="info">Preview</Badge> : <Badge>Not tracked</Badge>}
       />
       <CardBody className="space-y-4 text-[13px]">
-        <Notice tone="info">
-          Credits are shown for information while they&apos;re introduced. Nothing is stopped on credits yet: your plan&apos;s monthly AI-run limit is what applies.
-        </Notice>
+        {view.mode === "enforce" ? (
+          <Notice tone="warn">
+            AI requests that would take the organisation or a brand over its monthly credits are refused before they&apos;re sent, and nothing is charged for them.
+            {view.org ? ` ${n(Math.max(0, view.org.cap - view.used - view.reserved))} credits left this month.` : ""}
+          </Notice>
+        ) : (
+          <Notice tone="info">
+            Credits are shown for information while they&apos;re introduced. Nothing is stopped on credits yet: your plan&apos;s monthly AI-run limit is what applies.
+          </Notice>
+        )}
+        {view.reserved > 0 || view.granted !== 0 ? (
+          <p className="text-[12px] text-muted">
+            {view.reserved > 0 ? `${n(view.reserved)} credits reserved for requests in progress (released or charged when they finish). ` : ""}
+            {view.granted !== 0 ? `${view.granted > 0 ? "+" : ""}${view.granted.toLocaleString("en")} credits added this month (top-ups and adjustments, included in the cap).` : ""}
+          </p>
+        ) : null}
 
         <div>
           <div className="mb-1 flex justify-between text-[12px]">

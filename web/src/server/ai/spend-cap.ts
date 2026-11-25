@@ -4,8 +4,9 @@ import { getDb, schema, type DB } from "../db/client";
 import type { UsageOutcome } from "../db/schema";
 import { log } from "../log";
 import { aiContext } from "./context";
-import { AIAccountingError, AISpendCapConfigError, AISpendCapError, AIStoppedError } from "./errors";
+import { AIAccountingError, AICreditLimitError, AISpendCapConfigError, AISpendCapError, AIStoppedError } from "./errors";
 import { assertNotStopped, tripTripwire, tripwireExceeded } from "./controls";
+import { creditGate } from "./credit-gate";
 import type { ResolvedRoute } from "./routes";
 
 /**
@@ -240,6 +241,8 @@ export async function openAttempt(
         const { usd } = await committedSpendUsd(parsed.since, env, tx);
         if (usd + reserve > parsed.capUsd + 1e-9) throw new AISpendCapError(parsed.capUsd, usd, reserve);
       }
+      // Organisation and brand credits (PR 4.6): refused in enforce mode, logged in shadow mode.
+      await creditGate(tx, ctx, route.provider, reserve, env);
       const [row] = await tx
         .insert(schema.usageEvents)
         .values({
@@ -262,7 +265,7 @@ export async function openAttempt(
       return row.id;
     });
   } catch (e) {
-    if (e instanceof AISpendCapError || e instanceof AIStoppedError) throw e;
+    if (e instanceof AISpendCapError || e instanceof AIStoppedError || e instanceof AICreditLimitError || e instanceof AIAccountingError) throw e;
     log.error("ai.usage_write_failed", { route: route.key, stage: "pending", error: e instanceof Error ? e.message : String(e) });
     throw new AIAccountingError("the usage ledger couldn't be written");
   }
