@@ -103,7 +103,21 @@ sign-in.
 investigations). They hold the deleted internal IDs and, in `social.connect` events, the platform account IDs, but no names, text or files. The Security log records
 `brand.delete`, `workspace.delete` and `account.delete`.
 
-## Still to come in PR 4.3
+## Submission packs and the reviewer account (PR 4.3c)
 
-- A reviewer demo workspace.
-- Submission packs and screencast scripts.
+- **Meta (Instagram and Facebook):** [submissions/META.md](submissions/META.md). It has the
+  pre-submission checklist, the app description, every requested permission mapped to the exact
+  API calls and screens that use it, the use-case text for the form, and the screencast script.
+  One open decision: whether `business_management` is needed.
+- **Reviewer account:** `npm run reviewer:setup -- --email reviewer@<domain> [--reset]`. It
+  creates a user, an organisation and a review brand with approved Instagram and Facebook posts
+  and their creative, makes no AI calls, prints the password once, and prints a direct link to
+  each post. `--reset` refuses any account that shares an organisation with other people.
+- **LinkedIn and YouTube packs** come with PRs 4.7 and 4.8: their organisation posting and uploads
+  aren't built yet, and reviewers need to see each permission in use.
+
+**Note on publishing without R2.** Single-image publishing to Instagram and Facebook works today
+through the app's signed media links (`/api/public/media/<token>.jpg`) when `APP_URL` is a public
+HTTPS domain. On a single-instance deployment the Meta review and beta publishing don't have to
+wait for PR 4.2. R2 is still needed for more than one instance, for the render cache (plan defect
+D6) and for video.
