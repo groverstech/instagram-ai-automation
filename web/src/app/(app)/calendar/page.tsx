@@ -2,6 +2,7 @@ import { and, desc, eq, gte, lte } from "drizzle-orm";
 import { addDays, endOfMonth, endOfWeek, format, parse, startOfMonth, startOfWeek } from "date-fns";
 import { requireActiveBrand } from "@/server/auth/guard";
 import { getDb, schema } from "@/server/db/client";
+import { withTenant } from "@/server/db/tenant";
 import { CalendarView } from "@/components/calendar/view";
 import { PROVIDERS } from "@/server/social/registry";
 
@@ -12,10 +13,15 @@ export default async function Page({ searchParams }: { searchParams: Promise<{ m
   const from = startOfWeek(startOfMonth(month), { weekStartsOn: 1 });
   const to = addDays(endOfWeek(endOfMonth(month), { weekStartsOn: 1 }), 1);
   const db = await getDb();
-  const [posts, accounts, creatives, campaigns] = await Promise.all([
-    db.select().from(schema.posts).where(and(eq(schema.posts.brandId, brand.id), gte(schema.posts.scheduledAt, from), lte(schema.posts.scheduledAt, to))),
+  // Posts and creatives are read under the organisation's row-level security (RLS pilot, S8).
+  const [[posts, creatives], accounts, campaigns] = await Promise.all([
+    withTenant(brand.workspaceId, (t) =>
+      Promise.all([
+        t.select().from(schema.posts).where(and(eq(schema.posts.brandId, brand.id), gte(schema.posts.scheduledAt, from), lte(schema.posts.scheduledAt, to))),
+        t.select({ id: schema.creatives.id, format: schema.creatives.format, status: schema.creatives.status, concept: schema.creatives.concept }).from(schema.creatives).where(eq(schema.creatives.brandId, brand.id)).orderBy(desc(schema.creatives.createdAt)).limit(60),
+      ]),
+    ),
     db.select().from(schema.socialAccounts).where(eq(schema.socialAccounts.brandId, brand.id)),
-    db.select({ id: schema.creatives.id, format: schema.creatives.format, status: schema.creatives.status, concept: schema.creatives.concept }).from(schema.creatives).where(eq(schema.creatives.brandId, brand.id)).orderBy(desc(schema.creatives.createdAt)).limit(60),
     db.select({ id: schema.campaigns.id, name: schema.campaigns.name }).from(schema.campaigns).where(eq(schema.campaigns.brandId, brand.id)),
   ]);
   let focus = sp.post ? posts.find((p) => p.id === sp.post) : undefined;
