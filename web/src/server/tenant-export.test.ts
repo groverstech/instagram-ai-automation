@@ -13,7 +13,7 @@ process.env.PGLITE_DIR = "memory://";
 process.env.STORAGE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "bp-export-store-"));
 
 const { getDb, schema } = await import("./db/client");
-const { exportWorkspaceFor, exportReadyFor, stripSecrets } = await import("./tenant-export");
+const { exportWorkspaceFor, exportReadyFor, stripSecrets, exportSlot, ExportBusyError, exportFileBudgetBytes } = await import("./tenant-export");
 const { storage } = await import("./storage");
 const { AccessError } = await import("./auth/guard");
 const { StepUpRequired } = await import("./auth/step-up");
@@ -108,6 +108,18 @@ describe("organisation data export", () => {
     await exportWorkspaceFor(a.owner, a.ws);
     await exportWorkspaceFor(a.owner, a.ws);
     await expect(exportWorkspaceFor(a.owner, a.ws)).rejects.toBeInstanceOf(RateLimitError);
+  });
+
+  it("one export at a time per process; the file budget is configurable within bounds", async () => {
+    const a = await org("Busy");
+    let release!: () => void;
+    const held = exportSlot(() => new Promise<void>((r) => (release = r)));
+    await expect(exportWorkspaceFor(a.owner, a.ws)).rejects.toBeInstanceOf(ExportBusyError);
+    release();
+    await held;
+    expect((await exportWorkspaceFor(a.owner, a.ws)).body.length).toBeGreaterThan(0);
+    const mb = (v?: string) => exportFileBudgetBytes(v === undefined ? {} : { EXPORT_FILE_BUDGET_MB: v }) / 1024 / 1024;
+    expect([mb(), mb("250"), mb("1"), mb("99999"), mb("lots")]).toEqual([100, 250, 10, 1000, 100]);
   });
 
   it("strips secret-looking columns by name", () => {

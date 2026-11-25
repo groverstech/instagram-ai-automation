@@ -23,8 +23,33 @@ import { log } from "./log";
  * excluded too). The Security log has its own export (Settings → Security log).
  */
 
-/** Files beyond this total are listed in the manifest as skipped rather than bundled. */
-export const EXPORT_FILE_BUDGET_BYTES = 500 * 1024 * 1024;
+/**
+ * Files beyond this total are listed in the manifest as skipped rather than bundled. The archive is
+ * built in memory, so peak use is about twice this; EXPORT_FILE_BUDGET_MB (default 100, 10–1000)
+ * sets it. Only one export runs at a time per server process (see exportSlot).
+ */
+export function exportFileBudgetBytes(env: Record<string, string | undefined> = process.env) {
+  const n = Number((env.EXPORT_FILE_BUDGET_MB ?? "").trim() || "100");
+  const mb = Number.isFinite(n) ? Math.min(Math.max(Math.round(n), 10), 1000) : 100;
+  return mb * 1024 * 1024;
+}
+
+export class ExportBusyError extends Error {
+  constructor() {
+    super("Another data export is being prepared on this server. Try again in a minute.");
+  }
+}
+let exporting = false;
+/** Run `fn` holding this process's single export slot; ExportBusyError if it's taken. */
+export async function exportSlot<T>(fn: () => Promise<T>): Promise<T> {
+  if (exporting) throw new ExportBusyError();
+  exporting = true;
+  try {
+    return await fn();
+  } finally {
+    exporting = false;
+  }
+}
 
 const STRIP = /(Enc|Hash|Token|Secret)$|^(embedding|claimToken|input|output)$/;
 export function stripSecrets<T extends Record<string, unknown>>(row: T): Record<string, unknown> {
@@ -37,8 +62,11 @@ export async function exportWorkspaceFor(session: SessionUser, workspaceId: stri
   const { role, brandIds: scope } = await requireWorkspaceRoleForUser(session, workspaceId, "owner");
   if (role !== "owner" || Array.isArray(scope)) throw new AccessError("Only organisation owners can export all of its data.");
   await requireRecentSecondFactor(session);
-  await enforce("export", { userId: session.user.id });
-  return buildExport(workspaceId, session.user.id, opts.fileBudgetBytes ?? EXPORT_FILE_BUDGET_BYTES);
+  // One export at a time per process: each holds its files and the archive in memory.
+  return exportSlot(async () => {
+    await enforce("export", { userId: session.user.id });
+    return buildExport(workspaceId, session.user.id, opts.fileBudgetBytes ?? exportFileBudgetBytes());
+  });
 }
 
 /** Before downloading: owner, recent second factor (so the app can ask for a code first). */
@@ -159,7 +187,7 @@ async function buildExport(workspaceId: string, actorUserId: string, budget: num
       .filter((l, i, a) => l !== "" || a[i - 1] !== "")
       .join("\n"),
   );
-  const body = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" });
+  const body = await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE", streamFiles: true });
   const counts = { brands: brands.length, posts: posts.length, creatives: creatives.length, files: files.filter((f) => f.bytes !== undefined).length, skipped: files.filter((f) => f.skipped).length };
   await audit({ action: "workspace.export", workspaceId, actorUserId, targetType: "workspace", targetId: workspaceId, details: { status: `${counts.brands} brands, ${counts.posts} posts, ${counts.creatives} creatives, ${counts.files} files${counts.skipped ? `, ${counts.skipped} skipped` : ""}` } });
   log.info("workspace.export", { workspaceId, bytes: body.length, ...counts });
