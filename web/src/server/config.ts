@@ -133,6 +133,10 @@ export function checkConfig(env: Env = process.env): ConfigProblem[] {
   }
   const imageProvider = norm(env.IMAGE_PROVIDER) || "openai";
   if (!["openai", "none"].includes(imageProvider)) err("IMAGE_PROVIDER", "Use `openai`, or `none` to turn AI images off.");
+  for (const prev of (env.APP_SECRET_PREVIOUS ?? "").split(",").map((x) => x.trim()).filter(Boolean)) {
+    if (prev.length < 32) err("APP_SECRET_PREVIOUS", "Each previous secret must be the full old APP_SECRET (32+ characters). A shorter one is ignored, so values encrypted with it can't be read.");
+    else if (prev === env.APP_SECRET) warn("APP_SECRET_PREVIOUS", "Same as APP_SECRET: nothing to rotate from. Remove it.");
+  }
   const retention = (env.AUDIT_RETENTION_DAYS ?? "").trim();
   if (retention && !(Number.isInteger(Number(retention)) && Number(retention) >= 90)) err("AUDIT_RETENTION_DAYS", "Use a whole number of days, at least 90 (default 400). Until it's fixed, 400 applies.");
   // AI kill switch and tripwire (ai/controls.ts).

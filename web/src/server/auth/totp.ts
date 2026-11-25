@@ -1,6 +1,6 @@
 import "server-only";
 import crypto from "node:crypto";
-import { keyedHash } from "../crypto";
+import { keyedHashes } from "../crypto";
 
 /**
  * Time-based one-time passwords (RFC 6238 over RFC 4226): HMAC-SHA1, 30-second steps, 6 digits,
@@ -99,7 +99,18 @@ export function newRecoveryCodes(n = 10): { codes: string[]; hashes: string[] } 
   return { codes, hashes: codes.map(hashRecoveryCode) };
 }
 
-/** Keyed with the app secret (HMAC-SHA256), so a leaked database alone can't be brute-forced for the codes. */
+const normalise = (code: string) => `bp-recovery:${code.trim().toLowerCase().replace(/[^a-z0-9]/g, "")}`;
+
+/**
+ * Keyed with the app secret (HMAC-SHA256), so a leaked database alone can't be brute-forced for the
+ * codes. Stored as `<key id>:<hash>` so a rotation can tell which codes still need an old key.
+ */
 export function hashRecoveryCode(code: string) {
-  return keyedHash(`bp-recovery:${code.trim().toLowerCase().replace(/[^a-z0-9]/g, "")}`, 64);
+  const [cur] = keyedHashes(normalise(code), 64);
+  return `${cur.keyId}:${cur.hash}`;
+}
+
+/** Every stored form this code could have: under each configured key, tagged and (older) untagged. */
+export function recoveryCodeCandidates(code: string): string[] {
+  return keyedHashes(normalise(code), 64).flatMap((h) => [`${h.keyId}:${h.hash}`, h.hash]);
 }
