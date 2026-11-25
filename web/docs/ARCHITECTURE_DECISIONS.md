@@ -87,8 +87,9 @@ marked **pending**.
     (`CLIENT_IP_HEADER`), never the client-controlled leftmost `X-Forwarded-For` entry.
 - **Consequences:** with one overwriting proxy, behaviour is identical to before; behind appending
   proxies, IP-based limits can no longer be bypassed.
-- **Follow-up:** a `script-src` CSP needs per-request nonces for Next's inline scripts, and is
-  tracked separately (SECURITY.md).
+- **Follow-up (done, F2):** pages and API responses now also carry a strict `script-src` policy with
+  a per-request nonce (`src/middleware.ts`, SECURITY.md); the minimal policy above still covers
+  static files.
 
 ## ADR-006: Append-only security audit log
 

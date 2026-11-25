@@ -1,9 +1,9 @@
 // Plain JavaScript on purpose: with next.config.ts, `next start` needs TypeScript at run time and
 // tries to install it, which hangs a production container that has no dev dependencies.
 /**
- * Security headers on every response (ADR-005). The CSP sets only directives that can't break
- * the app: no framing, no <base> or form-target hijacking, no plugins. A script-src policy needs
- * per-request nonces for Next's inline scripts and is tracked as a follow-up.
+ * Security headers on every response (ADR-005). This CSP covers static files too (no framing, no
+ * <base> or form-target hijacking, no plugins). Pages and API responses also get the strict,
+ * per-request-nonce policy from src/middleware.ts; browsers enforce both.
  */
 const securityHeaders = [
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
